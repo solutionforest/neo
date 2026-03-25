@@ -1,0 +1,71 @@
+name: n8n
+title: "n8n"
+description: "Workflow automation tool"
+category: automation
+version: "1.72"
+image: n8nio/n8n:1.72
+port: 5678
+maintainer: vxero
+official: true
+website: https://n8n.io
+tags: ["automation", "workflow", "integration", "no-code"]
+min_ram: "1GB"
+min_disk: "1GB"
+notes: |
+  Create your admin account on first visit.
+  Webhooks are available at https://<your-domain>/webhook/
+links:
+  documentation: https://docs.n8n.io/
+  source: https://github.com/n8n-io/n8n
+  docker_hub: https://hub.docker.com/r/n8nio/n8n
+
+volumes:
+  - name: n8n-data
+    path: /home/node/.n8n
+    label: "n8n workflows and credentials"
+
+env:
+  - key: N8N_HOST
+    label: "Domain"
+    from: domain_host
+  - key: N8N_PROTOCOL
+    value: https
+  - key: WEBHOOK_URL
+    label: "Webhook URL"
+    from: domain
+  - key: N8N_ENCRYPTION_KEY
+    generate: hex:32
+  - key: DB_TYPE
+    value: postgresdb
+  - key: DB_POSTGRESDB_HOST
+    from_service: postgres
+    template: "svc-n8n-postgres"
+  - key: DB_POSTGRESDB_DATABASE
+    value: n8n
+  - key: DB_POSTGRESDB_USER
+    value: n8n
+  - key: DB_POSTGRESDB_PASSWORD
+    from_service: postgres
+    template: "${POSTGRES_PASSWORD}"
+
+services:
+  - name: postgres
+    image: postgres:16-alpine
+    port: 5432
+    volumes:
+      - name: n8n-db
+        path: /var/lib/postgresql/data
+        label: "PostgreSQL data"
+    env:
+      - key: POSTGRES_DB
+        value: n8n
+      - key: POSTGRES_USER
+        value: n8n
+      - key: POSTGRES_PASSWORD
+        generate: hex:32
+
+health:
+  path: /healthz
+  interval: 10s
+  timeout: 5s
+  retries: 3

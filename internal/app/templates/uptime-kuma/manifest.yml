@@ -1,0 +1,31 @@
+name: uptime-kuma
+title: "Uptime Kuma"
+description: "Self-hosted monitoring tool"
+category: monitoring
+version: "1.23"
+image: louislam/uptime-kuma:1
+port: 3001
+maintainer: vxero
+official: true
+website: https://uptime.kuma.pet
+tags: ["monitoring", "uptime", "status-page", "alerting"]
+min_ram: "256MB"
+min_disk: "512MB"
+notes: |
+  Create your admin account on first visit.
+  No database required — uses SQLite internally.
+links:
+  documentation: https://github.com/louislam/uptime-kuma/wiki
+  source: https://github.com/louislam/uptime-kuma
+  docker_hub: https://hub.docker.com/r/louislam/uptime-kuma
+
+volumes:
+  - name: uptime-kuma-data
+    path: /app/data
+    label: "Monitoring data and configuration"
+
+health:
+  path: /api/status-page/heartbeat/
+  interval: 15s
+  timeout: 5s
+  retries: 3

@@ -1,0 +1,41 @@
+name: vaultwarden
+title: "Vaultwarden"
+description: "Lightweight Bitwarden-compatible password manager"
+category: security
+version: "1.32"
+image: vaultwarden/server:1.32.5
+port: 80
+maintainer: vxero
+official: true
+website: https://github.com/dani-garcia/vaultwarden
+tags: ["passwords", "bitwarden", "security", "vault"]
+min_ram: "256MB"
+min_disk: "512MB"
+notes: |
+  Admin panel: https://<your-domain>/admin (use the generated admin token).
+  Use any Bitwarden client to connect (set server URL to your domain).
+links:
+  documentation: https://github.com/dani-garcia/vaultwarden/wiki
+  source: https://github.com/dani-garcia/vaultwarden
+  docker_hub: https://hub.docker.com/r/vaultwarden/server
+
+volumes:
+  - name: vaultwarden-data
+    path: /data
+    label: "Vaultwarden vault data"
+
+env:
+  - key: DOMAIN
+    label: "Public URL"
+    from: domain
+  - key: ADMIN_TOKEN
+    label: "Admin panel token"
+    generate: hex:48
+  - key: SIGNUPS_ALLOWED
+    value: "true"
+
+health:
+  path: /alive
+  interval: 10s
+  timeout: 5s
+  retries: 3

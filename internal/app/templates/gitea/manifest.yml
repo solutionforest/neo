@@ -1,0 +1,71 @@
+name: gitea
+title: "Gitea"
+description: "Lightweight self-hosted Git service"
+category: developer-tools
+version: "1.22"
+image: gitea/gitea:1.22-rootless
+port: 3000
+maintainer: vxero
+official: true
+website: https://gitea.com
+tags: ["git", "source-code", "devops", "self-hosted-github"]
+min_ram: "512MB"
+min_disk: "1GB"
+notes: |
+  Create your admin account on first visit.
+  SSH access is available on port 2222 (container) if configured.
+links:
+  documentation: https://docs.gitea.com/
+  source: https://github.com/go-gitea/gitea
+  docker_hub: https://hub.docker.com/r/gitea/gitea
+
+volumes:
+  - name: gitea-data
+    path: /var/lib/gitea
+    label: "Gitea repositories and data"
+
+env:
+  - key: GITEA__server__ROOT_URL
+    label: "Public URL"
+    from: domain
+  - key: GITEA__server__DOMAIN
+    label: "Domain"
+    from: domain_host
+  - key: GITEA__database__DB_TYPE
+    value: postgres
+  - key: GITEA__database__HOST
+    from_service: postgres
+    template: "svc-gitea-postgres:5432"
+  - key: GITEA__database__NAME
+    value: gitea
+  - key: GITEA__database__USER
+    value: gitea
+  - key: GITEA__database__PASSWD
+    from_service: postgres
+    template: "${POSTGRES_PASSWORD}"
+  - key: GITEA__security__SECRET_KEY
+    generate: hex:32
+  - key: GITEA__security__INTERNAL_TOKEN
+    generate: hex:64
+
+services:
+  - name: postgres
+    image: postgres:16-alpine
+    port: 5432
+    volumes:
+      - name: gitea-db
+        path: /var/lib/postgresql/data
+        label: "PostgreSQL data"
+    env:
+      - key: POSTGRES_DB
+        value: gitea
+      - key: POSTGRES_USER
+        value: gitea
+      - key: POSTGRES_PASSWORD
+        generate: hex:32
+
+health:
+  path: /api/healthz
+  interval: 10s
+  timeout: 5s
+  retries: 3

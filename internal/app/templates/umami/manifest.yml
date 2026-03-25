@@ -1,0 +1,49 @@
+name: umami
+title: "Umami"
+description: "Simple, fast, privacy-focused web analytics"
+category: analytics
+version: "2.15"
+image: ghcr.io/umami-software/umami:postgresql-v2.15.0
+port: 3000
+maintainer: vxero
+official: true
+website: https://umami.is
+tags: ["analytics", "privacy", "lightweight"]
+min_ram: "512MB"
+min_disk: "1GB"
+notes: |
+  Default login: admin / umami
+  Change the default password immediately after first login.
+links:
+  documentation: https://umami.is/docs
+  source: https://github.com/umami-software/umami
+  docker_hub: https://ghcr.io/umami-software/umami
+
+env:
+  - key: DATABASE_URL
+    from_service: postgres
+    template: "postgresql://umami:${POSTGRES_PASSWORD}@svc-umami-postgres:5432/umami"
+  - key: APP_SECRET
+    generate: hex:32
+
+services:
+  - name: postgres
+    image: postgres:16-alpine
+    port: 5432
+    volumes:
+      - name: umami-db
+        path: /var/lib/postgresql/data
+        label: "PostgreSQL data"
+    env:
+      - key: POSTGRES_DB
+        value: umami
+      - key: POSTGRES_USER
+        value: umami
+      - key: POSTGRES_PASSWORD
+        generate: hex:32
+
+health:
+  path: /api/heartbeat
+  interval: 10s
+  timeout: 5s
+  retries: 3

@@ -1,0 +1,59 @@
+name: miniflux
+title: "Miniflux"
+description: "Minimalist and opinionated RSS feed reader"
+category: reading
+version: "2.2"
+image: miniflux/miniflux:2.2.5
+port: 8080
+maintainer: vxero
+official: true
+website: https://miniflux.app
+tags: ["rss", "feed-reader", "minimalist"]
+min_ram: "256MB"
+min_disk: "512MB"
+notes: |
+  You will be prompted for admin username and password during install.
+  Add RSS feeds after logging in.
+links:
+  documentation: https://miniflux.app/docs/
+  source: https://github.com/miniflux/v2
+  docker_hub: https://hub.docker.com/r/miniflux/miniflux
+
+env:
+  - key: DATABASE_URL
+    from_service: postgres
+    template: "postgres://miniflux:${POSTGRES_PASSWORD}@svc-miniflux-postgres:5432/miniflux?sslmode=disable"
+  - key: RUN_MIGRATIONS
+    value: "1"
+  - key: CREATE_ADMIN
+    value: "1"
+  - key: ADMIN_USERNAME
+    label: "Admin username"
+    ask: true
+  - key: ADMIN_PASSWORD
+    label: "Admin password"
+    ask: true
+  - key: BASE_URL
+    from: domain
+
+services:
+  - name: postgres
+    image: postgres:16-alpine
+    port: 5432
+    volumes:
+      - name: miniflux-db
+        path: /var/lib/postgresql/data
+        label: "PostgreSQL data"
+    env:
+      - key: POSTGRES_DB
+        value: miniflux
+      - key: POSTGRES_USER
+        value: miniflux
+      - key: POSTGRES_PASSWORD
+        generate: hex:32
+
+health:
+  path: /healthcheck
+  interval: 10s
+  timeout: 5s
+  retries: 3

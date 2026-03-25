@@ -1,0 +1,61 @@
+name: wordpress
+title: "WordPress"
+description: "The world's most popular CMS"
+category: cms
+version: "6.7"
+image: wordpress:6.7-apache
+port: 80
+maintainer: vxero
+official: true
+website: https://wordpress.org
+tags: ["cms", "blog", "website", "php"]
+min_ram: "512MB"
+min_disk: "2GB"
+notes: |
+  Visit https://<your-domain>/wp-admin/ to complete setup.
+  Create your admin account on first visit.
+links:
+  documentation: https://developer.wordpress.org/
+  source: https://github.com/WordPress/WordPress
+  docker_hub: https://hub.docker.com/_/wordpress
+
+volumes:
+  - name: wordpress-html
+    path: /var/www/html
+    label: "WordPress files"
+
+env:
+  - key: WORDPRESS_DB_HOST
+    from_service: mysql
+    template: "svc-wordpress-mysql"
+  - key: WORDPRESS_DB_NAME
+    value: wordpress
+  - key: WORDPRESS_DB_USER
+    value: wordpress
+  - key: WORDPRESS_DB_PASSWORD
+    from_service: mysql
+    template: "${MYSQL_PASSWORD}"
+
+services:
+  - name: mysql
+    image: mysql:8.0
+    port: 3306
+    volumes:
+      - name: wordpress-mysql
+        path: /var/lib/mysql
+        label: "MySQL data"
+    env:
+      - key: MYSQL_ROOT_PASSWORD
+        generate: hex:32
+      - key: MYSQL_DATABASE
+        value: wordpress
+      - key: MYSQL_USER
+        value: wordpress
+      - key: MYSQL_PASSWORD
+        generate: hex:32
+
+health:
+  path: /wp-admin/install.php
+  interval: 15s
+  timeout: 5s
+  retries: 5

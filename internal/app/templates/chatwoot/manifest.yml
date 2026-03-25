@@ -1,0 +1,75 @@
+name: chatwoot
+title: "Chatwoot"
+description: "Open-source customer engagement platform"
+category: support
+version: "3.14"
+image: chatwoot/chatwoot:v3.14.0
+port: 3000
+maintainer: vxero
+official: true
+website: https://www.chatwoot.com
+tags: ["support", "live-chat", "customer-engagement", "helpdesk"]
+min_ram: "2GB"
+min_disk: "2GB"
+notes: |
+  Create your admin account on first visit.
+  Requires PostgreSQL and Redis (both bundled).
+links:
+  documentation: https://www.chatwoot.com/docs/self-hosted
+  source: https://github.com/chatwoot/chatwoot
+  docker_hub: https://hub.docker.com/r/chatwoot/chatwoot
+
+volumes:
+  - name: chatwoot-storage
+    path: /app/storage
+    label: "Chatwoot file storage"
+
+env:
+  - key: FRONTEND_URL
+    label: "Public URL"
+    from: domain
+  - key: SECRET_KEY_BASE
+    generate: hex:64
+  - key: POSTGRES_HOST
+    from_service: postgres
+    template: "svc-chatwoot-postgres"
+  - key: POSTGRES_DATABASE
+    value: chatwoot
+  - key: POSTGRES_USERNAME
+    value: chatwoot
+  - key: POSTGRES_PASSWORD
+    from_service: postgres
+    template: "${POSTGRES_PASSWORD}"
+  - key: REDIS_URL
+    from_service: redis
+    template: "redis://svc-chatwoot-redis:6379"
+
+services:
+  - name: postgres
+    image: postgres:16-alpine
+    port: 5432
+    volumes:
+      - name: chatwoot-db
+        path: /var/lib/postgresql/data
+        label: "PostgreSQL data"
+    env:
+      - key: POSTGRES_DB
+        value: chatwoot
+      - key: POSTGRES_USER
+        value: chatwoot
+      - key: POSTGRES_PASSWORD
+        generate: hex:32
+
+  - name: redis
+    image: redis:7-alpine
+    port: 6379
+    volumes:
+      - name: chatwoot-redis
+        path: /data
+        label: "Redis data"
+
+health:
+  path: /auth/sign_in
+  interval: 15s
+  timeout: 5s
+  retries: 5

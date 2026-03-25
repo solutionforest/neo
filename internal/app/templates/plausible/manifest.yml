@@ -1,0 +1,73 @@
+name: plausible
+title: "Plausible Analytics"
+description: "Privacy-friendly Google Analytics alternative"
+category: analytics
+version: "2.1.4"
+image: ghcr.io/plausible/community-edition:v2.1.4
+port: 8000
+maintainer: vxero
+official: true
+website: https://plausible.io
+tags: ["analytics", "privacy", "google-analytics-alternative"]
+min_ram: "2GB"
+min_disk: "2GB"
+notes: |
+  Create your admin account on first visit.
+  Add the tracking script to your website to start collecting data.
+links:
+  documentation: https://plausible.io/docs
+  source: https://github.com/plausible/analytics
+  docker_hub: https://ghcr.io/plausible/community-edition
+
+volumes:
+  - name: plausible-events
+    path: /var/lib/plausible/db
+    label: "Analytics event data"
+
+env:
+  - key: BASE_URL
+    label: "Public URL"
+    from: domain
+  - key: SECRET_KEY_BASE
+    label: "Secret key"
+    generate: hex:64
+  - key: TOTP_VAULT_KEY
+    label: "TOTP vault key"
+    generate: base64:32
+  - key: DATABASE_URL
+    from_service: postgres
+    template: "postgres://postgres:${POSTGRES_PASSWORD}@svc-plausible-postgres:5432/plausible"
+  - key: CLICKHOUSE_DATABASE_URL
+    from_service: clickhouse
+    template: "http://svc-plausible-clickhouse:8123/plausible_events_db"
+
+services:
+  - name: postgres
+    image: postgres:16-alpine
+    port: 5432
+    volumes:
+      - name: plausible-db
+        path: /var/lib/postgresql/data
+        label: "PostgreSQL data"
+    env:
+      - key: POSTGRES_DB
+        value: plausible
+      - key: POSTGRES_PASSWORD
+        generate: hex:32
+
+  - name: clickhouse
+    image: clickhouse/clickhouse-server:24.3-alpine
+    port: 8123
+    volumes:
+      - name: plausible-events-ch
+        path: /var/lib/clickhouse
+        label: "ClickHouse data"
+    env:
+      - key: CLICKHOUSE_DB
+        value: plausible_events_db
+
+health:
+  path: /api/health
+  interval: 10s
+  timeout: 5s
+  retries: 3

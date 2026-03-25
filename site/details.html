@@ -1,0 +1,1168 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vxero Neo — Quick Start Guide</title>
+    <meta name="description" content="Full technical documentation for Vxero Neo: SSH deployment workflow, command reference, env management, docker-compose integration, and server requirements." />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+    <link rel="manifest" href="site.webmanifest" />
+    <meta name="theme-color" content="#0a0c10" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="Vxero Neo — Documentation &amp; Command Reference" />
+    <meta property="og:description" content="Full technical documentation: SSH deployment workflow, command reference, env management, docker-compose integration, and server requirements." />
+    <meta property="og:image" content="og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:site_name" content="Vxero Neo" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Vxero Neo — Documentation &amp; Command Reference" />
+    <meta name="twitter:description" content="Full technical documentation: SSH deployment workflow, command reference, env management, docker-compose integration, and server requirements." />
+    <meta name="twitter:image" content="og-image.png" />
+
+    <!-- SEO -->
+    <meta name="robots" content="index, follow" />
+    <meta name="author" content="Vxero" />
+    <link rel="canonical" href="https://vxero.com/neo/details" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <style>
+        :root {
+            --bg: #fafafa;
+            --bg-deep: #0a0c10;
+            --surface: rgba(255,255,255,0.8);
+            --surface-strong: #fff;
+            --border: rgba(15,23,42,0.06);
+            --border-strong: rgba(15,23,42,0.1);
+            --text: #0f172a;
+            --text-soft: #64748b;
+            --text-muted: #94a3b8;
+            --accent: #2563eb;
+            --accent-soft: rgba(37,99,235,0.08);
+            --green: #22c55e;
+            --green-soft: rgba(34,197,94,0.08);
+            --terminal-bg: #0b1017;
+            --shadow-sm: 0 1px 2px rgba(15,23,42,0.04);
+            --shadow-md: 0 8px 30px rgba(15,23,42,0.06);
+            --shadow-lg: 0 24px 60px rgba(15,23,42,0.1);
+            --radius-full: 999px;
+            --radius-2xl: 24px;
+            --radius-xl: 20px;
+            --radius-lg: 16px;
+            --radius-md: 12px;
+            --max-w: 1140px;
+        }
+
+        *,*::before,*::after { box-sizing: border-box; }
+        html { scroll-behavior: smooth; -webkit-font-smoothing: antialiased; }
+
+        body {
+            margin: 0;
+            font-family: 'Inter', -apple-system, sans-serif;
+            color: var(--text);
+            background: var(--bg);
+            line-height: 1.6;
+        }
+
+        a { color: inherit; text-decoration: none; }
+
+        .w { width: min(var(--max-w), calc(100% - 40px)); margin: 0 auto; }
+
+        /* ── NAV ── */
+        .nav {
+            position: sticky; top: 0; z-index: 100;
+            padding: 12px 0;
+            background: rgba(250,250,250,0.8);
+            backdrop-filter: blur(16px) saturate(1.8);
+            border-bottom: 1px solid var(--border);
+        }
+        .nav-inner {
+            display: flex; align-items: center; justify-content: space-between; gap: 16px;
+        }
+        .nav-brand {
+            display: flex; align-items: center; gap: 10px;
+            font-weight: 800; font-size: 0.95rem;
+        }
+        .nav-logo {
+            width: 32px; height: 32px; border-radius: 10px;
+            background: linear-gradient(135deg, #0b1020 0%, #1d4ed8 58%, #22c55e 100%);
+            display: grid; place-items: center;
+            color: #fff; font-size: 0.72rem; font-weight: 900;
+        }
+        .nav-links {
+            display: flex; align-items: center; gap: 28px;
+            font-size: 0.875rem; font-weight: 500; color: var(--text-soft);
+        }
+        .nav-links a:hover { color: var(--text); }
+        .nav-cta {
+            display: inline-flex; align-items: center; gap: 6px;
+            height: 36px; padding: 0 16px; border-radius: var(--radius-full);
+            background: var(--text); color: #fff;
+            font-size: 0.82rem; font-weight: 600;
+            font-family: inherit;
+            border: none; cursor: pointer;
+            transition: opacity 150ms;
+        }
+        .nav-cta:hover { opacity: 0.85; }
+
+        /* ── HERO ── */
+        .hero {
+            padding: 80px 0 0;
+            position: relative;
+            overflow: hidden;
+        }
+        .hero::before {
+            content: '';
+            position: absolute; inset: 0;
+            background:
+                radial-gradient(ellipse 60% 50% at 50% 0%, rgba(37,99,235,0.06), transparent),
+                radial-gradient(ellipse 40% 40% at 80% 10%, rgba(34,197,94,0.05), transparent);
+            pointer-events: none;
+        }
+        .hero-badge {
+            display: inline-flex; align-items: center; gap: 8px;
+            padding: 6px 14px; border-radius: var(--radius-full);
+            background: var(--accent-soft); border: 1px solid rgba(37,99,235,0.12);
+            color: var(--accent); font-size: 0.72rem; font-weight: 700;
+            letter-spacing: 0.06em; text-transform: uppercase;
+        }
+        .hero-badge-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            background: var(--accent);
+            animation: pulse-dot 2s ease-in-out infinite;
+        }
+        @keyframes pulse-dot {
+            0%,100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .hero h1 {
+            margin: 24px 0 0;
+            font-size: clamp(2.4rem, 5vw, 4rem);
+            font-weight: 900; line-height: 1.05;
+            letter-spacing: -0.04em;
+            text-wrap: balance;
+        }
+        .hero h1 .gradient {
+            background: linear-gradient(135deg, #2563eb, #22c55e);
+            -webkit-background-clip: text; background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .hero-sub {
+            margin: 18px 0 0; max-width: 620px;
+            color: var(--text-soft); font-size: 1.05rem; line-height: 1.7;
+        }
+
+        /* ── BUTTONS ── */
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+            height: 44px; padding: 0 22px; border-radius: var(--radius-full);
+            font-size: 0.88rem; font-weight: 700; border: none; cursor: pointer;
+            transition: transform 120ms, box-shadow 120ms, opacity 120ms;
+        }
+        .btn:hover { transform: translateY(-1px); }
+        .btn:active { transform: translateY(0); }
+        .btn-primary {
+            background: var(--text); color: #fff;
+            box-shadow: 0 4px 14px rgba(15,23,42,0.2);
+        }
+        .btn-secondary {
+            background: var(--surface-strong); color: var(--text);
+            border: 1px solid var(--border-strong);
+            box-shadow: var(--shadow-sm);
+        }
+
+        /* ── SECTIONS ── */
+        .section { padding: 80px 0; }
+        .section + .section { border-top: 1px solid var(--border); }
+        .section-badge {
+            display: inline-flex; align-items: center; height: 28px;
+            padding: 0 12px; border-radius: var(--radius-full);
+            border: 1px solid var(--border);
+            background: var(--surface-strong);
+            font-size: 0.72rem; font-weight: 700;
+            letter-spacing: 0.06em; text-transform: uppercase;
+            color: var(--text-soft);
+        }
+        .section-title {
+            margin: 16px 0 0;
+            font-size: clamp(1.6rem, 3vw, 2.4rem);
+            font-weight: 800; line-height: 1.1;
+            letter-spacing: -0.035em;
+            text-wrap: balance;
+        }
+        .section-sub {
+            margin: 12px 0 0; max-width: 620px;
+            color: var(--text-soft); font-size: 0.95rem; line-height: 1.7;
+        }
+        .section-header { max-width: 640px; }
+
+        /* ── CARDS ── */
+        .card-grid {
+            display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;
+            margin-top: 40px;
+        }
+        .card {
+            padding: 28px 24px;
+            border-radius: var(--radius-xl);
+            border: 1px solid var(--border);
+            background: var(--surface-strong);
+            box-shadow: var(--shadow-md);
+            transition: box-shadow 200ms, border-color 200ms;
+        }
+        .card:hover {
+            border-color: var(--border-strong);
+            box-shadow: var(--shadow-lg);
+        }
+        .card-icon {
+            width: 40px; height: 40px; border-radius: 10px;
+            display: grid; place-items: center;
+        }
+        .card-icon svg { width: 20px; height: 20px; }
+        .card-icon.blue { background: var(--accent-soft); color: var(--accent); }
+        .card-icon.green { background: var(--green-soft); color: var(--green); }
+        .card-icon.slate { background: rgba(100,116,139,0.08); color: #64748b; }
+        .card h3 {
+            margin: 14px 0 0;
+            font-size: 1rem; font-weight: 700;
+        }
+        .card p {
+            margin: 8px 0 0;
+            color: var(--text-soft); font-size: 0.88rem; line-height: 1.65;
+        }
+
+        /* ── CODE BLOCKS ── */
+        .code-block {
+            margin-top: 16px;
+            padding: 14px 18px;
+            border-radius: var(--radius-md);
+            background: var(--terminal-bg);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.78rem; line-height: 1.85;
+            color: rgba(226,232,240,0.88);
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+        .code-block .prompt { color: #22c55e; }
+        .code-block .comment { color: rgba(148,163,184,0.5); }
+        .code-block .output { color: rgba(148,163,184,0.6); }
+
+        .code-section {
+            padding: 28px 24px;
+            border-radius: var(--radius-xl);
+            border: 1px solid var(--border);
+            background: var(--surface-strong);
+            box-shadow: var(--shadow-md);
+        }
+        .code-section h3 {
+            margin: 0 0 4px;
+            font-size: 1rem; font-weight: 700;
+        }
+        .code-section p {
+            margin: 0;
+            color: var(--text-soft); font-size: 0.88rem; line-height: 1.65;
+        }
+
+        /* ── TABLE ── */
+        .compare-table {
+            width: 100%; border-collapse: collapse; font-size: 0.88rem;
+            margin-top: 40px;
+            border-radius: var(--radius-xl);
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+        .compare-table th {
+            padding: 14px 20px;
+            text-align: left; font-weight: 700; font-size: 0.78rem;
+            letter-spacing: 0.04em; text-transform: uppercase;
+            color: var(--text-soft);
+            background: var(--surface-strong);
+            border-bottom: 1px solid var(--border);
+        }
+        .compare-table td {
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface-strong);
+        }
+        .compare-table tr:last-child td { border-bottom: none; }
+        .compare-table td:first-child { font-weight: 600; color: var(--text); }
+
+        /* ── COMMANDS LIST ── */
+        .cmd-list {
+            margin-top: 40px;
+            list-style: none; padding: 0;
+            display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px;
+        }
+        .cmd-item {
+            padding: 24px;
+            border-radius: var(--radius-xl);
+            border: 1px solid var(--border);
+            background: var(--surface-strong);
+            box-shadow: var(--shadow-md);
+            transition: box-shadow 200ms, border-color 200ms;
+        }
+        .cmd-item:hover {
+            border-color: var(--border-strong);
+            box-shadow: var(--shadow-lg);
+        }
+        .cmd-mono {
+            display: inline-block;
+            padding: 8px 14px;
+            border-radius: var(--radius-md);
+            background: var(--terminal-bg);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.82rem; color: #86efac;
+            white-space: nowrap;
+            letter-spacing: -0.01em;
+        }
+        .cmd-desc {
+            margin-top: 10px;
+            color: var(--text-soft); font-size: 0.88rem; line-height: 1.65;
+        }
+
+        /* ── CTA ── */
+        .cta {
+            text-align: center; padding: 80px 0;
+        }
+        .cta h2 {
+            margin: 0;
+            font-size: clamp(1.8rem, 3.5vw, 2.8rem);
+            font-weight: 800; letter-spacing: -0.03em;
+        }
+        .cta p {
+            margin: 12px 0 0;
+            color: var(--text-soft); font-size: 0.95rem;
+        }
+        .cta-actions {
+            display: flex; align-items: center; justify-content: center;
+            gap: 12px; flex-wrap: wrap; margin-top: 28px;
+        }
+        .cta-install {
+            margin-top: 20px;
+            display: inline-flex; align-items: center; gap: 12px;
+            padding: 10px 14px 10px 20px;
+            border-radius: var(--radius-md);
+            background: var(--terminal-bg);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.82rem; color: rgba(226,232,240,0.85);
+        }
+        .hero .cta-install { margin-top: 0; }
+        .copy-btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 32px; height: 32px; border-radius: 8px;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.1);
+            cursor: pointer; color: rgba(226,232,240,0.6);
+            transition: background 150ms, color 150ms;
+            flex-shrink: 0;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.14); color: rgba(226,232,240,0.9); }
+        .copy-btn.copied { background: rgba(34,197,94,0.15); color: #86efac; }
+
+        /* ── FOOTER ── */
+        .footer {
+            padding: 32px 0 24px;
+            border-top: 1px solid var(--border);
+            color: var(--text-muted);
+            font-size: 0.78rem;
+        }
+        .footer-inner {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 16px; flex-wrap: wrap;
+        }
+        .footer a { color: var(--text-soft); }
+        .footer a:hover { color: var(--text); }
+        .footer-links { display: flex; gap: 20px; }
+        .footer-ascii {
+            margin: 0 0 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem; line-height: 1.4;
+            color: var(--text-muted);
+            opacity: 0.5;
+            text-align: center;
+            letter-spacing: 0.02em;
+        }
+
+        /* ── REVEAL ── */
+        .reveal {
+            opacity: 0; transform: translateY(16px);
+            transition: opacity 400ms ease, transform 400ms ease;
+        }
+        .reveal.vis { opacity: 1; transform: none; }
+
+        /* ── FLOW DIAGRAM ── */
+        .flow-diagram {
+            display: flex; align-items: stretch; justify-content: center;
+            gap: 0; margin-top: 48px;
+        }
+        .flow-col {
+            display: flex; flex-direction: column; align-items: center; gap: 12px;
+        }
+        .flow-col-local, .flow-col-server { flex: 1; max-width: 260px; }
+        .flow-col-tunnel { flex: 0 0 160px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .flow-label {
+            font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.08em; color: var(--text-soft);
+            margin-bottom: 8px; height: 20px;
+        }
+        .flow-node {
+            padding: 20px 16px; text-align: center;
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border);
+            background: var(--surface-strong);
+            box-shadow: var(--shadow-md);
+            width: 100%;
+            opacity: 0; transform: translateY(20px);
+            transition: opacity 500ms ease, transform 500ms ease;
+        }
+        .vis .flow-node-1 { opacity: 1; transform: none; transition-delay: 200ms; }
+        .vis .flow-node-2 { opacity: 1; transform: none; transition-delay: 400ms; }
+        .vis .flow-node-3 { opacity: 1; transform: none; transition-delay: 800ms; }
+        .vis .flow-node-4 { opacity: 1; transform: none; transition-delay: 1000ms; }
+        .flow-icon {
+            width: 44px; height: 44px; border-radius: 12px; margin: 0 auto;
+            display: grid; place-items: center;
+            background: var(--accent-soft); color: var(--accent);
+        }
+        .flow-icon.green { background: var(--green-soft); color: var(--green); }
+        .flow-icon svg { width: 22px; height: 22px; }
+        .flow-step-title {
+            margin-top: 10px; font-weight: 700; font-size: 0.92rem;
+        }
+        .flow-step-detail {
+            margin-top: 4px; font-size: 0.78rem; color: var(--text-soft); line-height: 1.5;
+        }
+        .flow-connector-v {
+            width: 2px; height: 20px;
+            background: linear-gradient(to bottom, var(--border-strong), var(--border));
+        }
+        .flow-tunnel {
+            position: relative; width: 100%; height: 180px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .flow-tunnel-line {
+            position: absolute; top: 50%; left: 0; right: 0;
+            height: 3px; transform: translateY(-50%);
+            background: linear-gradient(90deg, var(--accent), var(--green));
+            border-radius: 2px;
+            opacity: 0;
+            transition: opacity 600ms ease 600ms;
+        }
+        .vis .flow-tunnel-line { opacity: 1; }
+        .flow-tunnel-tag {
+            position: relative; z-index: 1;
+            padding: 4px 14px; border-radius: var(--radius-full);
+            background: var(--terminal-bg); color: #22c55e;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.72rem; font-weight: 700;
+            letter-spacing: 0.1em;
+            border: 1px solid rgba(34,197,94,0.2);
+        }
+        .flow-tunnel-packet {
+            position: absolute; top: 50%; transform: translateY(-50%);
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--green);
+            opacity: 0;
+        }
+        .vis .flow-tunnel-packet {
+            opacity: 0.7;
+            animation: flow-packet 2s ease-in-out infinite;
+        }
+        .vis .flow-packet-1 { animation-delay: 0s; }
+        .vis .flow-packet-2 { animation-delay: 0.7s; }
+        .vis .flow-packet-3 { animation-delay: 1.4s; }
+        @keyframes flow-packet {
+            0%   { left: 0; opacity: 0; }
+            10%  { opacity: 0.8; }
+            90%  { opacity: 0.8; }
+            100% { left: calc(100% - 8px); opacity: 0; }
+        }
+
+        /* Priority chain */
+        .flow-priority {
+            margin-top: 40px; text-align: center;
+            padding: 20px; border-radius: var(--radius-lg);
+            border: 1px solid var(--border);
+            background: var(--surface-strong);
+        }
+        .flow-priority-title {
+            font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.06em; color: var(--text-soft); margin-bottom: 12px;
+        }
+        .flow-priority-chain {
+            display: flex; align-items: center; justify-content: center;
+            gap: 8px; flex-wrap: wrap;
+        }
+        .flow-chip {
+            padding: 5px 12px; border-radius: var(--radius-full);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.72rem; font-weight: 600;
+            background: rgba(37,99,235,0.06); color: var(--accent);
+            border: 1px solid rgba(37,99,235,0.12);
+        }
+        .flow-chip.chip-strong {
+            background: var(--accent); color: #fff;
+            border-color: var(--accent);
+        }
+        .flow-chip.chip-faint {
+            background: rgba(100,116,139,0.06); color: var(--text-soft);
+            border-color: var(--border);
+        }
+        .flow-arrow {
+            font-size: 1.2rem; color: var(--text-muted); font-weight: 300;
+        }
+
+        /* ── RESPONSIVE ── */
+        @media (max-width: 768px) {
+            .nav-links { display: none; }
+            .hero { padding-top: 48px; }
+            .hero h1 { font-size: clamp(2rem, 8vw, 2.8rem); }
+            .card-grid,
+            .cmd-list { grid-template-columns: 1fr; }
+            .section { padding: 56px 0; }
+            .flow-diagram { flex-direction: column; gap: 0; align-items: center; }
+            .flow-col-local, .flow-col-server { max-width: 100%; width: 100%; }
+            .flow-col-tunnel { flex: 0 0 80px; width: 100%; }
+            .flow-tunnel { height: 80px; width: 80px; flex-direction: column; }
+            .flow-tunnel-line {
+                width: 3px; height: 100%; left: 50%; top: 0; right: auto;
+                transform: translateX(-50%);
+                background: linear-gradient(180deg, var(--accent), var(--green));
+            }
+            @keyframes flow-packet {
+                0%   { top: 0; left: 50%; opacity: 0; transform: translate(-50%, 0); }
+                10%  { opacity: 0.8; }
+                90%  { opacity: 0.8; }
+                100% { top: calc(100% - 8px); left: 50%; opacity: 0; transform: translate(-50%, 0); }
+            }
+            .flow-priority-chain { gap: 6px; }
+            .flow-chip { font-size: 0.65rem; padding: 4px 8px; }
+        }
+
+    </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav">
+    <div class="w nav-inner">
+        <a href="index.html" class="nav-brand">
+            <div class="nav-logo">N</div>
+            <span>Vxero Neo</span>
+        </a>
+        <div class="nav-links">
+            <a href="index.html">Home</a>
+            <a href="details.html">Quick Start</a>
+            <a href="docs.html">Docs</a>
+            <a href="https://github.com/vxero/neo">GitHub</a>
+        </div>
+        <button class="nav-cta copy-cmd" data-copy="curl -fsSL https://get.vxero.dev/neo | sh">Install CLI</button>
+    </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+    <div class="w">
+        <div class="hero-badge">
+            <span class="hero-badge-dot"></span>
+            Quick Start
+        </div>
+        <h1>Get started with Neo<br>in <span class="gradient">five minutes.</span></h1>
+        <p class="hero-sub">
+            Neo is a local CLI that reaches your server over SSH, shapes Docker and Caddy on the target machine, and keeps build and deploy paths inside one smaller operational loop.
+        </p>
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 28px;">
+            <div class="cta-install" style="margin-top: 0;">
+                <span>curl -fsSL https://get.vxero.dev/neo | sh</span>
+                <button class="copy-btn" data-copy="curl -fsSL https://get.vxero.dev/neo | sh" aria-label="Copy to clipboard">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+            </div>
+            <a class="btn btn-secondary" href="index.html">Back to landing</a>
+        </div>
+    </div>
+</section>
+
+<!-- WORKFLOW -->
+<section class="section reveal" id="workflow">
+    <div class="w">
+        <div class="section-header">
+            <span class="section-badge">Core workflow</span>
+            <h2 class="section-title">Four steps from bare VPS to live app.</h2>
+            <p class="section-sub">Every operation goes through SSH. No agent installed, no control plane to maintain. Neo reads your existing docker-compose.yml and .env files automatically.</p>
+        </div>
+        <div class="card-grid">
+            <div class="card">
+                <div class="card-icon blue">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M7 12h10M12 7v10"/></svg>
+                </div>
+                <h3>1. Initialize the machine</h3>
+                <p>Connect over SSH, verify the OS (Ubuntu 24.04+ or Debian), install Docker, create the <code>neo</code> network, start Caddy, and persist server state.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon green">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </div>
+                <h3>2. Install or deploy</h3>
+                <p>Use a built-in template for a known stack (Ghost, Plausible, WordPress...), or deploy your own Dockerfile-based app directly.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon blue">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                </div>
+                <h3>3. Route traffic</h3>
+                <p>Caddy stays in front of the apps so domains and TLS certificates remain part of the same operating flow. Zero-downtime config reloads.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon slate">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                </div>
+                <h3>4. Keep operating locally</h3>
+                <p>Logs, status checks, restarts, domain changes, and follow-up commands still run from your machine through the same SSH tunnel.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- FLOW DIAGRAM -->
+<section class="section reveal" id="flow">
+    <div class="w">
+        <div class="section-header" style="text-align:center; max-width:none;">
+            <span class="section-badge">How neo deploy works</span>
+            <h2 class="section-title" style="text-align:center;">From your project to a live server in one command.</h2>
+            <p class="section-sub" style="text-align:center; margin-left:auto; margin-right:auto;">Neo reads your local config, builds the image, transfers it over SSH, and swaps traffic with zero downtime.</p>
+        </div>
+
+        <div class="flow-diagram">
+            <!-- LEFT: Your Laptop -->
+            <div class="flow-col flow-col-local">
+                <div class="flow-label">Your Laptop</div>
+                <div class="flow-node flow-node-1">
+                    <div class="flow-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="14" rx="2"/><path d="M2 20h20"/></svg>
+                    </div>
+                    <div class="flow-step-title">Read config</div>
+                    <div class="flow-step-detail">docker-compose.yml<br>.env &middot; .neo.yml</div>
+                </div>
+                <div class="flow-connector-v"></div>
+                <div class="flow-node flow-node-2">
+                    <div class="flow-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                    </div>
+                    <div class="flow-step-title">Build image</div>
+                    <div class="flow-step-detail">Docker build<br>from Dockerfile</div>
+                </div>
+            </div>
+
+            <!-- MIDDLE: SSH tunnel -->
+            <div class="flow-col flow-col-tunnel">
+                <div class="flow-label">&nbsp;</div>
+                <div class="flow-tunnel">
+                    <div class="flow-tunnel-line"></div>
+                    <div class="flow-tunnel-packet flow-packet-1"></div>
+                    <div class="flow-tunnel-packet flow-packet-2"></div>
+                    <div class="flow-tunnel-packet flow-packet-3"></div>
+                    <div class="flow-tunnel-tag">SSH</div>
+                </div>
+            </div>
+
+            <!-- RIGHT: VPS -->
+            <div class="flow-col flow-col-server">
+                <div class="flow-label">Your VPS</div>
+                <div class="flow-node flow-node-3">
+                    <div class="flow-icon green">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>
+                    </div>
+                    <div class="flow-step-title">Load image</div>
+                    <div class="flow-step-detail">docker load<br>+ health check</div>
+                </div>
+                <div class="flow-connector-v"></div>
+                <div class="flow-node flow-node-4">
+                    <div class="flow-icon green">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    </div>
+                    <div class="flow-step-title">Live!</div>
+                    <div class="flow-step-detail">Caddy routes traffic<br>auto-SSL via Let's Encrypt</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Priority chain below -->
+        <div class="flow-priority">
+            <div class="flow-priority-title">Env var priority (highest wins)</div>
+            <div class="flow-priority-chain">
+                <span class="flow-chip chip-strong">--env flag</span>
+                <span class="flow-arrow">&rsaquo;</span>
+                <span class="flow-chip">--env-file</span>
+                <span class="flow-arrow">&rsaquo;</span>
+                <span class="flow-chip">.neo.yml</span>
+                <span class="flow-arrow">&rsaquo;</span>
+                <span class="flow-chip">docker-compose.yml</span>
+                <span class="flow-arrow">&rsaquo;</span>
+                <span class="flow-chip chip-faint">server state</span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- COMMANDS -->
+<section class="section reveal" id="commands">
+    <div class="w">
+        <div class="section-header">
+            <span class="section-badge">Commands</span>
+            <h2 class="section-title">Every command Neo provides.</h2>
+            <p class="section-sub">All commands use the same pattern: resolve the server, connect via SSH, operate, and save state.</p>
+        </div>
+
+        <div class="cmd-list">
+            <div class="cmd-item">
+                <code class="cmd-mono">neo</code>
+                <div class="cmd-desc">Launch the interactive TUI dashboard. Browse servers, apps, and actions without memorizing flags.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo init &lt;host&gt;</code>
+                <div class="cmd-desc">Initialize a new server. Validates the OS (Ubuntu 24.04+ or Debian required), installs Docker, starts Caddy, creates the neo network, and saves server state.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo install &lt;app&gt;</code>
+                <div class="cmd-desc">Install a templated app (Ghost, Plausible, WordPress, etc.) with bundled database, volumes, and routing.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo deploy .</code>
+                <div class="cmd-desc">Build from a local Dockerfile, transfer the image via SSH, start the container, and configure routing. Auto-reads env vars from <code>docker-compose.yml</code>, <code>.env</code>, or <code>.neo.yml</code>. Deploys background workers and persistent volumes declared in <code>.neo.yml</code>. Supports <code>--env KEY=VAL</code>, <code>--env-file .env</code>, and <code>--to &lt;env&gt;</code> flags.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo env &lt;app&gt;</code>
+                <div class="cmd-desc">View all environment variables for an app. Secrets are automatically masked in output.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo env set &lt;app&gt; K=V</code>
+                <div class="cmd-desc">Set or update environment variables. The container restarts automatically with the new config.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo env unset &lt;app&gt; KEY</code>
+                <div class="cmd-desc">Remove an environment variable. The container restarts automatically with the updated config.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo env import &lt;app&gt; .env</code>
+                <div class="cmd-desc">Bulk import variables from a <code>.env</code> file. Existing values are updated, new ones are added.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo list</code>
+                <div class="cmd-desc">List all running apps on the current server with their status, domains, workers, and ports.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo logs &lt;app&gt;</code>
+                <div class="cmd-desc">Stream live container logs from the remote server. Supports <code>--tail</code>, <code>--follow</code>, and <code>--worker &lt;name&gt;</code> flags.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo domain &lt;app&gt; &lt;domain&gt;</code>
+                <div class="cmd-desc">Assign or update a domain for a running app. Caddy provisions the TLS certificate automatically.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo stop|start|restart &lt;app&gt;</code>
+                <div class="cmd-desc">Control the lifecycle of an app and its workers on the remote server. All worker containers are started, stopped, or restarted alongside the main app.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo update &lt;app&gt;</code>
+                <div class="cmd-desc">Pull the latest image for an app and redeploy it. Useful for keeping templated apps up to date.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo remove &lt;app&gt;</code>
+                <div class="cmd-desc">Stop and remove an app container, its services, and its Caddy routing entry.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo servers</code>
+                <div class="cmd-desc">List all configured servers. Add, switch, or remove servers from the local config.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo use &lt;name&gt;</code>
+                <div class="cmd-desc">Switch the active server. All subsequent commands target this server unless overridden with <code>--server</code>.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo ssh</code>
+                <div class="cmd-desc">Open an interactive SSH session to the current server. Replaces the process on Unix systems.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo version</code>
+                <div class="cmd-desc">Show the current version and check for updates. Contacts the download server to compare versions.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo upgrade</code>
+                <div class="cmd-desc">Self-update neo to the latest version. Downloads the correct binary for your OS/arch and replaces the current installation in-place.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo backup &lt;app&gt;</code>
+                <div class="cmd-desc">Backup an app's data volumes to a compressed archive on the server. Optionally download to your local machine. <span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:0.68rem;font-weight:700;letter-spacing:0.04em;vertical-align:middle;">NEO+</span></div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo restore &lt;app&gt; &lt;file&gt;</code>
+                <div class="cmd-desc">Restore an app from a backup archive. Overwrites current data volumes with the backup contents. <span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:0.68rem;font-weight:700;letter-spacing:0.04em;vertical-align:middle;">NEO+</span></div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo volumes</code>
+                <div class="cmd-desc">List all Docker volumes on the current server, showing which app owns each volume.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo volumes mount &lt;vol&gt; &lt;path&gt;</code>
+                <div class="cmd-desc">Mount a Docker volume to a host path (e.g. external SSD). Briefly stops the app, copies data, and remounts. <span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:0.68rem;font-weight:700;letter-spacing:0.04em;vertical-align:middle;">NEO+</span></div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">neo connect</code>
+                <div class="cmd-desc">Migrate the current server to Vxero. One-way transfer &mdash; your Docker apps keep running while Vxero adds the management layer.</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- .NEO.YML -->
+<section class="section reveal" id="neo-yml">
+    <div class="w">
+        <div class="section-header">
+            <span class="section-badge">Configuration</span>
+            <h2 class="section-title">.neo.yml reference</h2>
+            <p class="section-sub">Optional project config file. All fields are optional &mdash; Neo works fine without it.</p>
+        </div>
+
+        <div class="code-block" style="margin-top:32px;">
+            <pre style="margin:0;padding:24px;background:var(--terminal-bg);border-radius:var(--radius-lg);color:rgba(226,232,240,0.92);font-family:'JetBrains Mono',monospace;font-size:0.8rem;line-height:1.8;overflow-x:auto;"><span style="color:#94a3b8;"># App identity</span>
+<span style="color:#93c5fd;">name:</span> my-app              <span style="color:#94a3b8;"># app name (default: directory name)</span>
+<span style="color:#93c5fd;">domain:</span> app.example.com   <span style="color:#94a3b8;"># domain (default: prompt or nip.io)</span>
+<span style="color:#93c5fd;">port:</span> 8080                <span style="color:#94a3b8;"># container port (default: Dockerfile EXPOSE)</span>
+<span style="color:#93c5fd;">server:</span> production        <span style="color:#94a3b8;"># pin to a named server</span>
+
+<span style="color:#94a3b8;"># Environment variables (non-sensitive defaults)</span>
+<span style="color:#93c5fd;">env:</span>
+  <span style="color:#86efac;">APP_ENV:</span> production
+  <span style="color:#86efac;">LOG_CHANNEL:</span> stderr
+<span style="color:#93c5fd;">env_file:</span> .env.production  <span style="color:#94a3b8;"># load from file</span>
+
+<span style="color:#94a3b8;"># Persistent volumes (survive redeploys)</span>
+<span style="color:#93c5fd;">volumes:</span>
+  <span style="color:#86efac;">data:</span>
+    <span style="color:#fde68a;">path:</span> /var/www/html/database
+  <span style="color:#86efac;">storage:</span>
+    <span style="color:#fde68a;">path:</span> /var/www/html/storage
+
+<span style="color:#94a3b8;"># Background workers (same image, different command)</span>
+<span style="color:#93c5fd;">workers:</span>
+  <span style="color:#86efac;">queue:</span>
+    <span style="color:#fde68a;">command:</span> php artisan queue:work --tries=3
+  <span style="color:#86efac;">scheduler:</span>
+    <span style="color:#fde68a;">command:</span> php artisan schedule:work
+
+<span style="color:#94a3b8;"># Named environments (override top-level values)</span>
+<span style="color:#93c5fd;">environments:</span>
+  <span style="color:#86efac;">production:</span>
+    <span style="color:#fde68a;">domain:</span> app.example.com
+  <span style="color:#86efac;">staging:</span>
+    <span style="color:#fde68a;">domain:</span> staging.example.com
+    <span style="color:#fde68a;">env:</span>
+      <span style="color:#fde68a;">APP_DEBUG:</span> "true"</pre>
+        </div>
+
+        <div class="cmd-list" style="margin-top:32px;">
+            <div class="cmd-item">
+                <code class="cmd-mono">workers</code>
+                <div class="cmd-desc">Each worker runs as a separate container using the same image, env vars, and volumes as the main app &mdash; but with a custom command. Workers are deployed with blue-green rollout, managed by <code>start</code>/<code>stop</code>/<code>restart</code>, and removable by deleting them from the config. View logs with <code>neo logs &lt;app&gt; --worker &lt;name&gt;</code>.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">volumes</code>
+                <div class="cmd-desc">Named Docker volumes are created on first deploy (prefixed with the app name, e.g. <code>my-app-data</code>) and preserved across all subsequent redeploys. New volumes added to <code>.neo.yml</code> are created on the next deploy without affecting existing ones.</div>
+            </div>
+            <div class="cmd-item">
+                <code class="cmd-mono">environments</code>
+                <div class="cmd-desc">Named deployment targets that override top-level config. Deploy to a specific environment with <code>neo deploy --to staging</code>. If multiple environments exist and no <code>--to</code> flag is provided, Neo prompts you to select one.</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ARCHITECTURE -->
+<section class="section reveal" id="architecture">
+    <div class="w">
+        <div class="section-header">
+            <span class="section-badge">Compare</span>
+            <h2 class="section-title">DIY, Neo, or Vxero?</h2>
+            <p class="section-sub">Managing servers yourself means googling Docker commands, debugging SSL, and waking up at 3am. Neo automates the basics. Vxero handles the rest.</p>
+        </div>
+
+        <table class="compare-table" style="margin-top: 40px;">
+            <thead>
+                <tr>
+                    <th style="width: 28%;">Task</th>
+                    <th>DIY (manual SSH)</th>
+                    <th>Neo (Free)</th>
+                    <th>Neo+</th>
+                    <th style="color: var(--accent);">Vxero</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Deploy an app</td>
+                    <td>Write Dockerfile, docker build, docker run, networking...</td>
+                    <td><code>neo install ghost</code></td>
+                    <td><code>neo install ghost</code></td>
+                    <td>Git push or one-click template</td>
+                </tr>
+                <tr>
+                    <td>SSL certificates</td>
+                    <td>Install certbot, cron renewal, debug DNS...</td>
+                    <td>Automatic via Caddy</td>
+                    <td>Automatic via Caddy</td>
+                    <td>Automatic + dashboard</td>
+                </tr>
+                <tr>
+                    <td>Database setup</td>
+                    <td>Install, secure, create user, passwords...</td>
+                    <td>Bundled in templates</td>
+                    <td>Bundled in templates</td>
+                    <td>Managed database service</td>
+                </tr>
+                <tr>
+                    <td>Manage servers</td>
+                    <td>As many as you can handle</td>
+                    <td>Up to 2</td>
+                    <td style="color: var(--accent); font-weight: 600;">Unlimited</td>
+                    <td style="color: var(--accent); font-weight: 600;">All at once (by plan)</td>
+                </tr>
+                <tr>
+                    <td>App shell / exec</td>
+                    <td><code>docker exec</code> via SSH</td>
+                    <td>&mdash;</td>
+                    <td><code>neo exec &lt;app&gt;</code></td>
+                    <td>Web terminal</td>
+                </tr>
+                <tr>
+                    <td>Backups</td>
+                    <td>Write cron scripts, manage rotation</td>
+                    <td>&mdash;</td>
+                    <td><code>neo backup</code></td>
+                    <td>Automated with retention</td>
+                </tr>
+                <tr>
+                    <td>Monitoring</td>
+                    <td>Install Prometheus/Grafana yourself</td>
+                    <td>&mdash;</td>
+                    <td>&mdash;</td>
+                    <td>Built-in dashboard + alerts</td>
+                </tr>
+                <tr>
+                    <td>Team access</td>
+                    <td>Share SSH keys (risky)</td>
+                    <td>&mdash;</td>
+                    <td>&mdash;</td>
+                    <td>RBAC with audit logs</td>
+                </tr>
+                <tr>
+                    <td>Rollback</td>
+                    <td>Hope you tagged the old image</td>
+                    <td>&mdash;</td>
+                    <td>&mdash;</td>
+                    <td>One-click rollback</td>
+                </tr>
+                <tr>
+                    <td>Cost</td>
+                    <td>Free (your time is the cost)</td>
+                    <td>Free forever</td>
+                    <td style="font-weight: 600;">$9/mo</td>
+                    <td style="color: var(--accent); font-weight: 600;">From $49/mo</td>
+                </tr>
+            </tbody>
+        </table>
+        <div style="margin-top: 32px; padding: 20px 24px; background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.2); border-radius: 12px; font-size: 0.95rem; line-height: 1.6;">
+            <strong style="color: var(--accent);">Server Requirements</strong><br>
+            Neo requires <strong>Ubuntu 24.04+</strong> or <strong>Debian</strong> on the target server. Older Ubuntu versions (22.04, 20.04, etc.) and other distros (CentOS, RHEL, Alpine, Fedora) are not supported. <code>neo init</code> will automatically detect your OS and display an error if it is unsupported.
+        </div>
+    </div>
+</section>
+
+<!-- NEO+ -->
+<section class="section reveal" id="neo-plus">
+    <div class="w">
+        <div class="section-header">
+            <span class="section-badge">Neo+</span>
+            <h2 class="section-title">Power-user features for $79/year.</h2>
+            <p class="section-sub">Neo is free forever for the core workflow. Neo+ adds deep introspection, real-time visibility, and data protection &mdash; ~$6.58/month, less than a coffee a week.</p>
+        </div>
+
+        <div class="card-grid" style="margin-top: 40px;">
+            <div class="card">
+                <div class="card-icon blue">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                </div>
+                <h3>App terminal</h3>
+                <p>Drop into a running container with <code>neo exec &lt;app&gt;</code>. Full interactive shell &mdash; debug issues, inspect files, run database migrations without manual SSH juggling.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon green">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                </div>
+                <h3>Real-time app metrics</h3>
+                <p>Live CPU, RAM, and I/O per container. See exactly which app is spiking and why &mdash; streamed directly over SSH, no agent or SaaS required.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon slate">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                </div>
+                <h3>Real-time VM metrics</h3>
+                <p>Server-level CPU, memory, disk I/O, and network throughput. Know the health of your VPS at a glance before issues become incidents.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon blue">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+                </div>
+                <h3>One-off exec</h3>
+                <p>Run any command inside a container without opening a shell. <code>neo run &lt;app&gt; -- php artisan migrate</code> is all it takes &mdash; perfect for migrations, seeds, and cache clears.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon green">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </div>
+                <h3>Local backup</h3>
+                <p>Download app data volumes directly to your laptop with <code>neo backup pull &lt;app&gt;</code>. Your data stays in your hands &mdash; no cloud storage, no third-party access, no recurring cost.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon slate">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                </div>
+                <h3>Unlimited servers</h3>
+                <p>Free tier supports up to 2 servers. Neo+ removes the cap &mdash; manage staging, production, and every side project from one config file.</p>
+            </div>
+        </div>
+
+        <div style="margin-top: 32px; text-align: center;">
+            <p style="color: var(--text-muted); font-size: 0.82rem;">Neo+ is coming soon &mdash; $79/user/year. <a href="index.html#pricing" style="color: var(--accent); font-weight: 600;">See full pricing comparison &rarr;</a></p>
+        </div>
+    </div>
+</section>
+
+<!-- NEO CONNECT -->
+<section class="section reveal" id="neo-connect">
+    <div class="w">
+        <div class="section-header">
+            <span class="section-badge">Neo connect</span>
+            <h2 class="section-title">One command to upgrade to Vxero.</h2>
+            <p class="section-sub">When you outgrow the CLI, <code>neo connect</code> migrates your server to the full Vxero platform. Your Docker apps keep running &mdash; you just get a management layer on top.</p>
+        </div>
+
+        <div class="code-section" style="margin-top: 40px;">
+            <h3>How it works</h3>
+            <p>The transfer is one-way. Neo analyzes your apps and services, creates a migration plan, and hands the server to Vxero.</p>
+            <div class="code-block"><span class="prompt">$</span> neo connect
+<span class="output">
+  Analyzing server state...
+  Found 3 apps, 2 services (mysql, redis)
+
+  Migration plan:
+    ghost       -> Vxero project (Docker)
+    plausible   -> Vxero project (Docker)
+    mysql       -> Managed MySQL service
+    redis       -> Managed Redis service
+
+  Connecting to Vxero...
+  Server transferred successfully.
+  Dashboard: https://app.vxero.dev/servers/prod-1</span></div>
+        </div>
+
+        <div class="card-grid" style="margin-top: 24px;">
+            <div class="card">
+                <div class="card-icon green">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                <h3>Zero downtime</h3>
+                <p>Your apps keep running in Docker while Vxero gradually transitions management. No restart, no migration window.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon blue">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                </div>
+                <h3>Team access unlocked</h3>
+                <p>After migration, invite teammates with role-based access, monitoring dashboards, and audit logs &mdash; features a local CLI can't provide.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- CTA -->
+<section class="cta reveal">
+    <div class="w">
+        <h2>Ready to deploy?</h2>
+        <p>Get Neo installed in seconds and have your first app running in minutes. No sign-up required.</p>
+        <div class="cta-actions">
+            <a class="btn btn-secondary" href="index.html">Back to landing</a>
+        </div>
+        <div class="cta-install">
+            <span>curl -fsSL https://get.vxero.dev/neo | sh</span>
+            <button class="copy-btn" data-copy="curl -fsSL https://get.vxero.dev/neo | sh" aria-label="Copy to clipboard">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+        </div>
+    </div>
+</section>
+
+<!-- FOOTER -->
+<footer class="footer">
+    <div class="w">
+        <pre class="footer-ascii" aria-hidden="true">█ █ ▀▄▀ █▀▀ █▀█ █▀█ ┃ █▄ █ █▀▀ █▀█
+▀▄▀ █ █ ██▄ █▀▄ █▄█ ┃ █ ▀█ ██▄ █▄█</pre>
+        <div class="footer-inner">
+            <div>&copy; 2026 Vxero Neo</div>
+            <div class="footer-links">
+                <a href="https://vxero.dev">Vxero</a>
+                <a href="index.html">Home</a>
+                <a href="https://github.com/vxero/neo">GitHub</a>
+            </div>
+        </div>
+    </div>
+</footer>
+
+<script>
+(function() {
+    var obs = new IntersectionObserver(function(entries) {
+        entries.forEach(function(e) {
+            if (e.isIntersecting) { e.target.classList.add('vis'); obs.unobserve(e.target); }
+        });
+    }, { threshold: 0.15 });
+    document.querySelectorAll('.reveal:not(.vis)').forEach(function(el) { obs.observe(el); });
+
+    // ── Copy to clipboard (icon buttons) ──
+    document.querySelectorAll('.copy-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var text = btn.getAttribute('data-copy');
+            navigator.clipboard.writeText(text).then(function() {
+                btn.classList.add('copied');
+                btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+                setTimeout(function() {
+                    btn.classList.remove('copied');
+                    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+                }, 2000);
+            });
+        });
+    });
+
+    // ── Copy to clipboard (text buttons) ──
+    document.querySelectorAll('.copy-cmd').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var text = btn.getAttribute('data-copy');
+            var original = btn.textContent;
+            navigator.clipboard.writeText(text).then(function() {
+                btn.textContent = 'Copied!';
+                setTimeout(function() { btn.textContent = original; }, 2000);
+            });
+        });
+    });
+})();
+</script>
+
+</body>
+</html>

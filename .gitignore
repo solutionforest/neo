@@ -1,0 +1,13 @@
+bin/
+dist/
+site/neo-*
+site/*.exe
+
+# Integration test data — only small fixtures (hello-world, laravel-app) are tracked
+testdata/test-laravel/
+
+# All integration test data
+testdata/
+
+# neo-cms is its own separate repo
+neo-cms/

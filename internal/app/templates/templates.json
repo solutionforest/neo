@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "generated_at": "2026-03-23T05:23:37Z",
+  "templates": [
+    {
+      "name": "chatwoot",
+      "title": "Chatwoot",
+      "description": "Open-source customer engagement platform",
+      "category": "support",
+      "version": "3.14",
+      "maintainer": "vxero",
+      "official": true,
+      "tags": [
+        "support",
+        "live-chat",
+        "customer-engagement",
+        "helpdesk"
+      ]
+    },
+    {
+      "name": "ghost",
+      "title": "Ghost",
+      "description": "Professional publishing platform",
+      "category": "blogging",
+      "version": "5.98",
+      "maintainer": "vxero",
+      "official": true,
+      "tags": [
+        "blog",
+        "publishing",
+        "newsletter",
+        "cms"
+      ]
+    },
+    {
+      "name": "gitea",
+      "title": "Gitea",
+      "description": "Lightweight self-hosted Git service",
+      "category": "developer-tools",
+      "version": "1.22",
+      "maintainer": "vxero",
+      "official": true,
+      "tags": [
+        "git",
+        "source-code",
+        "devops",
+        "self-hosted-github"
+      ]
+    },
+    {
+      "name": "miniflux",
+      "title": "Miniflux",
+      "description": "Minimalist and opinionated RSS feed reader",
+      "category": "reading",
+      "version": "2.2",
+      "maintainer": "vxero",
+      "official": true,
+      "tags": [
+        "rss",
+        "feed-reader",
+        "minimalist"
+      ]
+    },
+    {
+      "name": "n8n",
+      "title": "n8n",
+      "description": "Workflow automation tool",
+      "category": "automation",
+      "version": "1.72",
+      "maintainer": "vxero",
+      "official": true,
+      "tags": [
+        "automation",
+        "workflow",
+        "integration",
+        "no-code"
+      ]
+    },
+    {
+      "name": "plausible",
+      "title": "Plausible Analytics",
+      "description": "Privacy-friendly Google Analytics alternative",
+      "category": "analytics",
+      "version": "2.1.4",
+      "maintainer": "vxero",
+      "official": true,
+      "tags": [
+        "analytics",
+        "privacy",
+        "google-analytics-alternative"
+      ]
+    },
+    {
+      "name": "umami",
+      "title": "Umami",
+      "description": "Simple, fast, privacy-focused web analytics",
+      "category": "analytics",
+      "version": "2.15",
+      "maintainer": "vxero",
+      "official": true,
+      "tags": [
+        "analytics",
+        "privacy",
+        "lightweight"
+      ]
+    },
+    {
+      "name": "uptime-kuma",
+      "title": "Uptime Kuma",
+      "description": "Self-hosted monitoring tool",
+      "category": "monitoring",
+      "version": "1.23",
+      "maintainer": "vxero",
+      "official": true,
+      "tags": [
+        "monitoring",
+        "uptime",
+        "status-page",
+        "alerting"
+      ]
+    },
+    {
+      "name": "vaultwarden",
+      "title": "Vaultwarden",
+      "description": "Lightweight Bitwarden-compatible password manager",
+      "category": "security",
+      "version": "1.32",
+      "maintainer": "vxero",
+      "official": true,
+      "tags": [
+        "passwords",
+        "bitwarden",
+        "security",
+        "vault"
+      ]
+    },
+    {
+      "name": "wordpress",
+      "title": "WordPress",
+      "description": "The world's most popular CMS",
+      "category": "cms",
+      "version": "6.7",
+      "maintainer": "vxero",
+      "official": true,
+      "tags": [
+        "cms",
+        "blog",
+        "website",
+        "php"
+      ]
+    }
+  ]
+}

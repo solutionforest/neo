@@ -1,0 +1,1111 @@
+package commands
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/charmbracelet/huh"
+	"github.com/spf13/cobra"
+	"github.com/vxero/neo/internal/config"
+	"github.com/vxero/neo/internal/remote"
+	neossh "github.com/vxero/neo/internal/ssh"
+	"github.com/vxero/neo/internal/state"
+	"github.com/vxero/neo/internal/ui"
+)
+
+// runDashboard is the interactive TUI entry point for `neo` with no arguments.
+func runDashboard(cmd *cobra.Command, args []string) error {
+	ui.SetVersion(cliVersion)
+	defer ui.ShowCursor() // restore cursor on exit (Ctrl+C handled in ReadKey)
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	// No servers? Print quick-start instructions instead of launching a blank TUI
+	if len(cfg.Servers) == 0 {
+		ui.PrintBanner(cliVersion)
+		fmt.Println("  No servers configured yet.")
+		fmt.Println()
+		fmt.Printf("  To get started, run:\n")
+		fmt.Printf("    %s\n", ui.Bold.Render("neo init root@<your-server-ip>"))
+		fmt.Println()
+		fmt.Printf("  Example:\n")
+		fmt.Printf("    %s\n", ui.Faint.Render("neo init root@159.65.100.42"))
+		fmt.Println()
+		return nil
+	}
+
+	// Parallel background refresh with concurrency limit (max 10 simultaneous SSH connections).
+	// Goroutines are non-blocking — menu renders from in-memory cache instantly.
+	go func() {
+		sem := make(chan struct{}, 10) // limit to 10 concurrent SSH connections
+		var wg sync.WaitGroup
+		for name, srv := range cfg.Servers {
+			wg.Add(1)
+			go func(n string, s config.Server) {
+				defer wg.Done()
+				sem <- struct{}{}        // acquire slot
+				defer func() { <-sem }() // release slot
+				refreshServerCache(n, &s)
+			}(name, srv)
+		}
+		wg.Wait()
+	}()
+
+	// Main interactive loop — re-reads cache before each render (picks up background refresh)
+	for {
+		appSummary, serviceSummary := cachedDashboardSummaries(cfg)
+		action := tuiMainMenu(cfg, appSummary, serviceSummary)
+		if action == "quit" {
+			return nil
+		}
+		if action == "" {
+			continue // Enter=refresh: re-render menu with latest cache
+		}
+
+		switch action {
+		case "servers":
+			if err := tuiServersMenu(cfg); err != nil {
+				return err
+			}
+			go refreshCurrentServer(cfg) // async — never block the UI
+		case "apps":
+			if err := tuiAppsMenu(cfg); err != nil {
+				return err
+			}
+			go refreshCurrentServer(cfg)
+		case "services":
+			if err := tuiServicesMenu(cfg); err != nil {
+				return err
+			}
+			go refreshCurrentServer(cfg)
+		case "deploy":
+			if err := tuiDeployProject(); err != nil {
+				ui.Error(err.Error())
+			}
+			go refreshCurrentServer(cfg)
+		case "connect":
+			if err := runConnect(); err != nil {
+				ui.Error(err.Error())
+			}
+		}
+	}
+}
+
+// tuiDeployProject prompts for a target server (if multiple configured), project directory, then deploys.
+func tuiDeployProject() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	// If multiple servers exist, let the user choose which to deploy to.
+	if len(cfg.Servers) > 1 {
+		opts := make([]ui.SelectOption, 0, len(cfg.Servers))
+		for _, srv := range cfg.Servers {
+			active := ""
+			if srv.Name == cfg.Current {
+				active = "  " + ui.Faint.Render("(active)")
+			}
+			label := fmt.Sprintf("%-18s%s%s", srv.Name, ui.Faint.Render(srv.Host), active)
+			opts = append(opts, ui.SelectOption{label, srv.Name})
+		}
+		target := ui.Select("Deploy to which server?", opts)
+		if target == "" {
+			return nil
+		}
+		// Override the server for this operation only.
+		oldServer := serverFlag
+		serverFlag = target
+		defer func() { serverFlag = oldServer }()
+	}
+
+	cwd, _ := os.Getwd()
+	projectPath := cwd
+
+	huh.NewInput().
+		Title("Project directory to deploy").
+		Description("Press Enter to use current directory, or type a path").
+		Placeholder(cwd).
+		Value(&projectPath).
+		Run() //nolint:errcheck
+
+	if projectPath == "" {
+		projectPath = cwd
+	}
+
+	return runDeploy(projectPath, deployFlags{})
+}
+
+// cachedDashboardSummaries returns app and service summary strings from the local cache
+// for the current server. Shows "connecting...", "unreachable", or actual counts.
+func cachedDashboardSummaries(cfg *config.Config) (string, string) {
+	srv, err := cfg.CurrentServer()
+	if err != nil || srv == nil {
+		return ui.Faint.Render("—"), ui.Faint.Render("—")
+	}
+	c := config.LoadCache()
+	if c == nil {
+		return ui.Faint.Render("connecting..."), ui.Faint.Render("connecting...")
+	}
+	sc := c.Get(srv.Name)
+	if sc == nil {
+		return ui.Faint.Render("connecting..."), ui.Faint.Render("connecting...")
+	}
+	if !sc.Reachable {
+		age := formatCacheAge(time.Since(sc.UpdatedAt))
+		return ui.Red.Render("unreachable · " + age), ui.Red.Render("unreachable")
+	}
+	age := formatCacheAge(time.Since(sc.UpdatedAt))
+	app := ui.Faint.Render(fmt.Sprintf("%d apps, %d running · %s", sc.AppCount, sc.RunningApps, age))
+	svc := ui.Faint.Render(fmt.Sprintf("%d services, %d running · %s", sc.ServiceCount, sc.RunningServices, age))
+	return app, svc
+}
+
+// formatCacheAge returns a human-readable duration string for cache age display.
+func formatCacheAge(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	}
+}
+
+// refreshServerCache connects to one server, reads its state, and updates the local cache entry.
+// On SSH failure, caches the server as unreachable so the dashboard shows it immediately.
+func refreshServerCache(serverName string, srv *config.Server) {
+	exec, err := connectSSH(srv)
+	if err != nil {
+		// Mark server as unreachable in cache
+		config.UpdateServerCache(serverName, config.ServerCache{
+			Reachable: false,
+			UpdatedAt: time.Now(),
+		})
+		return
+	}
+	defer exec.Close()
+
+	st, err := state.Load(exec)
+	if err != nil {
+		config.UpdateServerCache(serverName, config.ServerCache{
+			Reachable: false,
+			UpdatedAt: time.Now(),
+		})
+		return
+	}
+
+	runningApps, runningSvcs := 0, 0
+	for _, a := range st.Apps {
+		if a.Status == "running" {
+			runningApps++
+		}
+	}
+	for _, s := range st.Services {
+		if s.Status == "running" {
+			runningSvcs++
+		}
+	}
+
+	config.UpdateServerCache(serverName, config.ServerCache{
+		AppCount:        len(st.Apps),
+		RunningApps:     runningApps,
+		ServiceCount:    len(st.Services),
+		RunningServices: runningSvcs,
+		Reachable:       true,
+		UpdatedAt:       time.Now(),
+	})
+}
+
+// refreshCurrentServer synchronously refreshes the cache for the active server.
+// Called after user actions (deploy, app management, etc.) to keep counts fresh.
+func refreshCurrentServer(cfg *config.Config) {
+	srv, err := cfg.CurrentServer()
+	if err != nil || srv == nil {
+		return
+	}
+	refreshServerCache(srv.Name, srv)
+}
+
+// tuiMainMenu shows the top-level interactive menu with arrow-key navigation.
+func tuiMainMenu(cfg *config.Config, appSummary, serviceSummary string) string {
+	srv, _ := cfg.CurrentServer()
+	var title string
+	if srv != nil {
+		c := config.LoadCache()
+		if c != nil {
+			if sc := c.Get(srv.Name); sc != nil && !sc.Reachable {
+				title = fmt.Sprintf("  %s %s  %s  %s",
+					ui.Red.Render("●"), srv.Name, ui.Faint.Render(srv.Host), ui.Red.Render("unreachable"))
+			} else {
+				title = fmt.Sprintf("  %s %s  %s",
+					ui.Green.Render("●"), srv.Name, ui.Faint.Render(srv.Host))
+			}
+		} else {
+			title = fmt.Sprintf("  %s %s  %s",
+				ui.Faint.Render("●"), srv.Name, ui.Faint.Render(srv.Host))
+		}
+	} else {
+		title = "  " + ui.Faint.Render("No server selected")
+	}
+
+	opts := []ui.SelectOption{
+		{fmt.Sprintf("%-22s%s", "Servers", ui.Faint.Render(fmt.Sprintf("%d configured", len(cfg.Servers)))), "servers"},
+		{fmt.Sprintf("%-22s%s", "Applications", appSummary), "apps"},
+		{fmt.Sprintf("%-22s%s", "Services", serviceSummary), "services"},
+		{"Deploy Project", "deploy"},
+		{fmt.Sprintf("%-22s%s", "Try Vxero", ui.Faint.Render("vxero.dev")), "connect"},
+	}
+
+	action := ui.Select(title, opts)
+	if action == "" {
+		return "quit" // q/Esc at top level = quit
+	}
+	return action
+}
+
+// tuiServersMenu shows the servers submenu.
+func tuiServersMenu(cfg *config.Config) error {
+	for {
+		var sb strings.Builder
+		sb.WriteString("  " + ui.Bold.Render("Servers") + "\n")
+		sb.WriteString("  " + ui.Faint.Render("─────────────────────────────────────────────────") + "\n")
+		for _, srv := range cfg.Servers {
+			marker := "  "
+			suffix := ""
+			if srv.Name == cfg.Current {
+				marker = ui.Green.Render("● ")
+				suffix = ui.Faint.Render("  (active)")
+			}
+			sb.WriteString(fmt.Sprintf("  %s%-15s %s%s\n", marker, srv.Name, srv.Host, suffix))
+		}
+
+		opts := []ui.SelectOption{
+			{"Add New Server", "add"},
+		}
+		if len(cfg.Servers) > 1 {
+			opts = append(opts, ui.SelectOption{"Switch Server", "switch"})
+		}
+		if len(cfg.Servers) > 0 {
+			opts = append(opts, ui.SelectOption{"SSH into Server", "ssh"})
+			opts = append(opts, ui.SelectOption{ui.Red.Render("Remove Server"), "remove"})
+		}
+		opts = append(opts, ui.SelectOption{"Back", "back"})
+
+		action := ui.Select(sb.String(), opts)
+
+		switch action {
+		case "add":
+			if err := tuiAddServer(cfg); err != nil {
+				return err
+			}
+		case "switch":
+			if err := tuiSwitchServer(cfg); err != nil {
+				return err
+			}
+		case "ssh":
+			if err := tuiSSHServer(); err != nil {
+				ui.Error(err.Error())
+			}
+		case "remove":
+			if err := tuiRemoveServer(cfg); err != nil {
+				return err
+			}
+		case "back", "":
+			return nil
+		}
+	}
+}
+
+// tuiAddServer prompts for host and runs the init flow.
+func tuiAddServer(cfg *config.Config) error {
+	var host, name, keyPath string
+	huh.NewInput().Title("Server SSH address (e.g. root@159.65.100.42)").Value(&host).Run() //nolint:errcheck
+	if host == "" {
+		return nil
+	}
+	huh.NewInput().Title("Server name (leave empty to auto-detect)").Value(&name).Run()                         //nolint:errcheck
+	huh.NewInput().Title("SSH key path (leave empty to use default ~/.ssh/id_ed25519)").Value(&keyPath).Run() //nolint:errcheck
+	return runInitWithKey(host, name, keyPath)
+}
+
+// tuiSwitchServer prompts to switch the active server.
+func tuiSwitchServer(cfg *config.Config) error {
+	opts := make([]ui.SelectOption, 0, len(cfg.Servers))
+	for _, srv := range cfg.Servers {
+		label := srv.Name
+		if srv.Name == cfg.Current {
+			label += " " + ui.Faint.Render("(active)")
+		}
+		opts = append(opts, ui.SelectOption{label, srv.Name})
+	}
+
+	selected := ui.Select("Switch to which server?", opts)
+
+	if selected == "" {
+		return nil
+	}
+
+	cfg.Current = selected
+	config.Save(cfg)
+	ui.Success(fmt.Sprintf("Switched to %q", selected))
+	return nil
+}
+
+// tuiRemoveServer prompts to select and remove a server.
+func tuiRemoveServer(cfg *config.Config) error {
+	opts := make([]ui.SelectOption, 0, len(cfg.Servers)+1)
+	for _, srv := range cfg.Servers {
+		label := fmt.Sprintf("%s (%s)", srv.Name, srv.Host)
+		opts = append(opts, ui.SelectOption{label, srv.Name})
+	}
+	opts = append(opts, ui.SelectOption{"Cancel", ""})
+
+	selected := ui.Select("Remove which server?", opts)
+
+	if selected == "" {
+		return nil
+	}
+
+	var confirm bool
+	huh.NewConfirm().
+		Title(fmt.Sprintf("Remove server %q? This only removes it from neo config.", selected)).
+		Value(&confirm).
+		Run() //nolint:errcheck
+
+	if !confirm {
+		return nil
+	}
+
+	cfg.RemoveServer(selected)
+	if err := config.Save(cfg); err != nil {
+		return err
+	}
+
+	ui.Success(fmt.Sprintf("Removed server %q", selected))
+	return nil
+}
+
+// tuiAppsMenu shows the applications submenu for the current server.
+func tuiAppsMenu(cfg *config.Config) error {
+	srv, err := cfg.CurrentServer()
+	if err != nil {
+		ui.Error("No server selected. Add one first.")
+		return nil
+	}
+
+	// Connect + load state with a 10-second timeout — the server may be unreachable.
+	type connResult struct {
+		exec *neossh.Executor
+		st   *state.State
+		err  error
+	}
+	ch := make(chan connResult, 1)
+	go func() {
+		e, err := connectSSH(srv)
+		if err != nil {
+			ch <- connResult{err: err}
+			return
+		}
+		s, err := state.Load(e)
+		if err != nil {
+			e.Close()
+			ch <- connResult{err: fmt.Errorf("cannot read server state: %w", err)}
+			return
+		}
+		ch <- connResult{exec: e, st: s}
+	}()
+
+	stopLoading := ui.ShowLoading(fmt.Sprintf("Connecting to %s...", srv.Name))
+
+	var srvExec *neossh.Executor
+	var st *state.State
+	select {
+	case res := <-ch:
+		stopLoading()
+		if res.err != nil {
+			ui.Error(fmt.Sprintf("Cannot reach %s: %s", srv.Name, res.err))
+			return nil
+		}
+		srvExec = res.exec
+		st = res.st
+	case <-time.After(10 * time.Second):
+		stopLoading()
+		// Drain the channel in background so the goroutine can exit cleanly.
+		go func() {
+			if res, ok := <-ch; ok && res.exec != nil {
+				res.exec.Close()
+			}
+		}()
+		ui.Error(fmt.Sprintf("Cannot reach %s (timed out after 10s)", srv.Name))
+		return nil
+	}
+	defer srvExec.Close()
+
+	if len(st.Apps) == 0 {
+		ui.ClearScreen()
+		fmt.Print(ui.RenderBanner())
+		fmt.Print("\r\n  No apps installed.\r\n\r\n")
+		ui.Info("Install an app from the main menu")
+		fmt.Print("\r\n")
+		ui.ReadKey() //nolint:errcheck
+		return nil
+	}
+
+	for {
+		running, stopped := 0, 0
+		appNames := make([]string, 0, len(st.Apps))
+		for _, a := range st.Apps {
+			if a.Status == "running" {
+				running++
+			} else {
+				stopped++
+			}
+			appNames = append(appNames, a.Name)
+		}
+
+		title := fmt.Sprintf("  Apps on %s  %s",
+			ui.Bold.Render(srv.Name),
+			ui.Faint.Render(fmt.Sprintf("%d apps · %d running · %d stopped", len(st.Apps), running, stopped)))
+
+		opts := make([]ui.SelectOption, 0, len(appNames)+1)
+		for _, name := range appNames {
+			a := st.Apps[name]
+			bullet := ui.StatusBullet(a.Status)
+			domain := a.Domain
+			if domain == "" {
+				domain = "—"
+			}
+			label := fmt.Sprintf("%s %-18s %s", bullet, a.Name, ui.Faint.Render(domain))
+			opts = append(opts, ui.SelectOption{label, a.Name})
+		}
+		opts = append(opts, ui.SelectOption{"Back", "back"})
+
+		selected := ui.Select(title, opts)
+
+		if selected == "" || selected == "back" {
+			return nil
+		}
+
+		done, err := tuiAppActions(selected, st)
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil
+		}
+	}
+}
+
+// tuiAppActions shows actions for a selected app. Returns true to exit to main menu.
+// Loops so that after any action (or returning from a submenu) the same app's
+// actions menu is shown again — Back returns to the app list.
+func tuiAppActions(appName string, st *state.State) (bool, error) {
+	for {
+		a, ok := st.Apps[appName]
+		if !ok {
+			return false, nil
+		}
+
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("  %s  %s\n", ui.Bold.Render(a.Name), ui.Faint.Render(a.Image)))
+		if a.Domain != "" {
+			scheme := "https"
+			if a.HTTPOnly {
+				scheme = "http"
+			}
+			sb.WriteString(fmt.Sprintf("  %s\n", ui.Cyan.Render(scheme+"://"+a.Domain)))
+		}
+		sb.WriteString(fmt.Sprintf("  Status: %s %s", ui.StatusBullet(a.Status), a.Status))
+		for name := range a.Services {
+			sb.WriteString(fmt.Sprintf("\n  %s %s", ui.Faint.Render("└"), name))
+		}
+
+		opts := []ui.SelectOption{
+			{"View Logs", "logs"},
+		}
+
+		if len(a.Workers) > 0 {
+			label := fmt.Sprintf("%-22s%s", "Workers", ui.Faint.Render(fmt.Sprintf("%d", len(a.Workers))))
+			opts = append(opts, ui.SelectOption{label, "workers"})
+		}
+		if len(a.Sidecars) > 0 {
+			label := fmt.Sprintf("%-22s%s", "Sidecars", ui.Faint.Render(fmt.Sprintf("%d", len(a.Sidecars))))
+			opts = append(opts, ui.SelectOption{label, "sidecars"})
+		}
+
+		if a.Status == "running" {
+			opts = append(opts,
+				ui.SelectOption{"Restart", "restart"},
+				ui.SelectOption{"Stop", "stop"},
+				ui.SelectOption{"Docker Terminal", "terminal"},
+			)
+		} else {
+			opts = append(opts, ui.SelectOption{"Start", "start"})
+		}
+
+		opts = append(opts, ui.SelectOption{"Change Domain", "domain"})
+		if a.Domain != "" {
+			if a.HTTPOnly {
+				opts = append(opts, ui.SelectOption{"Enable HTTPS", "https-on"})
+			} else {
+				opts = append(opts, ui.SelectOption{"Switch to HTTP only", "https-off"})
+			}
+		}
+
+		opts = append(opts,
+			ui.SelectOption{"Update Image", "update"},
+			ui.SelectOption{"Deploy New Version", "deploy"},
+			ui.SelectOption{"Restart with New Env", "env-only"},
+			ui.SelectOption{ui.Red.Render("Remove"), "remove"},
+			ui.SelectOption{"Back", "back"},
+		)
+
+		action := ui.Select(sb.String(), opts)
+		if action == "" || action == "back" {
+			return false, nil
+		}
+
+		// terminal and remove exit the loop; everything else loops back.
+		switch action {
+		case "terminal":
+			return true, tuiDockerTerminal(appName)
+		case "remove":
+			return false, runRemove(appName)
+		case "logs":
+			if err := runLogs(appName, 50, false, "", "", ""); err != nil {
+				return false, err
+			}
+		case "workers":
+			if err := tuiWorkersMenu(appName, a.Workers); err != nil {
+				return false, err
+			}
+		case "sidecars":
+			if err := tuiSidecarsMenu(appName, a.Sidecars); err != nil {
+				return false, err
+			}
+		case "start", "stop", "restart":
+			if err := runManage(appName, action); err != nil {
+				return false, err
+			}
+		case "domain":
+			if err := tuiChangeDomain(appName); err != nil {
+				return false, err
+			}
+		case "https-on":
+			if err := runSetHTTPS(appName, true); err != nil {
+				return false, err
+			}
+		case "https-off":
+			if err := runSetHTTPS(appName, false); err != nil {
+				return false, err
+			}
+		case "deploy":
+			if err := runDeploy(".", deployFlags{appName: appName}); err != nil {
+				return false, err
+			}
+		case "env-only":
+			if err := runDeploy(".", deployFlags{appName: appName, envOnly: true}); err != nil {
+				return false, err
+			}
+		case "update":
+			if err := runUpdate(appName); err != nil {
+				return false, err
+			}
+		}
+	}
+}
+
+// tuiWorkersMenu lists all workers for an app and shows per-worker actions.
+func tuiWorkersMenu(appName string, workers map[string]state.AppWorker) error {
+	// Single worker → skip picker, go straight to actions
+	if len(workers) == 1 {
+		for wName, w := range workers {
+			return tuiWorkerActions(appName, wName, w)
+		}
+	}
+
+	for {
+		opts := make([]ui.SelectOption, 0, len(workers)+1)
+		for wName, w := range workers {
+			bullet := ui.StatusBullet(w.Status)
+			label := fmt.Sprintf("%s %-20s%s", bullet, wName, ui.Faint.Render(w.Status))
+			opts = append(opts, ui.SelectOption{label, wName})
+		}
+		opts = append(opts, ui.SelectOption{"Back", "back"})
+
+		selected := ui.Select(fmt.Sprintf("  Workers — %s", ui.Bold.Render(appName)), opts)
+		if selected == "" || selected == "back" {
+			return nil
+		}
+		if err := tuiWorkerActions(appName, selected, workers[selected]); err != nil {
+			return err
+		}
+	}
+}
+
+// tuiWorkerActions shows actions for a single worker container.
+// Loops so that after an action the same worker's menu is shown again.
+func tuiWorkerActions(appName, workerName string, w state.AppWorker) error {
+	for {
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("  Worker: %s\n", ui.Bold.Render(workerName)))
+		sb.WriteString(fmt.Sprintf("  App:     %s\n", ui.Faint.Render(appName)))
+		sb.WriteString(fmt.Sprintf("  Command: %s\n", ui.Faint.Render(w.Command)))
+		sb.WriteString(fmt.Sprintf("  Status:  %s %s", ui.StatusBullet(w.Status), w.Status))
+
+		opts := []ui.SelectOption{{"View Logs", "logs"}}
+		if w.Status == "running" {
+			opts = append(opts,
+				ui.SelectOption{"Restart", "restart"},
+				ui.SelectOption{"Stop", "stop"},
+				ui.SelectOption{"Terminal", "terminal"},
+			)
+		} else {
+			opts = append(opts, ui.SelectOption{"Start", "start"})
+		}
+		opts = append(opts,
+			ui.SelectOption{"Redeploy (stop → remove → re-run)", "redeploy"},
+			ui.SelectOption{"Back", "back"},
+		)
+
+		action := ui.Select(sb.String(), opts)
+		switch action {
+		case "", "back":
+			return nil
+		case "logs":
+			if err := runLogs(appName, 50, false, workerName, "", ""); err != nil {
+				return err
+			}
+		case "start", "stop", "restart":
+			if err := runWorkerManage(appName, workerName, action); err != nil {
+				return err
+			}
+			// Update status for next render.
+			w.Status = action
+			if action == "stop" {
+				w.Status = "stopped"
+			}
+		case "terminal":
+			return runContainerTerminal(config.WorkerContainer(appName, workerName))
+		case "redeploy":
+			if err := runWorkerRedeploy(appName, workerName); err != nil {
+				return err
+			}
+			w.Status = "running"
+		}
+	}
+}
+
+// tuiSidecarsMenu lists all sidecars for an app and shows per-sidecar actions.
+func tuiSidecarsMenu(appName string, sidecars map[string]state.AppSidecar) error {
+	// Single sidecar → skip picker, go straight to actions
+	if len(sidecars) == 1 {
+		for scName, sc := range sidecars {
+			return tuiSidecarActions(appName, scName, sc)
+		}
+	}
+
+	for {
+		opts := make([]ui.SelectOption, 0, len(sidecars)+1)
+		for scName, sc := range sidecars {
+			bullet := ui.StatusBullet(sc.Status)
+			label := fmt.Sprintf("%s %-20s%s", bullet, scName, ui.Faint.Render(sc.Image))
+			opts = append(opts, ui.SelectOption{label, scName})
+		}
+		opts = append(opts, ui.SelectOption{"Back", "back"})
+
+		selected := ui.Select(fmt.Sprintf("  Sidecars — %s", ui.Bold.Render(appName)), opts)
+		if selected == "" || selected == "back" {
+			return nil
+		}
+		if err := tuiSidecarActions(appName, selected, sidecars[selected]); err != nil {
+			return err
+		}
+	}
+}
+
+// tuiSidecarActions shows actions for a single sidecar container.
+// Loops so that after an action the same sidecar's menu is shown again.
+func tuiSidecarActions(appName, sidecarName string, sc state.AppSidecar) error {
+	for {
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("  Sidecar: %s\n", ui.Bold.Render(sidecarName)))
+		sb.WriteString(fmt.Sprintf("  App:     %s\n", ui.Faint.Render(appName)))
+		sb.WriteString(fmt.Sprintf("  Image:   %s\n", ui.Faint.Render(sc.Image)))
+		sb.WriteString(fmt.Sprintf("  Status:  %s %s", ui.StatusBullet(sc.Status), sc.Status))
+
+		opts := []ui.SelectOption{{"View Logs", "logs"}}
+		if sc.Status == "running" {
+			opts = append(opts,
+				ui.SelectOption{"Restart", "restart"},
+				ui.SelectOption{"Stop", "stop"},
+				ui.SelectOption{"Terminal", "terminal"},
+			)
+		} else {
+			opts = append(opts, ui.SelectOption{"Start", "start"})
+		}
+		opts = append(opts,
+			ui.SelectOption{"Redeploy (stop → remove → re-run)", "redeploy"},
+			ui.SelectOption{"Back", "back"},
+		)
+
+		action := ui.Select(sb.String(), opts)
+		switch action {
+		case "", "back":
+			return nil
+		case "logs":
+			if err := runSidecarLogs(appName, sidecarName); err != nil {
+				return err
+			}
+		case "start", "stop", "restart":
+			if err := runSidecarManage(appName, sidecarName, action); err != nil {
+				return err
+			}
+			sc.Status = action
+			if action == "stop" {
+				sc.Status = "stopped"
+			}
+		case "terminal":
+			return runContainerTerminal(config.SvcContainer(appName, sidecarName))
+		case "redeploy":
+			if err := runSidecarRedeploy(appName, sidecarName); err != nil {
+				return err
+			}
+			sc.Status = "running"
+		}
+	}
+}
+
+// runSidecarLogs connects via SSH and streams logs for the named sidecar container.
+func runSidecarLogs(appName, sidecarName string) error {
+	_, _, exec, err := mustResolveAndConnect()
+	if err != nil {
+		return err
+	}
+	defer exec.Close()
+
+	containerName := config.SvcContainer(appName, sidecarName)
+	docker := remote.NewDocker(exec)
+	return docker.Logs(containerName, 50, false, os.Stdout)
+}
+
+// tuiChangeDomain prompts for a new domain and applies it.
+func tuiChangeDomain(appName string) error {
+	var domain string
+	huh.NewInput().
+		Title("New domain for " + appName + " (e.g. app.example.com)").
+		Value(&domain).
+		Run() //nolint:errcheck
+
+	if domain == "" {
+		return nil
+	}
+
+	if err := runDomain(appName, domain, false); err != nil {
+		return err
+	}
+
+	printDNSInstructions(domain)
+	return nil
+}
+
+// printDNSInstructions shows DNS setup guidance after a domain is set.
+func printDNSInstructions(domain string) {
+	fmt.Println()
+	card := ui.NewCard()
+	card.Add(ui.Bold.Render("DNS Setup Required"))
+	card.Blank()
+	card.Add("Add an A record in your DNS provider:")
+	card.Add(fmt.Sprintf("  %s  →  %s", ui.Cyan.Render(domain), ui.Bold.Render("<your-server-IP>")))
+	card.Blank()
+	card.Add(ui.Bold.Render("Cloudflare users:"))
+	card.Add("  Set proxy to " + ui.Yellow.Render("DNS only (grey cloud)"))
+	card.Add("  Caddy handles SSL — the orange cloud interferes.")
+	card.Blank()
+	card.Add(ui.Faint.Render("SSL cert auto-provisioned once DNS propagates (1–5 min)"))
+	card.Render()
+}
+
+// tuiDockerTerminal opens an interactive shell in the app's main container via SSH.
+func tuiDockerTerminal(appName string) error {
+	return runContainerTerminal(config.AppContainer(appName))
+}
+
+// runContainerTerminal opens an interactive shell in any named Docker container via SSH.
+func runContainerTerminal(containerName string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	srv, err := resolveServer(cfg)
+	if err != nil {
+		return err
+	}
+
+	ui.ShowCursor()
+	fmt.Printf("\n  Opening terminal in %s (type 'exit' to return)\n\n", ui.Bold.Render(containerName))
+
+	sshArgs := buildSSHArgs(srv)
+	sshArgs = append(sshArgs, "-t") // force PTY
+	sshArgs = append(sshArgs, srv.Host)
+	sshArgs = append(sshArgs, "docker", "exec", "-it", containerName, "sh", "-c",
+		"bash 2>/dev/null || sh")
+
+	sshPath, err := exec.LookPath("ssh")
+	if err != nil {
+		return fmt.Errorf("ssh not found: %w", err)
+	}
+
+	c := exec.Command(sshPath, sshArgs...)
+	c.Stdin = os.Stdin
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	return c.Run()
+}
+
+// tuiSSHServer opens an SSH session to the current server and returns to neo afterwards.
+func tuiSSHServer() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	srv, err := resolveServer(cfg)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\n  SSH into %s (type 'exit' to return to neo)\n\n", ui.Bold.Render(srv.Host))
+
+	sshArgs := buildSSHArgs(srv)
+	sshArgs = append(sshArgs, srv.Host)
+
+	sshPath, err := exec.LookPath("ssh")
+	if err != nil {
+		return fmt.Errorf("ssh not found: %w", err)
+	}
+
+	c := exec.Command(sshPath, sshArgs...)
+	c.Stdin = os.Stdin
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	return c.Run()
+}
+
+// buildSSHArgs builds the base ssh arguments for a server (port + key).
+func buildSSHArgs(srv *config.Server) []string {
+	args := []string{"-o", "StrictHostKeyChecking=no"}
+	if srv.Port != 0 && srv.Port != 22 {
+		args = append(args, "-p", fmt.Sprintf("%d", srv.Port))
+	}
+	if srv.Key != "" {
+		args = append(args, "-i", srv.Key)
+	}
+	return args
+}
+
+
+// tuiServicesMenu shows the shared services submenu.
+func tuiServicesMenu(cfg *config.Config) error {
+	srv, err := cfg.CurrentServer()
+	if err != nil {
+		ui.Error("No server selected. Add one first.")
+		return nil
+	}
+
+	stopLoading := ui.ShowLoading(fmt.Sprintf("Connecting to %s...", srv.Name))
+	exec, err := connectSSH(srv)
+	if err != nil {
+		stopLoading()
+		ui.Error(fmt.Sprintf("Cannot reach server: %s", err))
+		return nil
+	}
+	defer exec.Close()
+
+	st, err := state.Load(exec)
+	stopLoading()
+	if err != nil {
+		ui.Error("Cannot read server state")
+		return nil
+	}
+
+	for {
+		title := fmt.Sprintf("  Shared Services on %s", ui.Bold.Render(srv.Name))
+
+		svcNames := make([]string, 0, len(st.Services))
+		for name := range st.Services {
+			svcNames = append(svcNames, name)
+		}
+		opts := make([]ui.SelectOption, 0, len(st.Services)+2)
+		for _, name := range svcNames {
+			svc := st.Services[name]
+			bullet := ui.StatusBullet(svc.Status)
+			linked := ""
+			if len(svc.LinkedApps) > 0 {
+				linked = fmt.Sprintf(" (%d apps)", len(svc.LinkedApps))
+			}
+			label := fmt.Sprintf("%s %-15s %s%s", bullet, name, ui.Faint.Render(svc.Image), ui.Faint.Render(linked))
+			opts = append(opts, ui.SelectOption{label, name})
+		}
+		opts = append(opts,
+			ui.SelectOption{"Create New Service", "create"},
+			ui.SelectOption{"Back", "back"},
+		)
+
+		selected := ui.Select(title, opts)
+
+		switch selected {
+		case "", "back":
+			return nil
+		case "create":
+			// Re-create SSH exec since we share within this menu
+			if err := runServiceCreate("", ""); err != nil {
+				ui.Error(err.Error())
+			}
+			// Reload state
+			if freshSt, err := state.Load(exec); err == nil {
+				st = freshSt
+			}
+		default:
+			done, err := tuiServiceActions(selected, st)
+			if err != nil {
+				return err
+			}
+			if done {
+				return nil
+			}
+			// Reload state after action
+			if freshSt, err := state.Load(exec); err == nil {
+				st = freshSt
+			}
+		}
+	}
+}
+
+// tuiServiceActions shows actions for a selected shared service.
+func tuiServiceActions(svcName string, st *state.State) (bool, error) {
+	svc, ok := st.Services[svcName]
+	if !ok {
+		return false, nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("  %s  %s\n", ui.Bold.Render(svc.Name), ui.Faint.Render(svc.Image)))
+	sb.WriteString(fmt.Sprintf("  Status: %s %s", ui.StatusBullet(svc.Status), svc.Status))
+	if len(svc.LinkedApps) > 0 {
+		sb.WriteString("\n  Linked apps:")
+		for appName, link := range svc.LinkedApps {
+			detail := appName
+			if link.Database != "" {
+				detail += " → " + link.Database
+			}
+			sb.WriteString(fmt.Sprintf("\n    %s %s", ui.Faint.Render("├"), detail))
+		}
+	}
+
+	opts := []ui.SelectOption{
+		{"View Logs", "logs"},
+	}
+
+	if svc.Status == "running" {
+		opts = append(opts,
+			ui.SelectOption{"Restart", "restart"},
+			ui.SelectOption{"Stop", "stop"},
+			ui.SelectOption{"Link to App", "link"},
+		)
+	} else {
+		opts = append(opts, ui.SelectOption{"Start", "start"})
+	}
+
+	if len(svc.LinkedApps) > 0 {
+		opts = append(opts, ui.SelectOption{"Unlink App", "unlink"})
+	}
+
+	opts = append(opts,
+		ui.SelectOption{ui.Red.Render("Remove"), "remove"},
+		ui.SelectOption{"Back", "back"},
+	)
+
+	action := ui.Select(sb.String(), opts)
+
+	if action == "" || action == "back" {
+		return false, nil
+	}
+
+	switch action {
+	case "logs":
+		return false, runServiceLogs(svcName, 50, false)
+	case "start", "stop", "restart":
+		return false, runServiceManage(svcName, action)
+	case "link":
+		return false, tuiServiceLink(svcName, st)
+	case "unlink":
+		return false, tuiServiceUnlink(svcName, st)
+	case "remove":
+		return false, runServiceRemove(svcName)
+	}
+
+	return false, nil
+}
+
+// tuiServiceLink prompts the user to select an app to link.
+func tuiServiceLink(svcName string, st *state.State) error {
+	svc := st.Services[svcName]
+
+	// Build list of unlinked apps
+	unlinked := make([]string, 0)
+	for appName := range st.Apps {
+		if _, already := svc.LinkedApps[appName]; !already {
+			unlinked = append(unlinked, appName)
+		}
+	}
+
+	if len(unlinked) == 0 {
+		ui.Info("All apps are already linked to this service.")
+		return nil
+	}
+
+	opts := make([]ui.SelectOption, len(unlinked))
+	for i, name := range unlinked {
+		opts[i] = ui.SelectOption{name, name}
+	}
+
+	selected := ui.Select("Link "+svcName+" to which app?", opts)
+
+	if selected == "" {
+		return nil
+	}
+
+	return runServiceLink(svcName, selected)
+}
+
+// tuiServiceUnlink prompts the user to select an app to unlink.
+func tuiServiceUnlink(svcName string, st *state.State) error {
+	svc := st.Services[svcName]
+
+	names := make([]string, 0, len(svc.LinkedApps))
+	for appName := range svc.LinkedApps {
+		names = append(names, appName)
+	}
+
+	opts := make([]ui.SelectOption, len(names))
+	for i, name := range names {
+		opts[i] = ui.SelectOption{name, name}
+	}
+
+	selected := ui.Select("Unlink "+svcName+" from which app?", opts)
+
+	if selected == "" {
+		return nil
+	}
+
+	return runServiceUnlink(svcName, selected)
+}

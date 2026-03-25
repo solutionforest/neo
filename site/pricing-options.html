@@ -1,0 +1,799 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Neo Pricing Options — Pick a Style</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <style>
+        :root {
+            --bg: #fafafa;
+            --surface: rgba(255,255,255,0.8);
+            --surface-strong: #fff;
+            --border: rgba(15,23,42,0.06);
+            --border-strong: rgba(15,23,42,0.1);
+            --text: #0f172a;
+            --text-soft: #64748b;
+            --text-muted: #94a3b8;
+            --accent: #2563eb;
+            --accent-soft: rgba(37,99,235,0.08);
+            --green: #22c55e;
+            --green-soft: rgba(34,197,94,0.08);
+            --terminal-bg: #0b1017;
+            --shadow-sm: 0 1px 2px rgba(15,23,42,0.04);
+            --shadow-md: 0 8px 30px rgba(15,23,42,0.06);
+            --shadow-lg: 0 24px 60px rgba(15,23,42,0.1);
+            --radius-full: 999px;
+            --radius-2xl: 24px;
+            --radius-xl: 20px;
+            --radius-lg: 16px;
+            --radius-md: 12px;
+            --max-w: 1140px;
+        }
+        *,*::before,*::after { box-sizing: border-box; }
+        html { -webkit-font-smoothing: antialiased; scroll-behavior: smooth; }
+        body {
+            margin: 0;
+            font-family: 'Inter', -apple-system, sans-serif;
+            color: var(--text);
+            background: var(--bg);
+            line-height: 1.6;
+        }
+        .w { width: min(var(--max-w), calc(100% - 40px)); margin: 0 auto; }
+        a { color: inherit; text-decoration: none; }
+
+        /* Shared */
+        .section { padding: 80px 0; }
+        .section + .section { border-top: 1px solid var(--border); }
+        .section-badge {
+            display: inline-flex; align-items: center; height: 28px;
+            padding: 0 12px; border-radius: var(--radius-full);
+            border: 1px solid var(--border);
+            background: var(--surface-strong);
+            font-size: 0.72rem; font-weight: 700;
+            letter-spacing: 0.06em; text-transform: uppercase;
+            color: var(--text-soft);
+        }
+        .section-title {
+            margin: 16px 0 0;
+            font-size: clamp(1.8rem, 3.5vw, 2.8rem);
+            font-weight: 800; line-height: 1.1;
+            letter-spacing: -0.035em;
+            text-wrap: balance;
+        }
+        .section-sub {
+            margin: 12px 0 0; max-width: 560px;
+            color: var(--text-soft); font-size: 0.95rem; line-height: 1.7;
+        }
+        .section-header { max-width: 640px; }
+        .section-header.center { margin: 0 auto; text-align: center; }
+        .section-header.center .section-sub { margin-left: auto; margin-right: auto; }
+        .gradient {
+            background: linear-gradient(135deg, #2563eb, #22c55e);
+            -webkit-background-clip: text; background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .option-label {
+            text-align: center; padding: 32px 0 0;
+            font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.1em; color: var(--text-muted);
+        }
+
+        /* ═══════════════════════════════════════════════ */
+        /* OPTION A — Minimal single-row toggle           */
+        /* ═══════════════════════════════════════════════ */
+        .opt-a-card {
+            margin: 48px auto 0; max-width: 680px;
+            padding: 40px 36px;
+            border-radius: var(--radius-2xl);
+            border: 1px solid var(--border);
+            background: var(--surface-strong);
+            box-shadow: var(--shadow-md);
+            text-align: center;
+        }
+        .opt-a-title {
+            font-size: 1.2rem; font-weight: 800;
+            letter-spacing: -0.02em;
+        }
+        .opt-a-desc {
+            margin: 8px 0 0; color: var(--text-soft); font-size: 0.9rem; line-height: 1.6;
+        }
+        .opt-a-toggle-row {
+            display: flex; align-items: center; justify-content: center;
+            gap: 16px; margin-top: 28px;
+        }
+        .opt-a-plan {
+            font-size: 0.88rem; font-weight: 600;
+            color: var(--text-soft);
+            transition: color 150ms;
+        }
+        .opt-a-plan.active { color: var(--text); }
+        .opt-a-toggle {
+            position: relative; width: 52px; height: 28px;
+            border-radius: 14px;
+            background: var(--border-strong);
+            cursor: pointer; border: none;
+            transition: background 200ms;
+        }
+        .opt-a-toggle.on { background: var(--accent); }
+        .opt-a-toggle::after {
+            content: '';
+            position: absolute; top: 3px; left: 3px;
+            width: 22px; height: 22px; border-radius: 50%;
+            background: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+            transition: transform 200ms;
+        }
+        .opt-a-toggle.on::after { transform: translateX(24px); }
+        .opt-a-price {
+            margin: 24px 0 0;
+            font-size: 2.4rem; font-weight: 900;
+            letter-spacing: -0.04em;
+        }
+        .opt-a-price small {
+            font-size: 0.9rem; font-weight: 500; color: var(--text-soft);
+        }
+        .opt-a-features {
+            display: flex; flex-wrap: wrap; justify-content: center;
+            gap: 10px 20px; margin-top: 24px;
+            list-style: none; padding: 0;
+        }
+        .opt-a-features li {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 0.84rem; font-weight: 500; color: var(--text);
+        }
+        .opt-a-features li::before {
+            content: '';
+            width: 16px; height: 16px; border-radius: 50%;
+            background: var(--green-soft) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2322c55e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") no-repeat center / 10px;
+            flex-shrink: 0;
+        }
+        .opt-a-server-badge {
+            display: inline-flex; align-items: center; gap: 6px;
+            margin-top: 16px; padding: 6px 14px;
+            border-radius: var(--radius-full);
+            font-size: 0.78rem; font-weight: 700;
+            border: 1px solid var(--border);
+            background: var(--surface-strong);
+            color: var(--text-soft);
+            transition: all 200ms;
+        }
+        .opt-a-server-badge.plus {
+            border-color: rgba(37,99,235,0.2);
+            background: var(--accent-soft);
+            color: var(--accent);
+        }
+        .opt-a-cta {
+            display: inline-flex; align-items: center; justify-content: center;
+            height: 44px; padding: 0 28px; margin-top: 24px;
+            border-radius: var(--radius-full);
+            font-size: 0.88rem; font-weight: 700;
+            border: none; cursor: pointer;
+            transition: transform 120ms, opacity 120ms;
+        }
+        .opt-a-cta:hover { transform: translateY(-1px); }
+        .opt-a-cta.free-cta { background: var(--text); color: #fff; }
+        .opt-a-cta.plus-cta { background: var(--accent); color: #fff; }
+
+        /* ═══════════════════════════════════════════════ */
+        /* OPTION B — Horizontal bar / slider feel        */
+        /* ═══════════════════════════════════════════════ */
+        .opt-b-wrapper {
+            margin: 48px auto 0; max-width: 780px;
+        }
+        .opt-b-bar {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+            border-radius: var(--radius-xl);
+            border: 1px solid var(--border);
+            overflow: hidden;
+            background: var(--surface-strong);
+            box-shadow: var(--shadow-md);
+        }
+        .opt-b-side {
+            padding: 36px 32px;
+            position: relative;
+        }
+        .opt-b-side + .opt-b-side {
+            border-left: 1px solid var(--border);
+        }
+        .opt-b-side.plus-side {
+            background: linear-gradient(135deg, rgba(37,99,235,0.03), rgba(34,197,94,0.02));
+        }
+        .opt-b-label {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 3px 10px;
+            border-radius: var(--radius-full);
+            font-size: 0.66rem; font-weight: 700;
+            letter-spacing: 0.06em; text-transform: uppercase;
+        }
+        .opt-b-label.free-label { background: var(--green-soft); color: var(--green); }
+        .opt-b-label.plus-label { background: var(--accent-soft); color: var(--accent); }
+        .opt-b-name {
+            margin: 12px 0 0;
+            font-size: 1.1rem; font-weight: 800;
+        }
+        .opt-b-price-row {
+            margin: 6px 0 0;
+            font-size: 1.8rem; font-weight: 900;
+            letter-spacing: -0.03em;
+        }
+        .opt-b-price-row small {
+            font-size: 0.82rem; font-weight: 500; color: var(--text-soft);
+        }
+        .opt-b-desc {
+            margin: 8px 0 0; color: var(--text-soft); font-size: 0.84rem; line-height: 1.55;
+        }
+        .opt-b-server {
+            display: inline-flex; align-items: center; gap: 8px;
+            margin-top: 16px; padding: 8px 16px;
+            border-radius: var(--radius-md);
+            font-size: 0.82rem; font-weight: 700;
+            background: rgba(100,116,139,0.06); color: var(--text-soft);
+        }
+        .opt-b-server.unlimited {
+            background: var(--accent-soft); color: var(--accent);
+        }
+        .opt-b-server svg { width: 16px; height: 16px; }
+        .opt-b-cta {
+            display: inline-flex; align-items: center; justify-content: center;
+            height: 40px; padding: 0 22px; margin-top: 20px;
+            border-radius: var(--radius-full);
+            font-size: 0.84rem; font-weight: 700;
+            border: none; cursor: pointer;
+            transition: transform 120ms;
+        }
+        .opt-b-cta:hover { transform: translateY(-1px); }
+        .opt-b-cta.free-btn { background: var(--surface-strong); color: var(--text); border: 1px solid var(--border-strong); }
+        .opt-b-cta.plus-btn { background: var(--text); color: #fff; }
+        .opt-b-shared {
+            margin-top: 20px;
+            padding: 20px 28px;
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border);
+            background: var(--surface-strong);
+            text-align: center;
+        }
+        .opt-b-shared-title {
+            font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.06em; color: var(--text-muted);
+        }
+        .opt-b-shared-features {
+            display: flex; flex-wrap: wrap; justify-content: center;
+            gap: 8px 16px; margin-top: 12px;
+            list-style: none; padding: 0;
+        }
+        .opt-b-shared-features li {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 0.82rem; font-weight: 500; color: var(--text);
+        }
+        .opt-b-shared-features li::before {
+            content: '';
+            width: 16px; height: 16px; border-radius: 50%;
+            background: var(--green-soft) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2322c55e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") no-repeat center / 10px;
+            flex-shrink: 0;
+        }
+        @media (max-width: 768px) {
+            .opt-b-bar { grid-template-columns: 1fr; }
+            .opt-b-side + .opt-b-side { border-left: none; border-top: 1px solid var(--border); }
+        }
+
+        /* ═══════════════════════════════════════════════ */
+        /* OPTION C — Single card with server slider      */
+        /* ═══════════════════════════════════════════════ */
+        .opt-c-card {
+            margin: 48px auto 0; max-width: 620px;
+            padding: 40px 36px;
+            border-radius: var(--radius-2xl);
+            border: 1px solid var(--border);
+            background: var(--surface-strong);
+            box-shadow: var(--shadow-md);
+        }
+        .opt-c-head {
+            text-align: center;
+        }
+        .opt-c-head h3 {
+            margin: 0; font-size: 1.2rem; font-weight: 800;
+        }
+        .opt-c-head p {
+            margin: 6px 0 0; color: var(--text-soft); font-size: 0.88rem;
+        }
+        .opt-c-slider-section {
+            margin-top: 28px; text-align: center;
+        }
+        .opt-c-slider-label {
+            font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.06em; color: var(--text-muted);
+        }
+        .opt-c-tabs {
+            display: inline-flex; margin-top: 12px;
+            border-radius: var(--radius-full);
+            border: 1px solid var(--border);
+            background: rgba(100,116,139,0.04);
+            overflow: hidden;
+        }
+        .opt-c-tab {
+            padding: 10px 28px;
+            font-size: 0.86rem; font-weight: 700;
+            border: none; background: none; cursor: pointer;
+            color: var(--text-soft);
+            transition: all 200ms;
+            font-family: inherit;
+        }
+        .opt-c-tab.active {
+            background: var(--text); color: #fff;
+            border-radius: var(--radius-full);
+        }
+        .opt-c-price-display {
+            margin-top: 20px; text-align: center;
+        }
+        .opt-c-price-amount {
+            font-size: 2.8rem; font-weight: 900;
+            letter-spacing: -0.04em;
+        }
+        .opt-c-price-amount small {
+            font-size: 0.9rem; font-weight: 500; color: var(--text-soft);
+        }
+        .opt-c-price-note {
+            margin: 4px 0 0; font-size: 0.78rem; color: var(--text-muted);
+        }
+        .opt-c-divider {
+            margin: 24px 0;
+            border: none; border-top: 1px solid var(--border);
+        }
+        .opt-c-features {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+            list-style: none; padding: 0; margin: 0;
+        }
+        .opt-c-features li {
+            display: flex; align-items: center; gap: 8px;
+            font-size: 0.84rem; font-weight: 500; color: var(--text);
+        }
+        .opt-c-features li::before {
+            content: '';
+            width: 16px; height: 16px; border-radius: 50%;
+            background: var(--green-soft) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2322c55e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") no-repeat center / 10px;
+            flex-shrink: 0;
+        }
+        .opt-c-cta {
+            display: flex; align-items: center; justify-content: center;
+            width: 100%; height: 48px; margin-top: 28px;
+            border-radius: var(--radius-full);
+            font-size: 0.9rem; font-weight: 700;
+            border: none; cursor: pointer;
+            background: var(--text); color: #fff;
+            transition: transform 120ms;
+        }
+        .opt-c-cta:hover { transform: translateY(-1px); }
+        @media (max-width: 768px) {
+            .opt-c-features { grid-template-columns: 1fr; }
+        }
+
+        /* ═══════════════════════════════════════════════ */
+        /* OPTION D — GitHub-style: free + upgrade banner */
+        /* ═══════════════════════════════════════════════ */
+        .opt-d-free-block {
+            margin: 48px auto 0; max-width: 720px; text-align: center;
+        }
+        .opt-d-free-price {
+            font-size: 2rem; font-weight: 900; letter-spacing: -0.03em;
+        }
+        .opt-d-free-sub {
+            margin: 4px 0 0; color: var(--text-soft); font-size: 0.9rem;
+        }
+        .opt-d-features {
+            display: flex; flex-wrap: wrap; justify-content: center;
+            gap: 8px 18px; margin-top: 24px;
+            list-style: none; padding: 0;
+        }
+        .opt-d-features li {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 0.84rem; font-weight: 500; color: var(--text);
+        }
+        .opt-d-features li::before {
+            content: '';
+            width: 16px; height: 16px; border-radius: 50%;
+            background: var(--green-soft) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2322c55e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") no-repeat center / 10px;
+            flex-shrink: 0;
+        }
+        .opt-d-limit {
+            display: inline-flex; align-items: center; gap: 6px;
+            margin-top: 20px; padding: 8px 16px;
+            border-radius: var(--radius-full);
+            border: 1px solid var(--border);
+            background: var(--surface-strong);
+            font-size: 0.82rem; font-weight: 600; color: var(--text-soft);
+        }
+        .opt-d-limit svg { width: 16px; height: 16px; color: var(--text-muted); }
+        .opt-d-cta-free {
+            display: inline-flex; align-items: center; justify-content: center;
+            height: 44px; padding: 0 28px; margin-top: 20px;
+            border-radius: var(--radius-full);
+            font-size: 0.88rem; font-weight: 700;
+            border: none; cursor: pointer;
+            background: var(--text); color: #fff;
+            transition: transform 120ms;
+        }
+        .opt-d-cta-free:hover { transform: translateY(-1px); }
+
+        .opt-d-banner {
+            margin: 32px auto 0; max-width: 720px;
+            padding: 24px 32px;
+            border-radius: var(--radius-xl);
+            border: 1px solid rgba(37,99,235,0.15);
+            background: linear-gradient(135deg, rgba(37,99,235,0.04), rgba(34,197,94,0.03));
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 20px; flex-wrap: wrap;
+        }
+        .opt-d-banner-text h4 {
+            margin: 0; font-size: 1rem; font-weight: 800;
+        }
+        .opt-d-banner-text h4 span { color: var(--accent); }
+        .opt-d-banner-text p {
+            margin: 4px 0 0; color: var(--text-soft);
+            font-size: 0.84rem; line-height: 1.5;
+        }
+        .opt-d-banner-cta {
+            display: inline-flex; align-items: center; justify-content: center;
+            height: 40px; padding: 0 22px;
+            border-radius: var(--radius-full);
+            font-size: 0.84rem; font-weight: 700;
+            background: var(--accent); color: #fff;
+            border: none; cursor: pointer; white-space: nowrap;
+            transition: transform 120ms;
+        }
+        .opt-d-banner-cta:hover { transform: translateY(-1px); }
+        @media (max-width: 768px) {
+            .opt-d-banner { flex-direction: column; text-align: center; }
+        }
+
+        /* ═══════════════════════════════════════════════ */
+        /* OPTION E — Sentence pricing (ultra minimal)    */
+        /* ═══════════════════════════════════════════════ */
+        .opt-e-block {
+            margin: 48px auto 0; max-width: 680px; text-align: center;
+        }
+        .opt-e-sentence {
+            font-size: clamp(1.2rem, 2.5vw, 1.6rem); font-weight: 700;
+            line-height: 1.5; color: var(--text);
+        }
+        .opt-e-sentence .highlight {
+            padding: 2px 12px;
+            border-radius: var(--radius-md);
+            background: var(--green-soft);
+            color: var(--green);
+            font-weight: 800;
+        }
+        .opt-e-sentence .highlight-plus {
+            padding: 2px 12px;
+            border-radius: var(--radius-md);
+            background: var(--accent-soft);
+            color: var(--accent);
+            font-weight: 800;
+        }
+        .opt-e-divider {
+            display: flex; align-items: center; gap: 16px;
+            margin: 32px 0;
+            color: var(--text-muted); font-size: 0.72rem; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 0.08em;
+        }
+        .opt-e-divider::before, .opt-e-divider::after {
+            content: ''; flex: 1; height: 1px; background: var(--border);
+        }
+        .opt-e-features {
+            display: flex; flex-wrap: wrap; justify-content: center;
+            gap: 10px 20px;
+            list-style: none; padding: 0; margin: 0;
+        }
+        .opt-e-features li {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 0.84rem; font-weight: 500; color: var(--text);
+        }
+        .opt-e-features li::before {
+            content: '';
+            width: 16px; height: 16px; border-radius: 50%;
+            background: var(--green-soft) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2322c55e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") no-repeat center / 10px;
+            flex-shrink: 0;
+        }
+        .opt-e-ctas {
+            display: flex; align-items: center; justify-content: center;
+            gap: 12px; margin-top: 28px; flex-wrap: wrap;
+        }
+        .opt-e-btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            height: 44px; padding: 0 24px;
+            border-radius: var(--radius-full);
+            font-size: 0.88rem; font-weight: 700;
+            border: none; cursor: pointer;
+            transition: transform 120ms;
+        }
+        .opt-e-btn:hover { transform: translateY(-1px); }
+        .opt-e-btn.primary { background: var(--text); color: #fff; }
+        .opt-e-btn.secondary { background: var(--surface-strong); color: var(--text); border: 1px solid var(--border-strong); }
+    </style>
+</head>
+<body>
+
+<div style="text-align:center;padding:48px 0 0;">
+    <h1 style="font-size:1.6rem;font-weight:900;letter-spacing:-0.03em;">Pricing Section Options</h1>
+    <p style="color:var(--text-soft);font-size:0.9rem;">All features same. Only difference: Neo = 2 servers, Neo Pro = unlimited.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- OPTION A — Toggle card                     -->
+<!-- ═══════════════════════════════════════════ -->
+<section class="section" id="option-a">
+    <div class="w">
+        <div class="option-label">Option A &mdash; Single card with toggle</div>
+        <div class="section-header center">
+            <div class="section-badge">Pricing</div>
+            <h2 class="section-title">One CLI. <span class="gradient">Every feature included.</span></h2>
+            <p class="section-sub">Neo gives you the full deployment toolkit. The only question is how many servers you need.</p>
+        </div>
+
+        <div class="opt-a-card">
+            <div class="opt-a-title">Vxero Neo</div>
+            <div class="opt-a-desc">Deploy Docker apps, auto-SSL, workers, volumes, env management, zero-downtime deploys &mdash; everything, on every plan.</div>
+
+            <div class="opt-a-toggle-row">
+                <span class="opt-a-plan active" id="a-free-label">Free</span>
+                <button class="opt-a-toggle" id="a-toggle" onclick="toggleA()"></button>
+                <span class="opt-a-plan" id="a-plus-label">Neo Pro</span>
+            </div>
+
+            <div class="opt-a-price" id="a-price">$0 <small>forever</small></div>
+
+            <div class="opt-a-server-badge" id="a-server-badge">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                <span id="a-server-text">Up to 2 servers</span>
+            </div>
+
+            <ul class="opt-a-features">
+                <li>App templates</li>
+                <li>Deploy Dockerfile</li>
+                <li>Auto-SSL</li>
+                <li>Workers</li>
+                <li>Volumes</li>
+                <li>Env management</li>
+                <li>Live logs</li>
+                <li>Zero-downtime</li>
+                <li>App terminal</li>
+                <li>Metrics</li>
+                <li>Backup</li>
+            </ul>
+
+            <button class="opt-a-cta free-cta" id="a-cta">Get started free</button>
+        </div>
+    </div>
+</section>
+
+<script>
+var aIsPlus = false;
+function toggleA() {
+    aIsPlus = !aIsPlus;
+    document.getElementById('a-toggle').classList.toggle('on', aIsPlus);
+    document.getElementById('a-free-label').classList.toggle('active', !aIsPlus);
+    document.getElementById('a-plus-label').classList.toggle('active', aIsPlus);
+    document.getElementById('a-price').innerHTML = aIsPlus ? '$69 <small>/ user / year</small>' : '$0 <small>forever</small>';
+    document.getElementById('a-server-text').textContent = aIsPlus ? 'Unlimited servers' : 'Up to 2 servers';
+    document.getElementById('a-server-badge').classList.toggle('plus', aIsPlus);
+    var cta = document.getElementById('a-cta');
+    cta.textContent = aIsPlus ? 'Coming soon' : 'Get started free';
+    cta.className = 'opt-a-cta ' + (aIsPlus ? 'plus-cta' : 'free-cta');
+}
+</script>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- OPTION B — Side-by-side with shared bar    -->
+<!-- ═══════════════════════════════════════════ -->
+<section class="section" id="option-b">
+    <div class="w">
+        <div class="option-label">Option B &mdash; Side by side, shared features below</div>
+        <div class="section-header center">
+            <div class="section-badge">Pricing</div>
+            <h2 class="section-title">Same features.<br>Choose your <span class="gradient">server limit.</span></h2>
+            <p class="section-sub">Every feature is included on both plans. Neo Pro simply removes the 2-server cap.</p>
+        </div>
+
+        <div class="opt-b-wrapper">
+            <div class="opt-b-bar">
+                <div class="opt-b-side">
+                    <div class="opt-b-label free-label">Free forever</div>
+                    <div class="opt-b-name">Neo</div>
+                    <div class="opt-b-price-row">$0</div>
+                    <div class="opt-b-desc">Full-featured CLI for solo developers and small projects.</div>
+                    <div class="opt-b-server">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+                        Up to 2 servers
+                    </div>
+                    <br>
+                    <button class="opt-b-cta free-btn">Install free</button>
+                </div>
+                <div class="opt-b-side plus-side">
+                    <div class="opt-b-label plus-label">Plus</div>
+                    <div class="opt-b-name">Neo Pro</div>
+                    <div class="opt-b-price-row">$69 <small>/ user / year</small></div>
+                    <div class="opt-b-desc">For developers managing multiple servers across projects.</div>
+                    <div class="opt-b-server unlimited">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+                        Unlimited servers
+                    </div>
+                    <br>
+                    <button class="opt-b-cta plus-btn">Coming soon</button>
+                </div>
+            </div>
+            <div class="opt-b-shared">
+                <div class="opt-b-shared-title">Included on both plans</div>
+                <ul class="opt-b-shared-features">
+                    <li>App templates</li>
+                    <li>Deploy Dockerfile</li>
+                    <li>Auto-SSL</li>
+                    <li>Background workers</li>
+                    <li>Persistent volumes</li>
+                    <li>Env management</li>
+                    <li>Live logs</li>
+                    <li>Zero-downtime deploys</li>
+                    <li>App terminal</li>
+                    <li>Real-time metrics</li>
+                    <li>Local backup</li>
+                    <li>One-off exec</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- OPTION C — Tabs / segmented control        -->
+<!-- ═══════════════════════════════════════════ -->
+<section class="section" id="option-c">
+    <div class="w">
+        <div class="option-label">Option C &mdash; Single card with tab selector</div>
+        <div class="section-header center">
+            <div class="section-badge">Pricing</div>
+            <h2 class="section-title">Everything included.<br><span class="gradient">Pick your server limit.</span></h2>
+            <p class="section-sub">No feature gates. No tiers. Just choose how many servers you need.</p>
+        </div>
+
+        <div class="opt-c-card">
+            <div class="opt-c-slider-section">
+                <div class="opt-c-slider-label">How many servers?</div>
+                <div class="opt-c-tabs">
+                    <button class="opt-c-tab active" onclick="selectC(this, false)">Up to 2</button>
+                    <button class="opt-c-tab" onclick="selectC(this, true)">Unlimited</button>
+                </div>
+            </div>
+
+            <div class="opt-c-price-display">
+                <div class="opt-c-price-amount" id="c-price">$0 <small>forever</small></div>
+                <div class="opt-c-price-note" id="c-note">Free for personal projects and getting started</div>
+            </div>
+
+            <hr class="opt-c-divider">
+
+            <ul class="opt-c-features">
+                <li>Server init &amp; Docker setup</li>
+                <li>Deploy your own Dockerfile</li>
+                <li>10 built-in app templates</li>
+                <li>Auto-SSL via Caddy</li>
+                <li>Background workers</li>
+                <li>Persistent volumes</li>
+                <li>Env var management</li>
+                <li>Zero-downtime deploys</li>
+                <li>Live logs &amp; lifecycle</li>
+                <li>App terminal &amp; exec</li>
+                <li>Real-time metrics</li>
+                <li>Local backup</li>
+            </ul>
+
+            <button class="opt-c-cta" id="c-cta">Get started free</button>
+        </div>
+    </div>
+</section>
+
+<script>
+function selectC(el, isPlus) {
+    document.querySelectorAll('.opt-c-tab').forEach(function(t) { t.classList.remove('active'); });
+    el.classList.add('active');
+    document.getElementById('c-price').innerHTML = isPlus ? '$69 <small>/ user / year</small>' : '$0 <small>forever</small>';
+    document.getElementById('c-note').textContent = isPlus ? '$5.75/mo — manage unlimited servers' : 'Free for personal projects and getting started';
+    document.getElementById('c-cta').textContent = isPlus ? 'Coming soon' : 'Get started free';
+}
+</script>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- OPTION D — GitHub-style: free + banner     -->
+<!-- ═══════════════════════════════════════════ -->
+<section class="section" id="option-d">
+    <div class="w">
+        <div class="option-label">Option D &mdash; Free-first with upgrade banner</div>
+        <div class="section-header center">
+            <div class="section-badge">Pricing</div>
+            <h2 class="section-title">Free. Full-featured. <span class="gradient">No catch.</span></h2>
+            <p class="section-sub">Every feature, every command, on the free plan. Neo Pro just removes the server limit.</p>
+        </div>
+
+        <div class="opt-d-free-block">
+            <div class="opt-d-free-price">$0</div>
+            <div class="opt-d-free-sub">All features included &mdash; forever free</div>
+
+            <ul class="opt-d-features">
+                <li>App templates</li>
+                <li>Deploy Dockerfile</li>
+                <li>Auto-SSL</li>
+                <li>Workers</li>
+                <li>Volumes</li>
+                <li>Env management</li>
+                <li>Live logs</li>
+                <li>Zero-downtime</li>
+                <li>App terminal</li>
+                <li>Metrics</li>
+                <li>Backup</li>
+                <li>One-off exec</li>
+            </ul>
+
+            <div class="opt-d-limit">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+                Up to 2 servers on the free plan
+            </div>
+            <br>
+            <button class="opt-d-cta-free">Get started free</button>
+        </div>
+
+        <div class="opt-d-banner">
+            <div class="opt-d-banner-text">
+                <h4>Need more servers? <span>Neo Pro</span></h4>
+                <p>$69/user/year (~$5.75/mo) &mdash; same features, unlimited servers. That's it.</p>
+            </div>
+            <button class="opt-d-banner-cta">Coming soon</button>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- OPTION E — Sentence pricing                -->
+<!-- ═══════════════════════════════════════════ -->
+<section class="section" id="option-e">
+    <div class="w">
+        <div class="option-label">Option E &mdash; Sentence-based (ultra-minimal)</div>
+        <div class="section-header center">
+            <div class="section-badge">Pricing</div>
+            <h2 class="section-title">Simple pricing.<br><span class="gradient">No feature gates.</span></h2>
+        </div>
+
+        <div class="opt-e-block">
+            <p class="opt-e-sentence">
+                Neo is <span class="highlight">free</span> for up to 2 servers with every feature included.
+                Need more? <span class="highlight-plus">Neo Pro</span> is $69/user/year for unlimited servers. Same features. That's the only difference.
+            </p>
+
+            <div class="opt-e-divider">Every feature on every plan</div>
+
+            <ul class="opt-e-features">
+                <li>Server init &amp; Docker</li>
+                <li>Deploy Dockerfile</li>
+                <li>10 app templates</li>
+                <li>Auto-SSL</li>
+                <li>Background workers</li>
+                <li>Persistent volumes</li>
+                <li>Env management</li>
+                <li>Zero-downtime deploys</li>
+                <li>Live logs</li>
+                <li>App terminal &amp; exec</li>
+                <li>Real-time metrics</li>
+                <li>Local backup</li>
+            </ul>
+
+            <div class="opt-e-ctas">
+                <button class="opt-e-btn primary">Install Neo free</button>
+                <button class="opt-e-btn secondary">Neo Pro coming soon</button>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div style="height:80px;"></div>
+
+</body>
+</html>

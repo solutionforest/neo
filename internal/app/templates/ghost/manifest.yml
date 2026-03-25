@@ -1,0 +1,66 @@
+name: ghost
+title: "Ghost"
+description: "Professional publishing platform"
+category: blogging
+version: "5.98"
+image: ghost:5-alpine
+port: 2368
+maintainer: vxero
+official: true
+website: https://ghost.org
+tags: ["blog", "publishing", "newsletter", "cms"]
+min_ram: "512MB"
+min_disk: "1GB"
+notes: |
+  Default admin panel: https://<your-domain>/ghost/
+  Create your admin account on first visit.
+links:
+  documentation: https://ghost.org/docs/
+  source: https://github.com/TryGhost/Ghost
+  docker_hub: https://hub.docker.com/_/ghost
+
+volumes:
+  - name: ghost-content
+    path: /var/lib/ghost/content
+    label: "Ghost content and themes"
+
+env:
+  - key: url
+    label: "Public URL"
+    from: domain
+  - key: database__client
+    value: mysql
+  - key: database__connection__host
+    from_service: mysql
+    template: "svc-ghost-mysql"
+  - key: database__connection__user
+    value: ghost
+  - key: database__connection__password
+    from_service: mysql
+    template: "${MYSQL_PASSWORD}"
+  - key: database__connection__database
+    value: ghost
+
+services:
+  - name: mysql
+    image: mysql:8.0
+    port: 3306
+    volumes:
+      - name: ghost-mysql
+        path: /var/lib/mysql
+        label: "MySQL data"
+    env:
+      - key: MYSQL_ROOT_PASSWORD
+        generate: hex:32
+      - key: MYSQL_DATABASE
+        value: ghost
+      - key: MYSQL_USER
+        value: ghost
+      - key: MYSQL_PASSWORD
+        generate: hex:32
+
+health:
+  path: /ghost/api/v4/admin/site/
+  interval: 15s
+  timeout: 5s
+  retries: 5

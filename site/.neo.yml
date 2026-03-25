@@ -1,0 +1,5 @@
+name: neo-site
+domain: get.vxero.dev
+port: 80
+server: neo-vxero-prod
+https: true

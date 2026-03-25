@@ -1,0 +1,990 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Neo Documentation — Configuration Reference</title>
+    <meta name="description" content="Complete technical documentation for Vxero Neo: .neo.yml configuration, deployment, SSL, volumes, workers, sidecars, environments, and CLI reference." />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+    <link rel="manifest" href="site.webmanifest" />
+    <meta name="theme-color" content="#0a0c10" />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="Neo Documentation — Configuration Reference" />
+    <meta property="og:description" content="Complete technical documentation for .neo.yml configuration, deployment, SSL, volumes, workers, sidecars, and environments." />
+    <meta property="og:image" content="og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <style>
+        :root {
+            --bg:#fafafa; --surface:rgba(255,255,255,0.85); --surface-strong:#fff;
+            --border:rgba(15,23,42,0.06); --border-strong:rgba(15,23,42,0.1);
+            --text:#0f172a; --text-soft:#64748b; --text-muted:#94a3b8;
+            --accent:#2563eb; --accent-soft:rgba(37,99,235,0.08);
+            --green:#22c55e; --green-soft:rgba(34,197,94,0.08);
+            --yellow:#eab308; --yellow-soft:rgba(234,179,8,0.08);
+            --red:#ef4444; --red-soft:rgba(239,68,68,0.08);
+            --terminal-bg:#0b1017;
+            --sidebar-w:260px;
+            --radius-full:999px; --radius-lg:16px; --radius-md:12px; --radius-sm:8px;
+        }
+        *,*::before,*::after{box-sizing:border-box}
+        html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased;scroll-padding-top:80px}
+        body{margin:0;font-family:'Inter',-apple-system,sans-serif;color:var(--text);background:var(--bg);line-height:1.7;font-size:0.94rem}
+        a{color:var(--accent);text-decoration:none}
+        a:hover{text-decoration:underline}
+        code{font-family:'JetBrains Mono',monospace;font-size:0.82em;background:rgba(15,23,42,0.06);padding:2px 6px;border-radius:4px}
+
+        /* ── NAV ── */
+        .nav{position:sticky;top:0;z-index:100;padding:12px 0;background:rgba(250,250,250,0.85);backdrop-filter:blur(16px) saturate(1.8);border-bottom:1px solid var(--border)}
+        .nav-inner{max-width:1400px;margin:0 auto;padding:0 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+        .nav-brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:0.95rem;color:var(--text);text-decoration:none}
+        .nav-logo{width:32px;height:32px;border-radius:10px;background:linear-gradient(135deg,#0b1020 0%,#1d4ed8 58%,#22c55e 100%);display:grid;place-items:center;color:#fff;font-size:0.72rem;font-weight:900}
+        .nav-links{display:flex;align-items:center;gap:24px;font-size:0.85rem;font-weight:500;color:var(--text-soft)}
+        .nav-links a{color:var(--text-soft);text-decoration:none}
+        .nav-links a:hover{color:var(--text)}
+        .nav-links a.active{color:var(--accent);font-weight:600}
+
+        /* ── LAYOUT ── */
+        .layout{max-width:1400px;margin:0 auto;display:flex;min-height:calc(100vh - 60px)}
+        .sidebar{width:var(--sidebar-w);flex-shrink:0;padding:32px 24px;border-right:1px solid var(--border);position:sticky;top:60px;height:calc(100vh - 60px);overflow-y:auto}
+        .main{flex:1;min-width:0;padding:40px 56px 80px}
+
+        /* ── SIDEBAR ── */
+        .sidebar-section{margin-bottom:28px}
+        .sidebar-title{font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-muted);margin-bottom:8px}
+        .sidebar-link{display:block;padding:5px 12px;margin:0 -12px;border-radius:var(--radius-sm);font-size:0.84rem;color:var(--text-soft);text-decoration:none;transition:background 100ms,color 100ms}
+        .sidebar-link:hover{background:rgba(15,23,42,0.04);color:var(--text);text-decoration:none}
+        .sidebar-link.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
+        .sidebar-sub{padding-left:16px}
+        .sidebar-sub .sidebar-link{font-size:0.8rem}
+
+        /* ── CONTENT ── */
+        .doc-section{margin-bottom:64px}
+        .doc-section h2{font-size:1.6rem;font-weight:800;letter-spacing:-0.03em;margin:0 0 8px;padding-top:8px}
+        .doc-section h3{font-size:1.15rem;font-weight:700;margin:32px 0 12px;color:var(--text)}
+        .doc-section h4{font-size:0.95rem;font-weight:700;margin:24px 0 8px;color:var(--text-soft)}
+        .doc-section p{margin:0 0 16px;color:var(--text-soft)}
+        .doc-section>p:first-of-type{font-size:1.02rem;color:var(--text-soft)}
+
+        /* ── CODE BLOCKS ── */
+        .codeblock{position:relative;margin:16px 0 24px;border-radius:var(--radius-md);overflow:hidden;background:var(--terminal-bg)}
+        .codeblock-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:rgba(255,255,255,0.04);border-bottom:1px solid rgba(255,255,255,0.06);font-size:0.72rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em}
+        .codeblock pre{margin:0;padding:20px;color:rgba(226,232,240,0.92);font-family:'JetBrains Mono',monospace;font-size:0.8rem;line-height:1.8;overflow-x:auto}
+        .codeblock .c{color:#6b7280}
+        .codeblock .k{color:#93c5fd}
+        .codeblock .v{color:#86efac}
+        .codeblock .s{color:#fde68a}
+        .codeblock .n{color:#c4b5fd}
+        .codeblock .p{color:#fb923c}
+
+        /* ── TABLE ── */
+        .doc-table{width:100%;border-collapse:collapse;margin:16px 0 24px;font-size:0.85rem}
+        .doc-table th{text-align:left;padding:10px 16px;background:rgba(15,23,42,0.03);border-bottom:2px solid var(--border-strong);font-weight:700;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted)}
+        .doc-table td{padding:10px 16px;border-bottom:1px solid var(--border);vertical-align:top}
+        .doc-table td code{font-size:0.78rem}
+        .doc-table tr:last-child td{border-bottom:none}
+
+        /* ── CALLOUT ── */
+        .callout{padding:16px 20px;border-radius:var(--radius-md);margin:16px 0 24px;font-size:0.88rem;line-height:1.6}
+        .callout-info{background:var(--accent-soft);border:1px solid rgba(37,99,235,0.15)}
+        .callout-warn{background:var(--yellow-soft);border:1px solid rgba(234,179,8,0.2)}
+        .callout-tip{background:var(--green-soft);border:1px solid rgba(34,197,94,0.15)}
+        .callout strong{display:block;margin-bottom:4px;font-size:0.82rem;text-transform:uppercase;letter-spacing:0.04em}
+        .callout-info strong{color:var(--accent)}
+        .callout-warn strong{color:var(--yellow)}
+        .callout-tip strong{color:var(--green)}
+
+        /* ── BADGE ── */
+        .badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:var(--radius-full);font-size:0.68rem;font-weight:700;letter-spacing:0.04em;vertical-align:middle}
+        .badge-required{background:var(--red-soft);color:var(--red)}
+        .badge-optional{background:rgba(15,23,42,0.06);color:var(--text-muted)}
+        .badge-default{background:var(--green-soft);color:var(--green)}
+        .badge-new{background:var(--accent-soft);color:var(--accent)}
+
+        /* ── FOOTER ── */
+        .footer{padding:40px 0;border-top:1px solid var(--border);text-align:center;font-size:0.82rem;color:var(--text-muted)}
+        .footer a{color:var(--accent)}
+
+        /* ── MOBILE ── */
+        @media(max-width:900px){
+            .sidebar{display:none}
+            .main{padding:24px 20px 60px}
+        }
+    </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav">
+    <div class="nav-inner">
+        <a class="nav-brand" href="index.html">
+            <div class="nav-logo">N</div>
+            Vxero Neo
+        </a>
+        <div class="nav-links">
+            <a href="index.html">Home</a>
+            <a href="details.html">Quick Start</a>
+            <a href="docs.html" class="active">Docs</a>
+            <a href="https://github.com/vxero/neo">GitHub</a>
+        </div>
+    </div>
+</nav>
+
+<div class="layout">
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+    <div class="sidebar-section">
+        <div class="sidebar-title">Getting Started</div>
+        <a class="sidebar-link" href="#overview">Overview</a>
+        <a class="sidebar-link" href="#installation">Installation</a>
+        <a class="sidebar-link" href="#quickstart">Quick Start</a>
+    </div>
+    <div class="sidebar-section">
+        <div class="sidebar-title">Configuration</div>
+        <a class="sidebar-link" href="#neo-yml">Project Config (.neo.yml)</a>
+        <div class="sidebar-sub">
+            <a class="sidebar-link" href="#config-name">name &amp; domain</a>
+            <a class="sidebar-link" href="#config-env">env &amp; env_file</a>
+            <a class="sidebar-link" href="#config-volumes">volumes</a>
+            <a class="sidebar-link" href="#config-workers">workers</a>
+            <a class="sidebar-link" href="#config-sidecars">sidecars</a>
+            <a class="sidebar-link" href="#config-ssl">ssl</a>
+            <a class="sidebar-link" href="#config-https">https</a>
+            <a class="sidebar-link" href="#config-environments">environments</a>
+        </div>
+    </div>
+    <div class="sidebar-section">
+        <div class="sidebar-title">Deployment</div>
+        <a class="sidebar-link" href="#deploy">Deploying apps</a>
+        <a class="sidebar-link" href="#deploy-build">Build strategies</a>
+        <a class="sidebar-link" href="#deploy-env-priority">Env var priority</a>
+        <a class="sidebar-link" href="#deploy-zero-downtime">Zero-downtime</a>
+    </div>
+    <div class="sidebar-section">
+        <div class="sidebar-title">Domains &amp; SSL</div>
+        <a class="sidebar-link" href="#domains">Domain management</a>
+        <a class="sidebar-link" href="#ssl-auto">Auto SSL (sslip.io)</a>
+        <a class="sidebar-link" href="#ssl-custom">Custom certificates</a>
+    </div>
+    <div class="sidebar-section">
+        <div class="sidebar-title">Operations</div>
+        <a class="sidebar-link" href="#sync">Syncing state</a>
+        <a class="sidebar-link" href="#services">Shared services</a>
+        <a class="sidebar-link" href="#databases">Databases &amp; data</a>
+        <a class="sidebar-link" href="#servers">Server management</a>
+    </div>
+    <div class="sidebar-section">
+        <div class="sidebar-title">Reference</div>
+        <a class="sidebar-link" href="#cli-reference">CLI commands</a>
+        <a class="sidebar-link" href="#server-requirements">Server requirements</a>
+        <a class="sidebar-link" href="#architecture">Architecture</a>
+    </div>
+</aside>
+
+<!-- MAIN CONTENT -->
+<main class="main">
+
+<!-- OVERVIEW -->
+<section class="doc-section" id="overview">
+    <h2>Overview</h2>
+    <p>Neo is an SSH-native CLI that deploys Docker applications to any VPS. No agent, no control plane — just your laptop and an SSH key.</p>
+
+    <p>Neo connects to your server over SSH, installs Docker and Caddy, builds your app from a Dockerfile, and routes traffic with automatic TLS. All state is stored on the server at <code>/etc/neo/state.json</code>. Project configuration lives in <code>.neo.yml</code> in your repo.</p>
+
+    <h3>How it works</h3>
+    <table class="doc-table">
+        <tr><th>Step</th><th>What happens</th></tr>
+        <tr><td><code>neo init</code></td><td>SSH into server, install Docker, start Caddy reverse proxy, create state file</td></tr>
+        <tr><td><code>neo deploy</code></td><td>Read config, build image, transfer via SSH, start container, configure routing</td></tr>
+        <tr><td><code>neo domain</code></td><td>Assign domain, Caddy provisions TLS certificate via Let's Encrypt</td></tr>
+        <tr><td><code>neo sync</code></td><td>Sync server state back to <code>.neo.yml</code> to keep config in sync</td></tr>
+    </table>
+
+    <h3>Key files</h3>
+    <table class="doc-table">
+        <tr><th>File</th><th>Location</th><th>Purpose</th></tr>
+        <tr><td><code>.neo.yml</code></td><td>Project root (your repo)</td><td>Deployment configuration — what should be deployed</td></tr>
+        <tr><td><code>state.json</code></td><td><code>/etc/neo/state.json</code> on server</td><td>Runtime state — what is actually running</td></tr>
+        <tr><td><code>config.json</code></td><td><code>~/.neo/config.json</code> local</td><td>Server list — which servers are configured</td></tr>
+    </table>
+</section>
+
+<!-- INSTALLATION -->
+<section class="doc-section" id="installation">
+    <h2>Installation</h2>
+    <p>Install Neo with a single command. Supports macOS (Apple Silicon &amp; Intel), Linux (x86_64 &amp; ARM64), and Windows.</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre>curl -fsSL https://get.vxero.dev/neo | sh</pre>
+    </div>
+
+    <p>Or download manually from the <a href="https://github.com/vxero/neo/releases">releases page</a>.</p>
+
+    <h3>Verify installation</h3>
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre>neo version</pre>
+    </div>
+
+    <h3>Self-update</h3>
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre>neo upgrade</pre>
+    </div>
+</section>
+
+<!-- QUICK START -->
+<section class="doc-section" id="quickstart">
+    <h2>Quick Start</h2>
+    <p>Deploy your first app in three commands.</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre><span class="c"># 1. Initialize your server</span>
+neo init root@159.65.100.42
+
+<span class="c"># 2. Deploy your project (must have a Dockerfile)</span>
+neo deploy . --domain app.example.com
+
+<span class="c"># 3. Assign a temp domain with instant SSL (no DNS needed)</span>
+neo domain my-app --temp</pre>
+    </div>
+
+    <div class="callout callout-tip">
+        <strong>Tip</strong>
+        Neo auto-reads <code>docker-compose.yml</code> and <code>.env</code> files. If your project already has these, <code>neo deploy .</code> will extract env vars, ports, and service config automatically.
+    </div>
+</section>
+
+<!-- .NEO.YML CONFIG -->
+<section class="doc-section" id="neo-yml">
+    <h2>Project Config (.neo.yml)</h2>
+    <p>The <code>.neo.yml</code> file declares your deployment configuration. All fields are optional — Neo works without it by auto-detecting from your Dockerfile and docker-compose.yml.</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml — Full example</div>
+        <pre><span class="k">name:</span> my-app
+<span class="k">domain:</span> app.example.com
+<span class="k">port:</span> <span class="n">8080</span>
+<span class="k">https:</span> <span class="n">true</span>
+
+<span class="k">ssl:</span>
+  <span class="v">certificate:</span> certs/fullchain.pem
+  <span class="v">private_key:</span> certs/privkey.pem
+
+<span class="k">env:</span>
+  <span class="v">APP_ENV:</span> production
+  <span class="v">LOG_CHANNEL:</span> stderr
+<span class="k">env_file:</span> .env.production
+
+<span class="k">volumes:</span>
+  <span class="v">data:</span>
+    <span class="s">path:</span> /var/www/html/database
+  <span class="v">storage:</span>
+    <span class="s">path:</span> /var/www/html/storage
+
+<span class="k">workers:</span>
+  <span class="v">queue:</span>
+    <span class="s">command:</span> php artisan queue:work --tries=3
+  <span class="v">scheduler:</span>
+    <span class="s">command:</span> php artisan schedule:work
+
+<span class="k">sidecars:</span>
+  <span class="v">redis:</span>
+    <span class="s">image:</span> redis:7-alpine
+    <span class="s">volumes:</span>
+      <span class="s">cache:</span> /data
+  <span class="v">builder:</span>
+    <span class="s">build:</span>
+      <span class="s">context:</span> ../builder
+      <span class="s">dockerfile:</span> builder/Dockerfile
+    <span class="s">volumes:</span>
+      <span class="s">output:</span> /output
+
+<span class="k">environments:</span>
+  <span class="v">production:</span>
+    <span class="s">domain:</span> app.example.com
+    <span class="s">env_file:</span> .env.production
+  <span class="v">staging:</span>
+    <span class="s">domain:</span> staging.example.com
+    <span class="s">env:</span>
+      <span class="s">APP_DEBUG:</span> <span class="p">"true"</span></pre>
+    </div>
+</section>
+
+<!-- CONFIG: NAME & DOMAIN -->
+<section class="doc-section" id="config-name">
+    <h3>name &amp; domain</h3>
+
+    <table class="doc-table">
+        <tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+        <tr><td><code>name</code></td><td>string</td><td>Directory name</td><td>App name used for container naming (<code>app-{name}</code>)</td></tr>
+        <tr><td><code>domain</code></td><td>string</td><td>Prompt</td><td>Domain name for Caddy routing</td></tr>
+        <tr><td><code>port</code></td><td>integer</td><td>Dockerfile EXPOSE</td><td>Port your app listens on inside the container</td></tr>
+        <tr><td><code>server</code></td><td>string</td><td>Current server</td><td>Pin deployment to a specific server by name</td></tr>
+    </table>
+
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml</div>
+        <pre><span class="k">name:</span> my-app
+<span class="k">domain:</span> app.example.com
+<span class="k">port:</span> <span class="n">3000</span>
+<span class="k">server:</span> production</pre>
+    </div>
+</section>
+
+<!-- CONFIG: ENV -->
+<section class="doc-section" id="config-env">
+    <h3>env &amp; env_file</h3>
+    <p>Environment variables for your app container. These are merged with other sources during deploy.</p>
+
+    <table class="doc-table">
+        <tr><th>Key</th><th>Type</th><th>Description</th></tr>
+        <tr><td><code>env</code></td><td>map</td><td>Key-value pairs set as container environment variables</td></tr>
+        <tr><td><code>env_file</code></td><td>string</td><td>Path to a <code>.env</code> file (relative to <code>.neo.yml</code>)</td></tr>
+    </table>
+
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml</div>
+        <pre><span class="k">env:</span>
+  <span class="v">APP_ENV:</span> production
+  <span class="v">LOG_CHANNEL:</span> stderr
+  <span class="v">CACHE_DRIVER:</span> redis
+<span class="k">env_file:</span> .env.production  <span class="c"># secrets go here (not committed)</span></pre>
+    </div>
+
+    <div class="callout callout-warn">
+        <strong>Security</strong>
+        Never put secrets (API keys, passwords, database credentials) directly in <code>.neo.yml</code>. Use <code>env_file</code> pointing to a <code>.env</code> file that is gitignored, or set them via <code>neo env set</code>.
+    </div>
+</section>
+
+<!-- CONFIG: VOLUMES -->
+<section class="doc-section" id="config-volumes">
+    <h3>volumes</h3>
+    <p>Persistent Docker volumes that survive redeploys. Each volume is created as <code>{app-name}-{volume-name}</code>.</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml</div>
+        <pre><span class="k">volumes:</span>
+  <span class="v">data:</span>
+    <span class="s">path:</span> /var/www/html/database   <span class="c"># SQLite database</span>
+  <span class="v">storage:</span>
+    <span class="s">path:</span> /var/www/html/storage    <span class="c"># uploads, cache</span>
+  <span class="v">output:</span>
+    <span class="s">path:</span> /output                  <span class="c"># shared with sidecars</span></pre>
+    </div>
+
+    <table class="doc-table">
+        <tr><th>Key</th><th>Type</th><th>Description</th></tr>
+        <tr><td><code>path</code></td><td>string <span class="badge badge-required">Required</span></td><td>Mount path inside the container</td></tr>
+    </table>
+
+    <p>Volumes declared here are also available to <strong>workers</strong> (automatically shared) and <strong>sidecars</strong> (via name reference).</p>
+</section>
+
+<!-- CONFIG: WORKERS -->
+<section class="doc-section" id="config-workers">
+    <h3>workers</h3>
+    <p>Background worker containers that use the same image, env vars, and volumes as the main app — but run a different command.</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml</div>
+        <pre><span class="k">workers:</span>
+  <span class="v">queue:</span>
+    <span class="s">command:</span> php artisan queue:work --tries=3 --max-time=3600
+  <span class="v">scheduler:</span>
+    <span class="s">command:</span> php artisan schedule:work
+  <span class="v">websocket:</span>
+    <span class="s">command:</span> php artisan reverb:start</pre>
+    </div>
+
+    <table class="doc-table">
+        <tr><th>Key</th><th>Type</th><th>Description</th></tr>
+        <tr><td><code>command</code></td><td>string <span class="badge badge-required">Required</span></td><td>Command to run instead of the default CMD</td></tr>
+    </table>
+
+    <p>Workers are deployed with blue-green rollout alongside the main app. View logs with:</p>
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre>neo logs my-app --worker queue</pre>
+    </div>
+
+    <p>Workers removed from <code>.neo.yml</code> are automatically deleted on the next deploy.</p>
+</section>
+
+<!-- CONFIG: SIDECARS -->
+<section class="doc-section" id="config-sidecars">
+    <h3>sidecars</h3>
+    <p>Sidecar containers run alongside your app on the same Docker network but have their own image. They are not exposed publicly via Caddy.</p>
+
+    <h4>Pre-built image</h4>
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml</div>
+        <pre><span class="k">sidecars:</span>
+  <span class="v">redis:</span>
+    <span class="s">image:</span> redis:7-alpine
+    <span class="s">volumes:</span>
+      <span class="s">cache:</span> /data
+    <span class="s">env:</span>
+      <span class="s">MAXMEMORY:</span> 256mb</pre>
+    </div>
+
+    <h4>Built from Dockerfile</h4>
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml</div>
+        <pre><span class="k">sidecars:</span>
+  <span class="v">builder:</span>
+    <span class="s">build:</span> ../builder           <span class="c"># string form: path to build context</span>
+  <span class="v">custom:</span>
+    <span class="s">build:</span>                       <span class="c"># object form: context + dockerfile</span>
+      <span class="s">context:</span> ..
+      <span class="s">dockerfile:</span> docker/custom/Dockerfile
+    <span class="s">volumes:</span>
+      <span class="s">output:</span> /output            <span class="c"># shares app volume named "output"</span>
+    <span class="s">env:</span>
+      <span class="s">WORKER_MODE:</span> <span class="p">"true"</span></pre>
+    </div>
+
+    <table class="doc-table">
+        <tr><th>Key</th><th>Type</th><th>Description</th></tr>
+        <tr><td><code>image</code></td><td>string</td><td>Pre-built Docker image to pull</td></tr>
+        <tr><td><code>build</code></td><td>string or object</td><td>Build context path, or <code>{context, dockerfile}</code></td></tr>
+        <tr><td><code>volumes</code></td><td>map</td><td>Volume name → container path. Names matching app volumes are shared automatically</td></tr>
+        <tr><td><code>env</code></td><td>map</td><td>Sidecar-specific environment variables</td></tr>
+        <tr><td><code>command</code></td><td>string</td><td>Override the container's CMD</td></tr>
+    </table>
+
+    <div class="callout callout-info">
+        <strong>Shared volumes</strong>
+        If a sidecar volume name matches an app volume name (e.g. both declare <code>output</code>), they share the same Docker volume. This is how sidecars like build services can write files that the main app serves.
+    </div>
+</section>
+
+<!-- CONFIG: SSL -->
+<section class="doc-section" id="config-ssl">
+    <h3>ssl</h3>
+    <p>Bring your own SSL certificate. The cert and key are uploaded to the server and loaded into Caddy on deploy.</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml</div>
+        <pre><span class="k">ssl:</span>
+  <span class="v">certificate:</span> certs/fullchain.pem
+  <span class="v">private_key:</span> certs/privkey.pem</pre>
+    </div>
+
+    <table class="doc-table">
+        <tr><th>Key</th><th>Type</th><th>Description</th></tr>
+        <tr><td><code>certificate</code></td><td>string <span class="badge badge-required">Required</span></td><td>Path to PEM certificate file (relative to <code>.neo.yml</code>)</td></tr>
+        <tr><td><code>private_key</code></td><td>string <span class="badge badge-required">Required</span></td><td>Path to PEM private key file (relative to <code>.neo.yml</code>)</td></tr>
+    </table>
+
+    <p>Can also be set per-environment (see <a href="#config-environments">environments</a>) or via CLI:</p>
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre>neo domain my-app app.example.com --cert fullchain.pem --key privkey.pem</pre>
+    </div>
+</section>
+
+<!-- CONFIG: HTTPS -->
+<section class="doc-section" id="config-https">
+    <h3>https <span class="badge badge-new">New</span></h3>
+    <p>Control whether Caddy serves your app over HTTPS with auto-provisioned certificates.</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml</div>
+        <pre><span class="k">https:</span> <span class="n">true</span>   <span class="c"># Caddy auto-provisions SSL via Let's Encrypt</span></pre>
+    </div>
+
+    <table class="doc-table">
+        <tr><th>Value</th><th>Behavior</th></tr>
+        <tr><td><code>true</code></td><td>HTTPS with auto-SSL (Let's Encrypt). Requires domain DNS to be pointed at the server.</td></tr>
+        <tr><td><code>false</code></td><td>HTTP only. Use when behind a CDN like Cloudflare that handles SSL.</td></tr>
+        <tr><td>Not set (default)</td><td>First deploy uses HTTP. Enable HTTPS later with <code>neo domain --temp</code> or this config.</td></tr>
+    </table>
+</section>
+
+<!-- CONFIG: ENVIRONMENTS -->
+<section class="doc-section" id="config-environments">
+    <h3>environments</h3>
+    <p>Named deployment targets that override top-level config. Deploy to a specific environment with <code>--to</code>.</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml</div>
+        <pre><span class="k">environments:</span>
+  <span class="v">production:</span>
+    <span class="s">domain:</span> app.example.com
+    <span class="s">server:</span> prod-server
+    <span class="s">https:</span> <span class="n">true</span>
+    <span class="s">env_file:</span> .env.production
+    <span class="s">ssl:</span>
+      <span class="s">certificate:</span> certs/prod/fullchain.pem
+      <span class="s">private_key:</span> certs/prod/privkey.pem
+  <span class="v">staging:</span>
+    <span class="s">domain:</span> staging.example.com
+    <span class="s">server:</span> staging-server
+    <span class="s">env:</span>
+      <span class="s">APP_DEBUG:</span> <span class="p">"true"</span>
+      <span class="s">LOG_LEVEL:</span> debug</pre>
+    </div>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre><span class="c"># Deploy to production</span>
+neo deploy --to production
+
+<span class="c"># Deploy to staging</span>
+neo deploy --to staging
+
+<span class="c"># If multiple environments exist and no --to flag, Neo prompts</span>
+neo deploy</pre>
+    </div>
+
+    <p>Environment fields override top-level: <code>domain</code>, <code>server</code>, <code>port</code>, <code>https</code>, <code>env</code>, <code>env_file</code>, <code>ssl</code>.</p>
+</section>
+
+<!-- DEPLOYING APPS -->
+<section class="doc-section" id="deploy">
+    <h2>Deploying Apps</h2>
+    <p>Neo builds your Docker image, transfers it to the server, starts the container, and configures routing — all in one command.</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre><span class="c"># Deploy current directory</span>
+neo deploy .
+
+<span class="c"># Deploy with explicit options</span>
+neo deploy . --domain app.example.com --env APP_KEY=base64:... --to production
+
+<span class="c"># Deploy a different directory</span>
+neo deploy ./my-project</pre>
+    </div>
+</section>
+
+<!-- BUILD STRATEGIES -->
+<section class="doc-section" id="deploy-build">
+    <h3>Build strategies</h3>
+    <p>Neo automatically chooses the best build strategy based on your environment.</p>
+
+    <table class="doc-table">
+        <tr><th>Strategy</th><th>When</th><th>How</th></tr>
+        <tr><td><strong>Local build</strong></td><td>Docker is running locally</td><td>Builds on your machine with <code>--platform linux/amd64</code>, then transfers via <code>docker save | ssh docker load</code></td></tr>
+        <tr><td><strong>Remote build</strong></td><td>No local Docker</td><td>Packages source as tar.gz, uploads via SCP, builds on server with <code>docker build</code></td></tr>
+    </table>
+
+    <div class="callout callout-tip">
+        <strong>Tip</strong>
+        Remote builds are faster when building for the same architecture as the server (both x86_64). Local builds cross-compile which can be slow on Apple Silicon → x86_64.
+    </div>
+</section>
+
+<!-- ENV VAR PRIORITY -->
+<section class="doc-section" id="deploy-env-priority">
+    <h3>Env var priority</h3>
+    <p>Environment variables are merged from multiple sources. Higher priority overrides lower.</p>
+
+    <table class="doc-table">
+        <tr><th>Priority</th><th>Source</th><th>Example</th></tr>
+        <tr><td>1 (highest)</td><td><code>--env</code> CLI flag</td><td><code>neo deploy --env LOG=debug</code></td></tr>
+        <tr><td>2</td><td><code>--env-file</code> CLI flag</td><td><code>neo deploy --env-file .env</code></td></tr>
+        <tr><td>3</td><td><code>.neo.yml</code> env / env_file</td><td>Declared in config</td></tr>
+        <tr><td>4</td><td><code>docker-compose.yml</code></td><td>Auto-detected from compose</td></tr>
+        <tr><td>5 (lowest)</td><td>Server state (redeploy)</td><td>Previous deployment values</td></tr>
+    </table>
+</section>
+
+<!-- ZERO DOWNTIME -->
+<section class="doc-section" id="deploy-zero-downtime">
+    <h3>Zero-downtime deployment</h3>
+    <p>Neo uses blue-green deployment on redeploys:</p>
+    <ol style="color:var(--text-soft)">
+        <li>Start the new container alongside the old one (<code>app-{name}-next</code>)</li>
+        <li>Wait for the new container's health check to pass</li>
+        <li>Switch Caddy routing to the new container (traffic switches instantly)</li>
+        <li>Stop and remove the old container</li>
+        <li>Rename the new container to the canonical name</li>
+    </ol>
+    <p>If the health check fails, the old container keeps serving traffic and the new one is removed.</p>
+</section>
+
+<!-- DOMAINS -->
+<section class="doc-section" id="domains">
+    <h2>Domains &amp; SSL</h2>
+    <p>Caddy handles reverse proxying and TLS certificate management. Three ways to set up domains:</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre><span class="c"># Set a custom domain</span>
+neo domain my-app app.example.com
+
+<span class="c"># Assign a temporary sslip.io domain with instant SSL</span>
+neo domain my-app --temp
+
+<span class="c"># Use a custom SSL certificate</span>
+neo domain my-app app.example.com --cert fullchain.pem --key privkey.pem
+
+<span class="c"># Toggle HTTPS on/off</span>
+neo domain my-app --set-https    <span class="c"># enable</span>
+neo domain my-app --set-http     <span class="c"># disable (HTTP only)</span></pre>
+    </div>
+</section>
+
+<!-- AUTO SSL -->
+<section class="doc-section" id="ssl-auto">
+    <h3>Auto SSL (sslip.io) <span class="badge badge-new">New</span></h3>
+    <p>Get instant HTTPS without configuring DNS. The <code>--temp</code> flag assigns <code>{app}.{ip}.sslip.io</code> which auto-resolves to your server.</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre>$ neo domain ghost --temp
+
+  Temporary domain ready!
+
+    URL:  https://ghost.159.65.100.42.sslip.io
+
+  sslip.io resolves to your server IP automatically.
+  SSL certificate auto-provisioned via Let's Encrypt.
+
+  Replace with a real domain later:
+    neo domain ghost blog.example.com</pre>
+    </div>
+</section>
+
+<!-- CUSTOM SSL -->
+<section class="doc-section" id="ssl-custom">
+    <h3>Custom certificates</h3>
+    <p>Upload your own TLS certificates. Useful for wildcard certs, internal CAs, or when using a cert from a specific provider.</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell — CLI</div>
+        <pre>neo domain my-app app.example.com --cert /path/to/fullchain.pem --key /path/to/privkey.pem</pre>
+    </div>
+
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml — Config</div>
+        <pre><span class="k">ssl:</span>
+  <span class="v">certificate:</span> certs/fullchain.pem
+  <span class="v">private_key:</span> certs/privkey.pem</pre>
+    </div>
+
+    <p>The certificate is uploaded to <code>/etc/neo/certs/{app}/</code> on the server and loaded into Caddy.</p>
+</section>
+
+<!-- SYNC -->
+<section class="doc-section" id="sync">
+    <h2>Syncing State <span class="badge badge-new">New</span></h2>
+    <p>CLI commands like <code>neo domain</code> and <code>neo env set</code> update server state but don't modify <code>.neo.yml</code>. Use <code>neo sync</code> to write server state back to your config.</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre><span class="c"># Preview changes (dry run)</span>
+$ neo sync my-app --dry-run
+
+  Syncing my-app: server → .neo.yml (dry run)
+
+  ~ domain        example.com → my-app.1.2.3.4.sslip.io
+  ~ https         false → true
+  + env.NEW_VAR   hello
+
+  3 change(s) detected. Run without --dry-run to apply.
+
+<span class="c"># Apply changes</span>
+$ neo sync my-app
+
+  Write 3 change(s) to .neo.yml? (y/n): y
+  ✓ .neo.yml updated (3 changes)</pre>
+    </div>
+
+    <h3>What gets synced</h3>
+    <table class="doc-table">
+        <tr><th>Field</th><th>Direction</th></tr>
+        <tr><td>domain</td><td>Server → .neo.yml</td></tr>
+        <tr><td>port</td><td>Server → .neo.yml</td></tr>
+        <tr><td>https</td><td>Server → .neo.yml</td></tr>
+        <tr><td>env vars</td><td>Server → .neo.yml (full replace)</td></tr>
+        <tr><td>volumes</td><td>Server → .neo.yml (additions only)</td></tr>
+        <tr><td>workers</td><td>Server → .neo.yml</td></tr>
+    </table>
+</section>
+
+<!-- SERVICES -->
+<section class="doc-section" id="services">
+    <h2>Shared Services</h2>
+    <p>Server-level database and cache instances shared across multiple apps. Saves RAM on small VMs.</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre><span class="c"># Create a shared MySQL</span>
+neo service create mysql
+
+<span class="c"># Link to your app (creates database + user, injects env vars)</span>
+neo service link mysql my-app
+
+<span class="c"># Other operations</span>
+neo service list
+neo service unlink mysql my-app
+neo service logs mysql
+neo service start|stop|restart mysql
+neo service remove mysql</pre>
+    </div>
+
+    <p>Supported types: <code>mysql</code>, <code>postgres</code>, <code>redis</code>, <code>mariadb</code></p>
+</section>
+
+<!-- DATABASES & DATA -->
+<section class="doc-section" id="databases">
+    <h2>Databases &amp; Data</h2>
+    <p>Neo can run databases in Docker via shared services or bundled templates. This works well for small projects, but production workloads with real user data should use managed database services.</p>
+
+    <h3>Three approaches</h3>
+    <table class="doc-table">
+        <tr><th>Approach</th><th>How</th><th>Best for</th><th>Data safety</th></tr>
+        <tr>
+            <td><strong>Bundled</strong></td>
+            <td>Template includes DB (e.g. Ghost + MySQL)</td>
+            <td>Hobby projects, testing</td>
+            <td>You manage backups</td>
+        </tr>
+        <tr>
+            <td><strong>Shared service</strong></td>
+            <td><code>neo service create mysql</code></td>
+            <td>Multi-app VPS, saving RAM</td>
+            <td>You manage backups</td>
+        </tr>
+        <tr>
+            <td><strong>Managed (external)</strong></td>
+            <td>Neon, PlanetScale, Supabase, RDS</td>
+            <td>Production with real users</td>
+            <td>Provider handles backups, replication, failover</td>
+        </tr>
+    </table>
+
+    <h3>When to use what</h3>
+    <table class="doc-table">
+        <tr><th>Scenario</th><th>Recommendation</th></tr>
+        <tr><td>Side project, blog, personal site</td><td>Bundled or shared service — simple, all on one VPS</td></tr>
+        <tr><td>3&ndash;5 apps on one $12/mo VPS</td><td>Shared service — one Postgres for all apps saves ~200MB RAM each</td></tr>
+        <tr><td>SaaS with paying customers</td><td><strong>Managed database</strong> — automated backups, point-in-time recovery, replication</td></tr>
+        <tr><td>Regulatory / compliance requirements</td><td><strong>Managed database</strong> — encryption at rest, audit logs, certifications</td></tr>
+        <tr><td>Data you cannot afford to lose</td><td><strong>Managed database</strong> — Docker volumes are not a backup strategy</td></tr>
+    </table>
+
+    <h3>Why managed databases for production</h3>
+    <p>Docker databases on a single VPS have real limitations that managed services solve:</p>
+    <table class="doc-table">
+        <tr><th>Capability</th><th>Docker on VPS</th><th>Managed service</th></tr>
+        <tr><td>Automated backups</td><td>Manual (<code>neo backup</code>)</td><td>Daily, with retention policy</td></tr>
+        <tr><td>Point-in-time recovery</td><td>Not available</td><td>Restore to any second</td></tr>
+        <tr><td>Replication / failover</td><td>Not available</td><td>Automatic</td></tr>
+        <tr><td>Transaction-safe snapshots</td><td>Volume tarballs only</td><td>WAL-based, consistent</td></tr>
+        <tr><td>Security patches</td><td>Manual image updates</td><td>Applied automatically</td></tr>
+        <tr><td>Monitoring</td><td>None</td><td>Slow queries, connections, disk</td></tr>
+        <tr><td>Scaling</td><td>Vertical only (bigger VPS)</td><td>Read replicas, auto-scaling</td></tr>
+    </table>
+
+    <div class="callout callout-warn">
+        <strong>Important</strong>
+        <code>neo backup</code> creates volume-level tarballs — it stops the container, tars the volume, and restarts. This is not transaction-safe. For Docker databases, run <code>mysqldump</code> or <code>pg_dump</code> before backup for consistency.
+    </div>
+
+    <h3>Recommended managed providers</h3>
+    <table class="doc-table">
+        <tr><th>Provider</th><th>Database</th><th>Free tier</th></tr>
+        <tr><td><a href="https://neon.tech">Neon</a></td><td>PostgreSQL</td><td>512MB storage, autoscaling</td></tr>
+        <tr><td><a href="https://planetscale.com">PlanetScale</a></td><td>MySQL</td><td>5GB storage, 1B reads/mo</td></tr>
+        <tr><td><a href="https://supabase.com">Supabase</a></td><td>PostgreSQL</td><td>500MB storage, 2 projects</td></tr>
+        <tr><td><a href="https://redis.io/cloud">Redis Cloud</a></td><td>Redis</td><td>30MB, 1 database</td></tr>
+        <tr><td><a href="https://www.digitalocean.com/products/managed-databases">DigitalOcean</a></td><td>Postgres / MySQL / Redis</td><td>From $15/mo</td></tr>
+        <tr><td><a href="https://aws.amazon.com/rds/">AWS RDS</a></td><td>All major engines</td><td>750hr/mo free tier (12 months)</td></tr>
+    </table>
+
+    <h3>Connecting to an external database</h3>
+    <p>Point your app at a managed database by setting the connection string:</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre><span class="c"># Set database URL (app restarts automatically)</span>
+neo env set my-app DATABASE_URL=postgres://user:pass@db.neon.tech/mydb
+
+<span class="c"># Or set individual vars</span>
+neo env set my-app \
+  DB_HOST=db.neon.tech \
+  DB_PORT=5432 \
+  DB_DATABASE=mydb \
+  DB_USERNAME=user \
+  DB_PASSWORD=secret</pre>
+    </div>
+
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml</div>
+        <pre><span class="k">env:</span>
+  <span class="v">DB_CONNECTION:</span> pgsql
+<span class="k">env_file:</span> .env.production  <span class="c"># contains DATABASE_URL (not committed to git)</span></pre>
+    </div>
+
+    <div class="callout callout-tip">
+        <strong>Tip</strong>
+        Keep database credentials in <code>.env.production</code> (gitignored) and reference it via <code>env_file</code> in <code>.neo.yml</code>. Never commit secrets to your repository.
+    </div>
+
+    <h3>Backing up Docker databases</h3>
+    <p>If you do run databases in Docker, supplement Neo's volume backups with database-native dumps:</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell — via SSH</div>
+        <pre><span class="c"># MySQL dump</span>
+neo ssh
+docker exec svc-mysql mysqldump -u root -p'$PASS' --all-databases > /var/backups/mysql-$(date +%F).sql
+
+<span class="c"># PostgreSQL dump</span>
+docker exec svc-postgres pg_dumpall -U postgres > /var/backups/pg-$(date +%F).sql
+
+<span class="c"># Download to your laptop</span>
+scp root@your-server:/var/backups/mysql-2026-03-23.sql ./backups/</pre>
+    </div>
+</section>
+
+<!-- SERVERS -->
+<section class="doc-section" id="servers">
+    <h2>Server Management</h2>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre><span class="c"># List servers</span>
+neo servers
+
+<span class="c"># Switch active server</span>
+neo use production
+
+<span class="c"># Remove a server from config</span>
+neo servers remove old-server
+
+<span class="c"># SSH into server</span>
+neo ssh
+
+<span class="c"># Target a specific server for any command</span>
+neo list --server staging</pre>
+    </div>
+</section>
+
+<!-- CLI REFERENCE -->
+<section class="doc-section" id="cli-reference">
+    <h2>CLI Reference</h2>
+
+    <table class="doc-table">
+        <tr><th>Command</th><th>Description</th></tr>
+        <tr><td><code>neo</code></td><td>Interactive TUI dashboard</td></tr>
+        <tr><td><code>neo init &lt;host&gt;</code></td><td>Initialize server (Docker + Caddy)</td></tr>
+        <tr><td><code>neo deploy [path]</code></td><td>Build and deploy a Dockerfile project</td></tr>
+        <tr><td><code>neo list</code></td><td>List apps on the server</td></tr>
+        <tr><td><code>neo logs &lt;app&gt;</code></td><td>Stream container logs</td></tr>
+        <tr><td><code>neo domain &lt;app&gt; [domain]</code></td><td>Set domain, <code>--temp</code> for sslip.io, <code>--cert/--key</code> for custom SSL</td></tr>
+        <tr><td><code>neo sync &lt;app&gt;</code></td><td>Sync server state back to .neo.yml</td></tr>
+        <tr><td><code>neo env &lt;app&gt;</code></td><td>View env vars (secrets masked)</td></tr>
+        <tr><td><code>neo env set &lt;app&gt; K=V</code></td><td>Set env var (auto-restarts)</td></tr>
+        <tr><td><code>neo env unset &lt;app&gt; KEY</code></td><td>Remove env var</td></tr>
+        <tr><td><code>neo env import &lt;app&gt; .env</code></td><td>Bulk import from file</td></tr>
+        <tr><td><code>neo start|stop|restart &lt;app&gt;</code></td><td>App lifecycle control</td></tr>
+        <tr><td><code>neo update &lt;app&gt;</code></td><td>Pull latest image and redeploy</td></tr>
+        <tr><td><code>neo remove &lt;app&gt;</code></td><td>Remove app and routing</td></tr>
+        <tr><td><code>neo service create [type]</code></td><td>Create shared service</td></tr>
+        <tr><td><code>neo service link &lt;svc&gt; &lt;app&gt;</code></td><td>Link service to app</td></tr>
+        <tr><td><code>neo servers</code></td><td>List configured servers</td></tr>
+        <tr><td><code>neo servers remove &lt;name&gt;</code></td><td>Remove server from config</td></tr>
+        <tr><td><code>neo use &lt;name&gt;</code></td><td>Switch active server</td></tr>
+        <tr><td><code>neo ssh</code></td><td>SSH into current server</td></tr>
+        <tr><td><code>neo version</code></td><td>Show version, check for updates</td></tr>
+        <tr><td><code>neo upgrade</code></td><td>Self-update to latest version</td></tr>
+        <tr><td><code>neo backup &lt;app&gt;</code></td><td>Backup data volumes <span class="badge badge-new">Neo+</span></td></tr>
+        <tr><td><code>neo volumes</code></td><td>List Docker volumes on server</td></tr>
+    </table>
+
+    <h3>Global flags</h3>
+    <table class="doc-table">
+        <tr><th>Flag</th><th>Description</th></tr>
+        <tr><td><code>--server &lt;name&gt;</code></td><td>Target a specific server instead of the current one</td></tr>
+    </table>
+</section>
+
+<!-- SERVER REQUIREMENTS -->
+<section class="doc-section" id="server-requirements">
+    <h2>Server Requirements</h2>
+
+    <table class="doc-table">
+        <tr><th>Requirement</th><th>Details</th></tr>
+        <tr><td>OS</td><td><strong>Ubuntu 24.04+</strong> or <strong>Debian</strong> (any version). Other distros are not supported.</td></tr>
+        <tr><td>Access</td><td>Root SSH access with key-based authentication</td></tr>
+        <tr><td>Ports</td><td>80 (HTTP), 443 (HTTPS) must be open</td></tr>
+        <tr><td>RAM</td><td>Minimum 512MB. 1GB+ recommended for builds.</td></tr>
+    </table>
+
+    <div class="callout callout-warn">
+        <strong>Unsupported</strong>
+        Ubuntu 22.04, 20.04, CentOS, RHEL, Alpine, Fedora, and Arch are not supported. <code>neo init</code> will detect the OS and show an error if unsupported.
+    </div>
+</section>
+
+<!-- ARCHITECTURE -->
+<section class="doc-section" id="architecture">
+    <h2>Architecture</h2>
+    <p>Neo is a single Go binary that runs on your local machine. It has no server-side component — everything happens over SSH.</p>
+
+    <h3>Container naming</h3>
+    <table class="doc-table">
+        <tr><th>Container</th><th>Pattern</th><th>Example</th></tr>
+        <tr><td>App</td><td><code>app-{name}</code></td><td><code>app-ghost</code></td></tr>
+        <tr><td>Worker</td><td><code>app-{name}-worker-{worker}</code></td><td><code>app-ghost-worker-queue</code></td></tr>
+        <tr><td>Sidecar</td><td><code>svc-{name}-{sidecar}</code></td><td><code>svc-ghost-redis</code></td></tr>
+        <tr><td>Shared service</td><td><code>svc-{name}</code></td><td><code>svc-mysql</code></td></tr>
+        <tr><td>Caddy</td><td><code>neo-caddy</code></td><td><code>neo-caddy</code></td></tr>
+    </table>
+
+    <h3>Docker network</h3>
+    <p>All containers join the <code>neo</code> Docker network. Containers reference each other by name (e.g. <code>svc-mysql:3306</code>).</p>
+
+    <h3>Volume naming</h3>
+    <p>Volumes are prefixed with the app name: <code>{app}-{volume}</code>. For example, an app named <code>ghost</code> with a volume <code>content</code> creates <code>ghost-content</code>.</p>
+</section>
+
+</main>
+</div>
+
+<!-- FOOTER -->
+<footer class="footer">
+    <div>&copy; 2026 Vxero Neo &middot; <a href="index.html">Home</a> &middot; <a href="details.html">Quick Start</a> &middot; <a href="https://github.com/vxero/neo">GitHub</a></div>
+</footer>
+
+<script>
+// Highlight active sidebar link on scroll
+(function() {
+    var links = document.querySelectorAll('.sidebar-link');
+    var sections = [];
+    links.forEach(function(l) {
+        var id = l.getAttribute('href');
+        if (id && id.startsWith('#')) {
+            var el = document.querySelector(id);
+            if (el) sections.push({ el: el, link: l });
+        }
+    });
+    function update() {
+        var scrollY = window.scrollY + 100;
+        var active = null;
+        for (var i = sections.length - 1; i >= 0; i--) {
+            if (sections[i].el.offsetTop <= scrollY) { active = sections[i]; break; }
+        }
+        links.forEach(function(l) { l.classList.remove('active'); });
+        if (active) active.link.classList.add('active');
+    }
+    window.addEventListener('scroll', update, { passive: true });
+    update();
+})();
+</script>
+
+</body>
+</html>
