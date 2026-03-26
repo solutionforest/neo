@@ -58,8 +58,12 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		wg.Wait()
 	}()
 
-	// Main interactive loop — re-reads cache before each render (picks up background refresh)
+	// Main interactive loop — re-reads config + cache before each render
 	for {
+		// Reload config each iteration so new servers/changes from submenus are visible
+		if freshCfg, loadErr := config.Load(); loadErr == nil {
+			cfg = freshCfg
+		}
 		appSummary, serviceSummary := cachedDashboardSummaries(cfg)
 		action := tuiMainMenu(cfg, appSummary, serviceSummary)
 		if action == "quit" {
