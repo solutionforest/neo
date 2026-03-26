@@ -278,7 +278,12 @@ func (e *Executor) authMethods() []ssh.AuthMethod {
 		}
 	}
 
-	// Try ssh-agent first
+	// Try neo's managed key first (~/.neo/neo_ed25519)
+	if key, err := loadKey(NeoKeyPath()); err == nil {
+		methods = append(methods, key)
+	}
+
+	// Try ssh-agent
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
 		if conn, err := net.Dial("unix", sock); err == nil {
 			e.agentConn = conn // store for cleanup in Close()
