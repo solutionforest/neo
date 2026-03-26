@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -105,7 +106,15 @@ func runInit(host, name string) error {
 	}
 	defer exec.Close()
 
-	return setupServer(exec, cfg, name, host, "")
+	if err := setupServer(exec, cfg, name, host, ""); err != nil {
+		return err
+	}
+
+	// Deploy SSH key if we connected with password so future connections are passwordless
+	if exec.Password != "" {
+		deploySSHKey(exec)
+	}
+	return nil
 }
 
 // runInitWithKey is like runInit but uses a specific SSH key file (no password prompt).
@@ -475,4 +484,38 @@ func checkPortAccess(serverIP string) {
 		}
 	}
 	fmt.Println()
+}
+
+// deploySSHKey copies the user's public SSH key to the remote server's authorized_keys.
+// Called after neo init when the connection used password auth, so future connections
+// (dashboard refresh, neo status, etc.) can use key auth without a password.
+func deploySSHKey(exec *ssh.Executor) {
+	home, _ := os.UserHomeDir()
+	pubKeyFiles := []string{
+		filepath.Join(home, ".ssh", "id_ed25519.pub"),
+		filepath.Join(home, ".ssh", "id_rsa.pub"),
+	}
+
+	var pubKey []byte
+	for _, f := range pubKeyFiles {
+		if data, err := os.ReadFile(f); err == nil {
+			pubKey = data
+			break
+		}
+	}
+
+	if pubKey == nil {
+		fmt.Println()
+		ui.Info("Tip: run ssh-keygen to create an SSH key for passwordless access")
+		return
+	}
+
+	key := strings.TrimSpace(string(pubKey))
+	cmd := fmt.Sprintf(
+		`mkdir -p ~/.ssh && chmod 700 ~/.ssh && grep -qF %s ~/.ssh/authorized_keys 2>/dev/null || echo %s >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys`,
+		ssh.ShellQuote(key), ssh.ShellQuote(key),
+	)
+	if err := exec.RunQuiet(cmd); err == nil {
+		ui.Success("SSH key deployed — future connections won't need a password")
+	}
 }
