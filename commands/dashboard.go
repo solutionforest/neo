@@ -85,6 +85,10 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			go refreshCurrentServer(cfg)
+		case "metrics":
+			if err := tuiLiveMetrics(cfg); err != nil {
+				ui.Error(err.Error())
+			}
 		case "deploy":
 			if err := tuiDeployProject(); err != nil {
 				ui.Error(err.Error())
@@ -261,6 +265,7 @@ func tuiMainMenu(cfg *config.Config, appSummary, serviceSummary string) string {
 		{fmt.Sprintf("%-22s%s", "Servers", ui.Faint.Render(fmt.Sprintf("%d configured", len(cfg.Servers)))), "servers"},
 		{fmt.Sprintf("%-22s%s", "Applications", appSummary), "apps"},
 		{fmt.Sprintf("%-22s%s", "Services", serviceSummary), "services"},
+		{fmt.Sprintf("%-22s%s", "Live Metrics", ui.Faint.Render("CPU, RAM, containers")), "metrics"},
 		{"Deploy Project", "deploy"},
 		{fmt.Sprintf("%-22s%s", "Try Vxero", ui.Faint.Render("vxero.dev")), "connect"},
 	}
@@ -547,6 +552,7 @@ func tuiAppActions(appName string, st *state.State) (bool, error) {
 				ui.SelectOption{"Restart", "restart"},
 				ui.SelectOption{"Stop", "stop"},
 				ui.SelectOption{"Docker Terminal", "terminal"},
+				ui.SelectOption{"Run Command", "run-cmd"},
 			)
 		} else {
 			opts = append(opts, ui.SelectOption{"Start", "start"})
@@ -578,6 +584,10 @@ func tuiAppActions(appName string, st *state.State) (bool, error) {
 		switch action {
 		case "terminal":
 			return true, tuiDockerTerminal(appName)
+		case "run-cmd":
+			if err := tuiRunCommand(appName); err != nil {
+				return false, err
+			}
 		case "remove":
 			return false, runRemove(appName)
 		case "logs":
@@ -835,6 +845,52 @@ func printDNSInstructions(domain string) {
 	card.Render()
 }
 
+// tuiLiveMetrics shows a live-updating server + container metrics view.
+func tuiLiveMetrics(cfg *config.Config) error {
+	srv, err := cfg.CurrentServer()
+	if err != nil {
+		ui.Error("No server selected.")
+		return nil
+	}
+
+	stopLoading := ui.ShowLoading(fmt.Sprintf("Connecting to %s...", srv.Name))
+	exec, connErr := connectSSH(srv)
+	stopLoading()
+	if connErr != nil {
+		ui.Error(fmt.Sprintf("Cannot reach %s: %s", srv.Name, connErr))
+		return nil
+	}
+	defer exec.Close()
+
+	return ui.RunLiveView(ui.LiveViewConfig{
+		Title:    fmt.Sprintf("  %s  %s", ui.Bold.Render(srv.Name), ui.Faint.Render(srv.Host)),
+		Interval: 3 * time.Second,
+		Render: func() (string, error) {
+			return fetchLiveMetrics(exec)
+		},
+	})
+}
+
+// tuiRunCommand prompts for a command and executes it in the app container.
+func tuiRunCommand(appName string) error {
+	ui.ShowCursor()
+	fmt.Println()
+
+	var command string
+	err := huh.NewInput().
+		Title(fmt.Sprintf("Command to run in %s", appName)).
+		Placeholder("e.g. php artisan migrate").
+		Value(&command).
+		Run()
+	if err != nil || strings.TrimSpace(command) == "" {
+		return nil
+	}
+
+	// Split command into args (simple space split)
+	args := strings.Fields(command)
+	return runExec(appName, "", "", args, false)
+}
+
 // tuiDockerTerminal opens an interactive shell in the app's main container via SSH.
 func tuiDockerTerminal(appName string) error {
 	return runContainerTerminal(config.AppContainer(appName))
@@ -902,7 +958,7 @@ func tuiSSHServer() error {
 
 // buildSSHArgs builds the base ssh arguments for a server (port + key).
 func buildSSHArgs(srv *config.Server) []string {
-	args := []string{"-o", "StrictHostKeyChecking=no"}
+	args := []string{"-o", "StrictHostKeyChecking=accept-new"}
 	if srv.Port != 0 && srv.Port != 22 {
 		args = append(args, "-p", fmt.Sprintf("%d", srv.Port))
 	}

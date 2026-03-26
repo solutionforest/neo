@@ -32,7 +32,7 @@ func runSSH() error {
 
 	// Build ssh command args
 	var sshArgs []string
-	sshArgs = append(sshArgs, "-o", "StrictHostKeyChecking=no")
+	sshArgs = append(sshArgs, "-o", "StrictHostKeyChecking=accept-new")
 	if srv.Key != "" {
 		sshArgs = append(sshArgs, "-i", srv.Key)
 	}
