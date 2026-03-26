@@ -66,14 +66,15 @@ type NeoVolume struct {
 
 // NeoEnvironment represents a named deployment target in .neo.yml.
 type NeoEnvironment struct {
-	Name    string            `yaml:"name,omitempty"`    // override app/container name for this env
-	Server  string            `yaml:"server,omitempty"`
-	Domain  string            `yaml:"domain,omitempty"`
-	Port    int               `yaml:"port,omitempty"`
-	HTTPS   *bool             `yaml:"https,omitempty"`   // nil=default, true=HTTPS, false=HTTP-only
-	Env     map[string]string `yaml:"env,omitempty"`
-	EnvFile string            `yaml:"env_file,omitempty"`
-	SSL     *NeoSSL           `yaml:"ssl,omitempty"`
+	Name    string               `yaml:"name,omitempty"`    // override app/container name for this env
+	Server  string               `yaml:"server,omitempty"`
+	Domain  string               `yaml:"domain,omitempty"`
+	Port    int                  `yaml:"port,omitempty"`
+	HTTPS   *bool                `yaml:"https,omitempty"`   // nil=default, true=HTTPS, false=HTTP-only
+	Env     map[string]string    `yaml:"env,omitempty"`
+	EnvFile string               `yaml:"env_file,omitempty"`
+	SSL     *NeoSSL              `yaml:"ssl,omitempty"`
+	Volumes map[string]NeoVolume `yaml:"volumes,omitempty"` // environment-specific persistent volumes
 }
 
 // NeoConfig represents a .neo.yml project configuration file.

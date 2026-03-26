@@ -212,3 +212,76 @@ environments:
 		t.Fatalf("expected 1 environment, got %d", len(cfg.Environments))
 	}
 }
+
+func TestLoadNeoConfigEnvironmentVolumes(t *testing.T) {
+	tmp := t.TempDir()
+	content := `name: neo-cms
+port: 8080
+volumes:
+  cache:
+    path: /var/cache
+environments:
+  staging:
+    domain: staging.example.com
+    volumes:
+      storage:
+        path: /var/www/html/storage
+  production:
+    domain: example.com
+    volumes:
+      storage:
+        path: /var/www/html/storage
+      backups:
+        path: /var/backups
+`
+	os.WriteFile(filepath.Join(tmp, ".neo.yml"), []byte(content), 0644)
+
+	cfg, err := loadNeoConfig(tmp)
+	if err != nil {
+		t.Fatalf("loadNeoConfig() error: %v", err)
+	}
+
+	// Top-level volumes
+	if len(cfg.Volumes) != 1 {
+		t.Fatalf("expected 1 top-level volume, got %d", len(cfg.Volumes))
+	}
+	if cfg.Volumes["cache"].Path != "/var/cache" {
+		t.Errorf("cache path = %q", cfg.Volumes["cache"].Path)
+	}
+
+	// Staging environment volumes
+	staging, ok := cfg.Environments["staging"]
+	if !ok {
+		t.Fatal("staging environment not found")
+	}
+	if len(staging.Volumes) != 1 {
+		t.Fatalf("expected 1 staging volume, got %d", len(staging.Volumes))
+	}
+	if staging.Volumes["storage"].Path != "/var/www/html/storage" {
+		t.Errorf("staging storage path = %q", staging.Volumes["storage"].Path)
+	}
+
+	// Production environment volumes
+	prod, ok := cfg.Environments["production"]
+	if !ok {
+		t.Fatal("production environment not found")
+	}
+	if len(prod.Volumes) != 2 {
+		t.Fatalf("expected 2 production volumes, got %d", len(prod.Volumes))
+	}
+	if prod.Volumes["backups"].Path != "/var/backups" {
+		t.Errorf("production backups path = %q", prod.Volumes["backups"].Path)
+	}
+
+	// Test merge: env volumes override top-level with same key
+	merged := make(map[string]NeoVolume)
+	for k, v := range cfg.Volumes {
+		merged[k] = v
+	}
+	for k, v := range staging.Volumes {
+		merged[k] = v
+	}
+	if len(merged) != 2 {
+		t.Errorf("expected 2 merged volumes (cache + storage), got %d", len(merged))
+	}
+}

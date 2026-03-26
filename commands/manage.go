@@ -46,14 +46,17 @@ func newRestartCmd() *cobra.Command {
 }
 
 func newRemoveCmd() *cobra.Command {
-	return &cobra.Command{
+	var force bool
+	cmd := &cobra.Command{
 		Use:   "remove <app>",
 		Short: "Remove an app (keeps data volumes)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRemove(args[0])
+			return runRemove(args[0], force)
 		},
 	}
+	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompt")
+	return cmd
 }
 
 func newUpdateCmd() *cobra.Command {
@@ -176,7 +179,7 @@ func runManage(appName, action string) error {
 	return nil
 }
 
-func runRemove(appName string) error {
+func runRemove(appName string, force bool) error {
 	exec, st, err := mustResolveAndLoadState()
 	if err != nil {
 		return err
@@ -188,15 +191,17 @@ func runRemove(appName string) error {
 		return fmt.Errorf("app %q not found", appName)
 	}
 
-	var confirm bool
-	huh.NewConfirm().
-		Title(fmt.Sprintf("Remove %s? Data volumes will be kept.", appName)).
-		Affirmative("Yes, remove").
-		Negative("Cancel").
-		Value(&confirm).
-		Run()
-	if !confirm {
-		return nil
+	if !force {
+		var confirm bool
+		huh.NewConfirm().
+			Title(fmt.Sprintf("Remove %s? Data volumes will be kept.", appName)).
+			Affirmative("Yes, remove").
+			Negative("Cancel").
+			Value(&confirm).
+			Run()
+		if !confirm {
+			return nil
+		}
 	}
 
 	docker := remote.NewDocker(exec)

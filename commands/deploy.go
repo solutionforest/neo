@@ -27,7 +27,8 @@ import (
 // deployFlags holds the CLI flag values for the deploy command.
 type deployFlags struct {
 	domain     string
-	tempDomain bool   // assign a temporary {app}.{ip}.sslip.io domain with auto-SSL
+	tempDomain bool // assign a temporary {app}.{ip}.sslip.io domain with auto-SSL
+	noDomain   bool // skip domain assignment entirely (internal services)
 	port       int
 	appName    string
 	dockerfile string
@@ -57,6 +58,7 @@ func newDeployCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&flags.domain, "domain", "d", "", "domain name for the app")
 	cmd.Flags().BoolVar(&flags.tempDomain, "temp", false, "assign a temporary {app}.{ip}.sslip.io domain with auto-SSL")
+	cmd.Flags().BoolVar(&flags.noDomain, "no-domain", false, "skip domain assignment (for internal services)")
 	cmd.Flags().IntVarP(&flags.port, "port", "p", 0, "container port to expose (auto-detected from Dockerfile)")
 	cmd.Flags().StringVarP(&flags.appName, "name", "n", "", "app name (defaults to directory name)")
 	cmd.Flags().StringVarP(&flags.dockerfile, "dockerfile", "f", "", "path to Dockerfile (default: Dockerfile)")
@@ -167,6 +169,16 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			if env.SSL != nil {
 				neoConfig.SSL = env.SSL
 			}
+			// Merge environment volumes into top-level (environment-specific volumes
+			// override top-level volumes with the same key)
+			if len(env.Volumes) > 0 {
+				if neoConfig.Volumes == nil {
+					neoConfig.Volumes = make(map[string]NeoVolume)
+				}
+				for k, v := range env.Volumes {
+					neoConfig.Volumes[k] = v
+				}
+			}
 		}
 	}
 
@@ -230,8 +242,15 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		ui.Info(fmt.Sprintf("Using temporary domain: %s", domain))
 	}
 
-	// Resolve domain: flag > redeploy state > .neo.yml > prompt
-	if domain == "" {
+	// .neo.yml domain: none → treat as --no-domain
+	if neoConfig != nil && neoConfig.Domain == "none" {
+		flags.noDomain = true
+	}
+
+	// Resolve domain: --no-domain > flag > redeploy state > .neo.yml > prompt
+	if flags.noDomain {
+		domain = ""
+	} else if domain == "" {
 		if isRedeploy && existing.Domain != "" {
 			domain = existing.Domain
 		} else if neoConfig != nil && neoConfig.Domain != "" {
@@ -339,7 +358,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 
 	// Auto-assign a temporary sslip.io domain when no domain set (first deploy only).
 	// sslip.io resolves the IP from the hostname and supports Let's Encrypt auto-SSL.
-	if domain == "" && !isRedeploy {
+	if domain == "" && !isRedeploy && !flags.noDomain {
 		if st.ServerIP != "" {
 			domain = appName + "." + st.ServerIP + ".sslip.io"
 			ui.Info(fmt.Sprintf("No domain set — using temporary domain: %s", domain))
@@ -428,7 +447,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 
 		spin = ui.NewSpinner("Waiting for health check...")
 		spin.Start()
-		healthy := waitForHealthy(docker, containerName, 30*time.Second)
+		healthy := waitForHealthy(docker, containerName, 0, 30*time.Second)
 		spin.Stop()
 		if !healthy {
 			ui.Error("Container failed health check after env update")
@@ -534,10 +553,10 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	}
 	ui.Success("New container started")
 
-	// Health check the new container
-	spin = ui.NewSpinner("Waiting for health check...")
+	// Health check the new container — verify TCP connectivity, not just running state
+	spin = ui.NewSpinner("Waiting for app to be ready...")
 	spin.Start()
-	healthy := waitForHealthy(docker, nextName, 30*time.Second)
+	healthy := waitForHealthy(docker, nextName, port, 120*time.Second)
 	spin.Stop()
 
 	if !healthy {
@@ -585,28 +604,34 @@ func runDeploy(projectPath string, flags deployFlags) error {
 
 	if isRedeploy {
 		// Zero-downtime swap:
-		// 1. Point Caddy to new container (traffic switches instantly)
+		// 1. Atomically patch Caddy upstream to new container (no route removal = no gap)
 		if len(deployDomains) > 0 {
-			upstream := fmt.Sprintf("%s:%d", nextName, port)
-			if httpOnly {
-				caddy.UpdateRouteHTTP(containerName, deployDomains, upstream)
-			} else {
-				caddy.UpdateRoute(containerName, deployDomains, upstream)
+			dial := fmt.Sprintf("%s:%d", nextName, port)
+			if err := caddy.PatchUpstream(containerName, dial); err != nil {
+				// Fallback: route may not exist yet (e.g. app deployed before this version)
+				if httpOnly {
+					caddy.UpdateRouteHTTP(containerName, deployDomains, dial)
+				} else {
+					caddy.UpdateRoute(containerName, deployDomains, dial)
+				}
 			}
 		}
 
 		// 2. Stop and remove old container (no longer receiving traffic)
 		spin = ui.NewSpinner("Removing old container...")
 		spin.Start()
-		docker.Remove(containerName) // docker rm -f handles stop + remove in one call
+		docker.Remove(containerName)
 		spin.Stop()
 
 		// 3. Rename new container to canonical name
 		docker.Rename(nextName, containerName)
 
-		// 4. Update Caddy to use canonical container name
-		addCaddyRoute(containerName, deployDomains, port)
+		// 4. Atomically patch Caddy back to canonical container name
 		if len(deployDomains) > 0 {
+			dial := fmt.Sprintf("%s:%d", containerName, port)
+			if err := caddy.PatchUpstream(containerName, dial); err != nil {
+				addCaddyRoute(containerName, deployDomains, port)
+			}
 			ui.Success(fmt.Sprintf("Traffic switched to new version (%s)", domain))
 		} else {
 			ui.Success("Swapped to new version (zero downtime)")
@@ -675,7 +700,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 					ui.Error(fmt.Sprintf("Failed to start worker %s: %s", wName, wErr))
 					continue
 				}
-				if !waitForHealthy(docker, workerNext, 15*time.Second) {
+				if !waitForHealthy(docker, workerNext, 0, 15*time.Second) {
 					docker.Remove(workerNext)
 					ui.Error(fmt.Sprintf("Worker %s failed health check — skipped", wName))
 					continue
@@ -717,7 +742,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 						results <- workerResult{name: name, err: wErr.Error()}
 						return
 					}
-					if !waitForHealthy(docker, workerNext, 15*time.Second) {
+					if !waitForHealthy(docker, workerNext, 0, 15*time.Second) {
 						docker.Remove(workerNext)
 						results <- workerResult{name: name, err: "health check failed"}
 						return
@@ -846,7 +871,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			// Health check sidecar
 			spin = ui.NewSpinner(fmt.Sprintf("Checking sidecar %s...", scName))
 			spin.Start()
-			scHealthy := waitForHealthy(docker, scNext, 30*time.Second)
+			scHealthy := waitForHealthy(docker, scNext, 0, 30*time.Second)
 			spin.Stop()
 
 			if !scHealthy {
@@ -1270,12 +1295,16 @@ func isLocalDockerAvailable() bool {
 	return cmd.Run() == nil
 }
 
-// waitForHealthy polls until a container is running, with a timeout.
-func waitForHealthy(docker *remote.Docker, containerName string, timeout time.Duration) bool {
+// waitForHealthy polls until a container is running and (if port > 0) accepting TCP
+// connections on that port. Passing port=0 skips the TCP check and only verifies the
+// container is in running state (suitable for workers/sidecars with no HTTP endpoint).
+func waitForHealthy(docker *remote.Docker, containerName string, port int, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if docker.IsRunning(containerName) {
-			return true
+			if port <= 0 || docker.IsPortOpen(containerName, port) {
+				return true
+			}
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
@@ -1664,6 +1693,16 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile,
 		return "", fmt.Errorf("load image: %w", err)
 	}
 
+	// Merge environment-specific volumes into neoConfig (overrides same key)
+	if len(envCfg.Volumes) > 0 {
+		if neoConfig.Volumes == nil {
+			neoConfig.Volumes = make(map[string]NeoVolume)
+		}
+		for k, v := range envCfg.Volumes {
+			neoConfig.Volumes[k] = v
+		}
+	}
+
 	// Build volumes list
 	var volumes []string
 	declaredVolumes := make(map[string]state.VolumeInfo)
@@ -1675,6 +1714,16 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile,
 				volumes = append(volumes, fmt.Sprintf("%s:%s", name, vol.ContainerPath))
 			}
 			declaredVolumes[name] = vol
+		}
+		// Add any new volumes from .neo.yml that weren't in previous state
+		if neoConfig != nil {
+			for name, vol := range neoConfig.Volumes {
+				volName := appName + "-" + name
+				if _, exists := existing.Volumes[volName]; !exists {
+					volumes = append(volumes, fmt.Sprintf("%s:%s", volName, vol.Path))
+					declaredVolumes[volName] = state.VolumeInfo{ContainerPath: vol.Path}
+				}
+			}
 		}
 	} else {
 		for name, vol := range neoConfig.Volumes {
@@ -1699,7 +1748,7 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile,
 		return "", fmt.Errorf("start container: %w", err)
 	}
 
-	if !waitForHealthy(docker, nextName, 30*time.Second) {
+	if !waitForHealthy(docker, nextName, port, 120*time.Second) {
 		docker.Remove(nextName)
 		return "", fmt.Errorf("container failed health check")
 	}

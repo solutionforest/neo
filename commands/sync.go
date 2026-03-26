@@ -2,6 +2,8 @@ package commands
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -15,12 +17,16 @@ func newSyncCmd() *cobra.Command {
 	var dryRun bool
 
 	cmd := &cobra.Command{
-		Use:   "sync <app>",
+		Use:   "sync [app]",
 		Short: "Sync server state back to .neo.yml",
-		Long:  "Reads the current server state for an app and updates .neo.yml to match. Shows a diff of changes before writing.",
-		Args:  cobra.ExactArgs(1),
+		Long:  "Reads the current server state for an app and updates .neo.yml to match. Shows a diff of changes before writing.\n\nIf no app name is given, the name is read from .neo.yml or inferred from the current directory.",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSync(args[0], dryRun)
+			appName := ""
+			if len(args) > 0 {
+				appName = args[0]
+			}
+			return runSync(appName, dryRun)
 		},
 	}
 
@@ -41,6 +47,23 @@ func runSync(appName string, dryRun bool) error {
 	if err != nil {
 		return fmt.Errorf("read .neo.yml: %w", err)
 	}
+
+	// Resolve app name: explicit arg → .neo.yml name → directory name
+	var nameSource string
+	if appName == "" {
+		if cfg != nil && cfg.Name != "" {
+			appName = sanitizeName(cfg.Name)
+			nameSource = ".neo.yml name field"
+		} else {
+			wd, wdErr := os.Getwd()
+			if wdErr != nil {
+				return fmt.Errorf("resolve app name: %w", wdErr)
+			}
+			appName = sanitizeName(filepath.Base(wd))
+			nameSource = "directory name"
+		}
+	}
+
 	if cfg == nil {
 		ui.Error("No .neo.yml found in current directory")
 		return nil
@@ -60,11 +83,26 @@ func runSync(appName string, dryRun bool) error {
 
 	app, ok := st.Apps[appName]
 	if !ok {
-		ui.Error(fmt.Sprintf("App %q not found on server", appName))
+		if nameSource != "" {
+			ui.Error(fmt.Sprintf("App %q not found on server (resolved from %s)", appName, nameSource))
+		} else {
+			ui.Error(fmt.Sprintf("App %q not found on server", appName))
+		}
+		if len(st.Apps) > 0 {
+			names := make([]string, 0, len(st.Apps))
+			for name := range st.Apps {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			ui.Info(fmt.Sprintf("Available apps: %s", strings.Join(names, ", ")))
+			ui.Info("Run: neo sync <app-name>")
+		}
 		return nil
 	}
 
-	// Collect changes
+	// Collect changes — only deployment metadata that is safe to store in a project file.
+	// Env vars, volumes, and workers are NOT synced: they contain secrets and are
+	// source-of-truth in .neo.yml, not on the server.
 	var changes []syncChange
 
 	// Domain
@@ -85,47 +123,6 @@ func runSync(appName string, dryRun bool) error {
 	}
 	if serverHTTPS != configHTTPS {
 		changes = append(changes, syncChange{"~", "https", fmt.Sprintf("%v", configHTTPS), fmt.Sprintf("%v", serverHTTPS)})
-	}
-
-	// Env vars
-	if cfg.Env == nil {
-		cfg.Env = make(map[string]string)
-	}
-	// Find added/modified env vars
-	envKeys := sortedKeys(app.Env)
-	for _, k := range envKeys {
-		serverVal := app.Env[k]
-		configVal, exists := cfg.Env[k]
-		if !exists {
-			changes = append(changes, syncChange{"+", "env." + k, "", serverVal})
-		} else if configVal != serverVal {
-			changes = append(changes, syncChange{"~", "env." + k, configVal, serverVal})
-		}
-	}
-	// Find removed env vars (in config but not on server)
-	configKeys := sortedKeys(cfg.Env)
-	for _, k := range configKeys {
-		if _, exists := app.Env[k]; !exists {
-			changes = append(changes, syncChange{"-", "env." + k, cfg.Env[k], ""})
-		}
-	}
-
-	// Volumes
-	for name, vol := range app.Volumes {
-		// Strip app name prefix for .neo.yml key
-		shortName := strings.TrimPrefix(name, appName+"-")
-		if _, exists := cfg.Volumes[shortName]; !exists {
-			changes = append(changes, syncChange{"+", "volumes." + shortName, "", vol.ContainerPath})
-		}
-	}
-
-	// Workers
-	for name, worker := range app.Workers {
-		if existing, exists := cfg.Workers[name]; !exists {
-			changes = append(changes, syncChange{"+", "workers." + name, "", worker.Command})
-		} else if existing.Command != worker.Command {
-			changes = append(changes, syncChange{"~", "workers." + name, existing.Command, worker.Command})
-		}
 	}
 
 	if len(changes) == 0 {
@@ -171,7 +168,7 @@ func runSync(appName string, dryRun bool) error {
 	}
 
 	// Apply changes to config
-	applyChanges(cfg, appName, app)
+	applyChanges(cfg, app)
 
 	// Write
 	if err := saveNeoConfig(".", cfg); err != nil {
@@ -182,44 +179,18 @@ func runSync(appName string, dryRun bool) error {
 	return nil
 }
 
-// applyChanges updates the NeoConfig with values from server state.
-func applyChanges(cfg *NeoConfig, appName string, app state.App) {
-	// Domain
+// applyChanges updates only the deployment metadata fields in NeoConfig.
+// Env vars, volumes, and workers are intentionally excluded — they contain
+// secrets and are managed in .neo.yml directly, not derived from server state.
+func applyChanges(cfg *NeoConfig, app state.App) {
 	cfg.Domain = app.Domain
 
-	// Port
 	if app.InternalPort != 0 {
 		cfg.Port = app.InternalPort
 	}
 
-	// HTTPS
 	httpsOn := !app.HTTPOnly
 	cfg.HTTPS = &httpsOn
-
-	// Env vars — replace entirely with server state
-	cfg.Env = make(map[string]string)
-	for k, v := range app.Env {
-		cfg.Env[k] = v
-	}
-
-	// Volumes — add missing ones
-	if cfg.Volumes == nil {
-		cfg.Volumes = make(map[string]NeoVolume)
-	}
-	for name, vol := range app.Volumes {
-		shortName := strings.TrimPrefix(name, appName+"-")
-		if _, exists := cfg.Volumes[shortName]; !exists {
-			cfg.Volumes[shortName] = NeoVolume{Path: vol.ContainerPath}
-		}
-	}
-
-	// Workers — sync commands
-	if cfg.Workers == nil && len(app.Workers) > 0 {
-		cfg.Workers = make(map[string]NeoWorker)
-	}
-	for name, worker := range app.Workers {
-		cfg.Workers[name] = NeoWorker{Command: worker.Command}
-	}
 }
 
 func sortedKeys(m map[string]string) []string {

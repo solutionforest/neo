@@ -78,17 +78,14 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 			if err := tuiServersMenu(cfg); err != nil {
 				return err
 			}
-			go refreshCurrentServer(cfg) // async — never block the UI
 		case "apps":
 			if err := tuiAppsMenu(cfg); err != nil {
 				return err
 			}
-			go refreshCurrentServer(cfg)
 		case "services":
 			if err := tuiServicesMenu(cfg); err != nil {
 				return err
 			}
-			go refreshCurrentServer(cfg)
 		case "metrics":
 			if err := tuiLiveMetrics(cfg); err != nil {
 				ui.Error(err.Error())
@@ -97,12 +94,14 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 			if err := tuiDeployProject(); err != nil {
 				ui.Error(err.Error())
 			}
-			go refreshCurrentServer(cfg)
 		case "connect":
 			if err := runConnect(); err != nil {
 				ui.Error(err.Error())
 			}
 		}
+
+		// Refresh cache after every action so the menu shows updated counts
+		refreshCurrentServer(cfg)
 	}
 }
 
@@ -458,6 +457,27 @@ func tuiAppsMenu(cfg *config.Config) error {
 		}
 		srvExec = res.exec
 		st = res.st
+		// Update the server cache immediately so main menu counts reflect the
+		// just-deployed app without waiting for the background refresh goroutine.
+		runningApps, runningSvcs := 0, 0
+		for _, a := range st.Apps {
+			if a.Status == "running" {
+				runningApps++
+			}
+		}
+		for _, s := range st.Services {
+			if s.Status == "running" {
+				runningSvcs++
+			}
+		}
+		config.UpdateServerCache(srv.Name, config.ServerCache{
+			AppCount:        len(st.Apps),
+			RunningApps:     runningApps,
+			ServiceCount:    len(st.Services),
+			RunningServices: runningSvcs,
+			Reachable:       true,
+			UpdatedAt:       time.Now(),
+		})
 	case <-time.After(10 * time.Second):
 		stopLoading()
 		// Drain the channel in background so the goroutine can exit cleanly.
@@ -482,6 +502,12 @@ func tuiAppsMenu(cfg *config.Config) error {
 	}
 
 	for {
+		// Reload state on each iteration so statuses stay current after any action
+		// (deploy, start, stop, restart) without re-entering the menu.
+		if fresh, loadErr := state.Load(srvExec); loadErr == nil {
+			st = fresh
+		}
+
 		running, stopped := 0, 0
 		appNames := make([]string, 0, len(st.Apps))
 		for _, a := range st.Apps {
@@ -516,7 +542,7 @@ func tuiAppsMenu(cfg *config.Config) error {
 			return nil
 		}
 
-		done, err := tuiAppActions(selected, st)
+		done, err := tuiAppActions(selected, st, srvExec)
 		if err != nil {
 			return err
 		}
@@ -529,8 +555,13 @@ func tuiAppsMenu(cfg *config.Config) error {
 // tuiAppActions shows actions for a selected app. Returns true to exit to main menu.
 // Loops so that after any action (or returning from a submenu) the same app's
 // actions menu is shown again — Back returns to the app list.
-func tuiAppActions(appName string, st *state.State) (bool, error) {
+func tuiAppActions(appName string, st *state.State, exec *neossh.Executor) (bool, error) {
 	for {
+		// Reload state so domain, status, and env changes appear immediately after any action.
+		if fresh, loadErr := state.Load(exec); loadErr == nil {
+			st = fresh
+		}
+
 		a, ok := st.Apps[appName]
 		if !ok {
 			return false, nil
@@ -568,7 +599,6 @@ func tuiAppActions(appName string, st *state.State) (bool, error) {
 				ui.SelectOption{"Restart", "restart"},
 				ui.SelectOption{"Stop", "stop"},
 				ui.SelectOption{"Docker Terminal", "terminal"},
-				ui.SelectOption{"Run Command", "run-cmd"},
 			)
 		} else {
 			opts = append(opts, ui.SelectOption{"Start", "start"})
@@ -605,7 +635,7 @@ func tuiAppActions(appName string, st *state.State) (bool, error) {
 				return false, err
 			}
 		case "remove":
-			return false, runRemove(appName)
+			return false, runRemove(appName, false)
 		case "logs":
 			if err := runLogs(appName, 50, false, "", "", ""); err != nil {
 				return false, err
@@ -980,6 +1010,10 @@ func buildSSHArgs(srv *config.Server) []string {
 	}
 	if srv.Key != "" {
 		args = append(args, "-i", srv.Key)
+	}
+	// Always include neo's managed key if it exists
+	if neossh.NeoKeyExists() {
+		args = append(args, "-i", neossh.NeoKeyPath())
 	}
 	return args
 }
