@@ -6,18 +6,27 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/vxero/neo/internal/ssh"
 	"github.com/vxero/neo/internal/state"
 	"github.com/vxero/neo/internal/ui"
 )
 
 func newStatusCmd() *cobra.Command {
-	return &cobra.Command{
+	var liveFlag bool
+
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show server health, resource usage, and container stats",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if liveFlag {
+				return runStatusLive()
+			}
 			return runStatus()
 		},
 	}
+
+	cmd.Flags().BoolVar(&liveFlag, "live", false, "show live-updating metrics (refreshes every 3s)")
+	return cmd
 }
 
 func runStatus() error {
@@ -120,6 +129,87 @@ func runStatus() error {
 
 	fmt.Println()
 	return nil
+}
+
+func runStatusLive() error {
+	ui.SetVersion(cliVersion)
+	cfg, srv, exec, err := mustResolveAndConnect()
+	_ = cfg
+	if err != nil {
+		return err
+	}
+	defer exec.Close()
+
+	return ui.RunLiveView(ui.LiveViewConfig{
+		Title:    fmt.Sprintf("  %s  %s", ui.Bold.Render(srv.Name), ui.Faint.Render(srv.Host)),
+		Interval: 3 * time.Second,
+		Render: func() (string, error) {
+			return fetchLiveMetrics(exec)
+		},
+	})
+}
+
+func fetchLiveMetrics(exec *ssh.Executor) (string, error) {
+	// VM metrics — single compound SSH command to reduce round trips
+	vmOut, vmErr := exec.Run(
+		`echo "CPU:$(top -bn1 2>/dev/null | grep '%Cpu' | awk '{print 100-$8}' || echo '?')" && ` +
+			`echo "MEM:$(free -m 2>/dev/null | awk '/Mem:/{printf "%d/%d", $3, $2}' || echo '?')" && ` +
+			`echo "DISK:$(df -h / 2>/dev/null | awk 'NR==2{printf "%s/%s (%s)", $3, $2, $5}' || echo '?')" && ` +
+			`echo "LOAD:$(cat /proc/loadavg 2>/dev/null | awk '{printf "%s %s %s", $1, $2, $3}' || echo '?')" && ` +
+			`echo "UP:$(uptime -p 2>/dev/null | sed 's/^up //' || echo '?')" && ` +
+			`echo "NET:$(cat /proc/net/dev 2>/dev/null | awk '/eth0:|ens[0-9]/{gsub(/:/,""); printf "%s rx=%s tx=%s", $1, $2, $10}' || echo '?')"`)
+	if vmErr != nil {
+		return "", vmErr
+	}
+
+	// Container stats
+	containerOut, _ := exec.Run(
+		`docker stats --no-stream --format '{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}' 2>/dev/null`)
+
+	// Parse VM metrics
+	vm := map[string]string{}
+	for _, line := range strings.Split(vmOut, "\n") {
+		line = strings.TrimSpace(line)
+		if idx := strings.Index(line, ":"); idx > 0 {
+			vm[line[:idx]] = line[idx+1:]
+		}
+	}
+
+	var sb strings.Builder
+
+	// Server section
+	sb.WriteString("\n")
+	sb.WriteString(fmt.Sprintf("  %s\n", ui.Bold.Render("SERVER")))
+	sb.WriteString(fmt.Sprintf("  %s\n", ui.Faint.Render("─────────────────────────────────────")))
+	sb.WriteString(fmt.Sprintf("  %-11s %s%%\n", "CPU:", vm["CPU"]))
+	if parts := strings.SplitN(vm["MEM"], "/", 2); len(parts) == 2 {
+		sb.WriteString(fmt.Sprintf("  %-11s %s MB / %s MB\n", "RAM:", parts[0], parts[1]))
+	} else {
+		sb.WriteString(fmt.Sprintf("  %-11s %s\n", "RAM:", vm["MEM"]))
+	}
+	sb.WriteString(fmt.Sprintf("  %-11s %s\n", "Disk:", vm["DISK"]))
+	sb.WriteString(fmt.Sprintf("  %-11s %s\n", "Load:", vm["LOAD"]))
+	sb.WriteString(fmt.Sprintf("  %-11s %s\n", "Network:", vm["NET"]))
+	sb.WriteString(fmt.Sprintf("  %-11s %s\n", "Uptime:", vm["UP"]))
+
+	// Container section
+	containerOut = strings.TrimSpace(containerOut)
+	if containerOut != "" {
+		sb.WriteString("\n")
+		sb.WriteString(fmt.Sprintf("  %s\n", ui.Bold.Render("CONTAINERS")))
+		sb.WriteString(fmt.Sprintf("  %s\n", ui.Faint.Render("──────────────────────────────────────────────────────────────────────────")))
+		sb.WriteString(fmt.Sprintf("  %-22s %-8s %-22s %-16s %s\n", "NAME", "CPU", "MEMORY", "NET I/O", "BLOCK I/O"))
+		for _, line := range strings.Split(containerOut, "\n") {
+			parts := strings.SplitN(line, "\t", 5)
+			if len(parts) == 5 {
+				sb.WriteString(fmt.Sprintf("  %-22s %-8s %-22s %-16s %s\n",
+					parts[0], parts[1], ui.Faint.Render(parts[2]), ui.Faint.Render(parts[3]), ui.Faint.Render(parts[4])))
+			}
+		}
+	}
+
+	sb.WriteString("\n")
+	return sb.String(), nil
 }
 
 func formatAppCounts(running, stopped int) string {

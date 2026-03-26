@@ -47,6 +47,7 @@ func NewRootCmd(version string) *cobra.Command {
 		newRemoveCmd(),
 		newUpdateCmd(),
 		newLogsCmd(),
+		newRunCmd(),
 		newDomainCmd(),
 		newEnvCmd(),
 		newServiceCmd(),
@@ -121,6 +122,7 @@ func printHelp() {
 				{"neo deploy [path]", "Deploy a local Dockerfile project"},
 				{"neo list", "List all apps on the server"},
 				{"neo logs <app>", "Stream app container logs"},
+				{"neo run <app> -- <cmd>", "Run a one-off command in a container"},
 				{"neo domain <app> <domain>", "Set or change the domain for an app"},
 				{"neo domain <app> --temp", "Assign a temporary sslip.io domain with SSL"},
 				{"neo sync <app>", "Sync server state back to .neo.yml"},
@@ -166,6 +168,8 @@ func printHelp() {
 				{"neo servers", "List all configured servers"},
 				{"neo use <name>", "Switch the active server"},
 				{"neo ssh", "SSH into the current server"},
+				{"neo status", "Show server health and container stats"},
+				{"neo status --live", "Live-updating server metrics"},
 			},
 		},
 		{
@@ -228,11 +232,14 @@ It handles deployment, SSL certificates, shared database services, and app lifec
 - neo restart <app>             Restart an app
 - neo update <app>              Update to latest image
 - neo remove <app>              Remove app (keeps data volumes)
+- neo run <app> -- <cmd>        Run a one-off command in a container (-w worker, -i interactive)
 
-### Logs
+### Logs & Monitoring
 - neo logs <app>                Stream app logs (--tail N, -f to follow)
 - neo logs <app> -w <worker>    Stream worker logs
 - neo logs <app> -s             Stream shared service logs
+- neo status                    Show server health and container stats
+- neo status --live             Live-updating metrics (refreshes every 3s)
 
 ### Domains & SSL
 - neo domain <app> <domain>     Set domain (auto-provisions SSL via Caddy)

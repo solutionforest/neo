@@ -182,6 +182,12 @@ func (d *Docker) RemoveVolume(name string) error {
 	return d.exec.RunQuiet(fmt.Sprintf("docker volume rm %s", ssh.ShellQuote(name)))
 }
 
+// Stats returns a one-shot snapshot of container resource usage.
+func (d *Docker) Stats(format string) (string, error) {
+	cmd := fmt.Sprintf("docker stats --no-stream --format %s 2>/dev/null", ssh.ShellQuote(format))
+	return d.exec.Run(cmd)
+}
+
 // Exec runs a command inside a running container.
 func (d *Docker) Exec(container, cmd string) (string, error) {
 	return d.exec.Run(fmt.Sprintf("docker exec %s sh -c %s", ssh.ShellQuote(container), ssh.ShellQuote(cmd)))
