@@ -191,11 +191,11 @@ func formatCacheAge(d time.Duration) string {
 // refreshServerCache connects to one server, reads its state, and updates the local cache entry.
 // On SSH failure, caches the server as unreachable so the dashboard shows it immediately.
 func refreshServerCache(serverName string, srv *config.Server) {
-	exec, err := connectSSH(srv)
+	exec, err := connectSSHNonInteractive(srv)
 	if err != nil {
-		// Mark server as unreachable in cache
 		config.UpdateServerCache(serverName, config.ServerCache{
 			Reachable: false,
+			Error:     err.Error(),
 			UpdatedAt: time.Now(),
 		})
 		return
@@ -206,6 +206,7 @@ func refreshServerCache(serverName string, srv *config.Server) {
 	if err != nil {
 		config.UpdateServerCache(serverName, config.ServerCache{
 			Reachable: false,
+			Error:     err.Error(),
 			UpdatedAt: time.Now(),
 		})
 		return
@@ -251,8 +252,19 @@ func tuiMainMenu(cfg *config.Config, appSummary, serviceSummary string) string {
 		c := config.LoadCache()
 		if c != nil {
 			if sc := c.Get(srv.Name); sc != nil && !sc.Reachable {
+				reason := "unreachable"
+				if sc.Error != "" {
+					// Show a short reason (e.g., "auth failed" instead of full SSH error)
+					if strings.Contains(sc.Error, "unable to authenticate") {
+						reason = "auth failed — run: neo ssh"
+					} else if strings.Contains(sc.Error, "connection refused") {
+						reason = "connection refused"
+					} else if strings.Contains(sc.Error, "timed out") || strings.Contains(sc.Error, "timeout") {
+						reason = "timed out"
+					}
+				}
 				title = fmt.Sprintf("  %s %s  %s  %s",
-					ui.Red.Render("●"), srv.Name, ui.Faint.Render(srv.Host), ui.Red.Render("unreachable"))
+					ui.Red.Render("●"), srv.Name, ui.Faint.Render(srv.Host), ui.Red.Render(reason))
 			} else {
 				title = fmt.Sprintf("  %s %s  %s",
 					ui.Green.Render("●"), srv.Name, ui.Faint.Render(srv.Host))

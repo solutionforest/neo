@@ -23,6 +23,7 @@ type Executor struct {
 	Password        string // optional password for auth
 	PrivateKey      []byte // optional raw PEM key (for programmatic use)
 	InsecureHostKey bool   // skip host key verification (for tests)
+	NonInteractive  bool   // reject unknown hosts instead of prompting (for background use)
 	Verbose         bool   // log SSH commands and results to stderr
 	client          *ssh.Client
 	agentConn       net.Conn // SSH agent connection, closed on Close()
@@ -47,7 +48,7 @@ func New(host string, port int) *Executor {
 func (e *Executor) Connect() error {
 	user, host := parseHost(e.Host)
 
-	hkCallback := hostKeyCallback()
+	hkCallback := hostKeyCallback(e.NonInteractive)
 	if e.InsecureHostKey {
 		hkCallback = ssh.InsecureIgnoreHostKey()
 	}
@@ -320,8 +321,9 @@ func loadKey(path string) (ssh.AuthMethod, error) {
 
 // hostKeyCallback returns a callback that verifies host keys against known_hosts.
 // For unknown hosts, displays the fingerprint and asks for confirmation before accepting.
+// When nonInteractive is true, unknown hosts are rejected without prompting.
 // Changed host keys are always rejected.
-func hostKeyCallback() ssh.HostKeyCallback {
+func hostKeyCallback(nonInteractive bool) ssh.HostKeyCallback {
 	home, _ := os.UserHomeDir()
 	knownHostsPath := filepath.Join(home, ".ssh", "known_hosts")
 
@@ -353,6 +355,9 @@ func hostKeyCallback() ssh.HostKeyCallback {
 		// Key unknown (new host) — show fingerprint and ask user to confirm
 		var keyErr *knownhosts.KeyError
 		if errors.As(err, &keyErr) && len(keyErr.Want) == 0 {
+			if nonInteractive {
+				return fmt.Errorf("unknown host key for %s — run a command manually first to accept the key", hostname)
+			}
 			fingerprint := ssh.FingerprintSHA256(key)
 			fmt.Printf("\n  The authenticity of host %q can't be established.\n", hostname)
 			fmt.Printf("  %s key fingerprint is %s\n", key.Type(), fingerprint)

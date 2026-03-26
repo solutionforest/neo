@@ -22,6 +22,7 @@ type ServerCache struct {
 	ServiceCount    int       `json:"service_count"`
 	RunningServices int       `json:"running_services"`
 	Reachable       bool      `json:"reachable"`
+	Error           string    `json:"error,omitempty"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 

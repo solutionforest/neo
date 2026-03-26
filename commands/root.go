@@ -349,6 +349,23 @@ func resolveServer(cfg *config.Config) (*config.Server, error) {
 	}
 }
 
+// connectSSHNonInteractive creates and connects an SSH executor that never prompts.
+// Used by background goroutines (dashboard refresh) where stdin is unavailable.
+func connectSSHNonInteractive(srv *config.Server) (*ssh.Executor, error) {
+	exec := ssh.New(srv.Host, srv.Port)
+	exec.NonInteractive = true
+	exec.Verbose = debugFlag
+	if srv.Key != "" {
+		if data, err := os.ReadFile(srv.Key); err == nil {
+			exec.PrivateKey = data
+		}
+	}
+	if err := exec.Connect(); err != nil {
+		return nil, err
+	}
+	return exec, nil
+}
+
 // connectSSH creates and connects an SSH executor for a server.
 func connectSSH(srv *config.Server) (*ssh.Executor, error) {
 	exec := ssh.New(srv.Host, srv.Port)
