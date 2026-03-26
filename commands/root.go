@@ -57,6 +57,7 @@ func NewRootCmd(version string) *cobra.Command {
 		newSyncCmd(),
 		newConnectCmd(),
 		newSSHCmd(),
+		newStealthCmd(),
 		newVersionCmd(),
 		newUpgradeCmd(),
 		newHelpCmd(),
@@ -170,6 +171,7 @@ func printHelp() {
 				{"neo ssh", "SSH into the current server"},
 				{"neo status", "Show server health and container stats"},
 				{"neo status --live", "Live-updating server metrics"},
+				{"neo stealth", "Toggle stealth mode (hide IP welcome page)"},
 			},
 		},
 		{

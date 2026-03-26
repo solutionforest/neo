@@ -126,6 +126,7 @@ type State struct {
 	Initialized bool                     `json:"initialized"`
 	ServerIP    string                   `json:"server_ip"`
 	ServerArch  string                   `json:"server_arch,omitempty"`
+	StealthMode bool                     `json:"stealth_mode,omitempty"`
 	Apps        map[string]App           `json:"apps"`
 	Services    map[string]SharedService `json:"services,omitempty"`
 	Connected   bool                     `json:"connected"`

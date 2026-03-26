@@ -245,6 +245,11 @@ func (c *Caddy) CheckPortConflict() string {
 	return ""
 }
 
+// RemoveWelcomePage removes the branded welcome page for direct IP access.
+func (c *Caddy) RemoveWelcomePage() error {
+	return c.exec.RunQuiet(fmt.Sprintf("curl -sf -X DELETE %s/id/neo-welcome 2>/dev/null || true", CaddyAdminURL))
+}
+
 // AddWelcomePage adds a route for direct IP access showing a branded server-ready page.
 func (c *Caddy) AddWelcomePage(serverIP string) error {
 	// HTML-escape the server IP to prevent XSS
