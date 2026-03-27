@@ -109,7 +109,13 @@ YAML manifests embedded in the binary via `//go:embed`. Each template defines:
 
 ## OS Requirements
 
-`neo init` validates the server OS before proceeding. Only **Ubuntu 24.04+** and **Debian** (any version) are supported. The check reads `/etc/os-release` for `ID` and `VERSION_ID`. Unsupported distros or old Ubuntu versions get a clear error and `init` aborts.
+`neo init` validates the server OS before proceeding. Supported distros:
+- **Ubuntu 24.04+**
+- **Debian** (any version)
+- **Fedora 39+**
+- **CentOS / RHEL / AlmaLinux / Rocky 9+**
+
+The check reads `/etc/os-release` for `ID` and `VERSION_ID`. Unsupported distros or old versions get a clear error and `init` aborts. Package manager is auto-detected: `apt` for Debian/Ubuntu, `dnf` for RPM-based distros.
 
 ## Command Pattern
 

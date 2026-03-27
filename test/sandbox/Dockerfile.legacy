@@ -1,0 +1,27 @@
+# Neo Docker Sandbox — Legacy/unsupported distros (for OS rejection testing only)
+# Minimal: just SSH server, no Docker needed since neo init should reject these.
+
+ARG BASE_IMAGE=centos:7
+FROM ${BASE_IMAGE}
+
+# Install openssh-server with the available package manager
+RUN if command -v dnf >/dev/null 2>&1; then \
+        dnf install -y openssh-server passwd procps iproute && dnf clean all; \
+    elif command -v yum >/dev/null 2>&1; then \
+        yum install -y openssh-server passwd procps iproute && yum clean all; \
+    else \
+        apt-get update && apt-get install -y --no-install-recommends openssh-server procps iproute2 && rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# SSH setup
+RUN mkdir -p /run/sshd /root/.ssh && chmod 700 /root/.ssh
+RUN ssh-keygen -A 2>/dev/null || true
+RUN sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    echo "root:neotest" | chpasswd
+
+EXPOSE 22
+
+# No Docker daemon needed — just sshd
+CMD ["/usr/sbin/sshd", "-D", "-e"]

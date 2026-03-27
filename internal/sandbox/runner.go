@@ -218,6 +218,16 @@ func (r *Runner) stepValidateOS() error {
 		if err == nil && ver >= 24.04 {
 			supported = true
 		}
+	case "fedora":
+		ver, err := strconv.ParseFloat(versionID, 64)
+		if err == nil && ver >= 39 {
+			supported = true
+		}
+	case "centos", "rhel", "almalinux", "rocky":
+		ver, err := strconv.ParseFloat(versionID, 64)
+		if err == nil && ver >= 9 {
+			supported = true
+		}
 	}
 
 	if r.Supported && !supported {
