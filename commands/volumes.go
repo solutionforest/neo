@@ -143,14 +143,16 @@ func runVolumesMount(volumeName, hostPath string) error {
 		}
 	}
 
-	_, err = docker.Run(remote.RunOpts{
+	volOpts := remote.RunOpts{
 		Name:    containerName,
 		Image:   app.Image,
 		Network: config.DockerNetwork,
-		Restart: "unless-stopped",
+		Restart: restartPolicy(app.Restart),
 		Volumes: volumes,
 		Env:     app.Env,
-	})
+	}
+	applyHealth(&volOpts, app.Health)
+	_, err = docker.Run(volOpts)
 	spin.Stop()
 
 	if err != nil {

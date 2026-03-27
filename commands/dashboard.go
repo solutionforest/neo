@@ -594,6 +594,12 @@ func tuiAppActions(appName string, st *state.State, exec *neossh.Executor) (bool
 			opts = append(opts, ui.SelectOption{label, "sidecars"})
 		}
 
+		// Show Browse DB if the app has a linked database container
+		if db, dbErr := resolveAppDB(st, appName); dbErr == nil && db.Container != "" {
+			dbLabel := fmt.Sprintf("%-22s%s", "Browse DB", ui.Faint.Render(db.Type+" · "+db.Database))
+			opts = append(opts, ui.SelectOption{dbLabel, "browse-db"})
+		}
+
 		if a.Status == "running" {
 			opts = append(opts,
 				ui.SelectOption{"Restart", "restart"},
@@ -626,8 +632,10 @@ func tuiAppActions(appName string, st *state.State, exec *neossh.Executor) (bool
 			return false, nil
 		}
 
-		// terminal and remove exit the loop; everything else loops back.
+		// terminal, browse-db, and remove exit the loop; everything else loops back.
 		switch action {
+		case "browse-db":
+			return true, runDbTUI(appName)
 		case "terminal":
 			return true, tuiDockerTerminal(appName)
 		case "run-cmd":

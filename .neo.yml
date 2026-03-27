@@ -1,0 +1,12 @@
+name: neo-builder
+domain: none
+port: 9100
+https: false
+
+env:
+  NEO_SOURCE_DIR: /src/neo
+  NEO_OUTPUT_DIR: /output
+
+volumes:
+  binaries:
+    path: /output

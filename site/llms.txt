@@ -1,0 +1,246 @@
+# neo
+
+> neo is a CLI tool that deploys and manages Docker-based applications on remote servers over SSH.
+> It handles the full lifecycle: server setup, deployment, SSL certificates, env vars, databases, and monitoring.
+> All operations run locally and execute on the remote server via SSH — no agent required on the server.
+
+## Key concepts
+
+- **Server**: a remote host (e.g. `root@1.2.3.4`) registered in the local config at `~/.neo/config.json`
+- **App**: a Dockerfile-based project deployed as a Docker container with a domain and auto-SSL
+- **Service**: a shared database or cache (postgres, mysql, redis, mariadb) used by one or more apps
+- **State**: persisted at `/etc/neo/state.json` on each server — source of truth for what is deployed
+
+## Prerequisites
+
+- neo installed locally: `curl -fsSL https://get.vxero.dev/neo/install.sh | sh`
+- Remote server running Ubuntu 24.04+ or Debian (any version)
+- SSH access to the server (key-based or password)
+- A Dockerfile in the project directory (for `neo deploy`)
+
+## Commands
+
+### Server setup
+
+```
+neo init <user@host>          Initialize server: installs Docker, Caddy, sets up neo network
+neo servers                   List all configured servers
+neo use <name>                Switch active server
+neo ssh                       Open interactive SSH session to current server
+```
+
+### Deploy an app
+
+```
+neo deploy [path]             Build and deploy a Dockerfile project (zero-downtime blue-green)
+  --name <name>               App name (default: directory name)
+  --domain <domain>           Domain for the app (e.g. app.example.com)
+  --port <port>               Container port (default: auto-detected from Dockerfile EXPOSE)
+  --env KEY=VALUE             Set env var at deploy time (repeatable)
+  --env-file <file>           Load env vars from a .env file at deploy time
+  --server <name>             Target a specific server
+```
+
+The deploy command:
+1. Builds the Docker image on the remote server (streams build output)
+2. Starts the new container
+3. Registers the domain in Caddy (auto-provisions SSL via Let's Encrypt)
+4. Saves app state to `/etc/neo/state.json`
+
+### App lifecycle
+
+```
+neo list [--json]             List all apps and services (JSON: server, apps, services)
+neo start <app>               Start a stopped app
+neo stop <app>                Stop a running app
+neo restart <app>             Restart an app
+neo update <app>              Pull latest image and redeploy
+neo remove <app>              Remove app container (data volumes preserved)
+neo run <app> -- <cmd>        Run a one-off command inside the container
+```
+
+### Logs and monitoring
+
+```
+neo logs <app>                Stream app logs
+  --tail <n>                  Show last N lines (default: 50)
+  -f                          Follow (stream continuously)
+neo status [--json]           Server health: CPU, RAM, disk, uptime, container stats
+neo status --live             Live-updating metrics (refreshes every 3s)
+```
+
+### Domains and SSL
+
+```
+neo domain <app> <domain>     Set domain (triggers auto-SSL via Caddy + Let's Encrypt)
+neo domain <app> --temp       Assign a free sslip.io domain with instant SSL (no DNS needed)
+```
+
+### Environment variables
+
+```
+neo env <app> [--json]        View env vars (secrets masked; JSON: {"app":"...","vars":{...}})
+neo env set <app> KEY=VALUE   Set one or more env vars (auto-restarts container)
+neo env unset <app> KEY       Remove an env var (auto-restarts container)
+neo env import <app> <file>   Bulk import from a .env file (auto-restarts container)
+```
+
+Sensitive keys (containing SECRET, KEY, PASSWORD, TOKEN, PASS, PRIVATE, CREDENTIAL) are masked in output.
+
+### Shared services (databases / caches)
+
+```
+neo service create <type> <name>      Create a shared service
+  Types: postgres, mysql, redis, mariadb
+  Example: neo service create postgres main-db
+
+neo service list                      List services and their linked apps
+neo service link <svc> <app>          Create a DB + user, inject DATABASE_URL and DB_* env vars into app
+neo service unlink <svc> <app>        Remove link (data is preserved)
+neo service start|stop|restart <svc>  Lifecycle management
+neo service remove <svc>              Remove (must unlink all apps first)
+neo service logs <svc>                Stream service logs
+```
+
+When a service is linked to an app, neo injects these env vars automatically:
+- `DATABASE_URL` — full connection string
+- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
+
+### Data
+
+```
+neo backup <app>              Backup data volumes to a local archive
+neo restore <app> <file>      Restore volumes from a backup archive
+neo volumes                   List Docker volumes on the server
+```
+
+### Updates
+
+```
+neo version                   Show current version, check for updates
+neo upgrade                   Download and replace neo binary with latest version
+```
+
+## Global flags
+
+```
+--server <name>               Target a specific configured server (overrides current)
+```
+
+## Machine-readable output (for LLM pipelines)
+
+```
+neo list --json               Apps and services inventory
+neo status --json             Server health metrics and container stats
+neo env <app> --json          Env vars for an app (secrets masked)
+neo help --llm                Full plain-text command reference (no ANSI colors)
+```
+
+### neo list --json shape
+```json
+{
+  "server": "production",
+  "apps": {
+    "ghost": { "name": "ghost", "image": "...", "domain": "blog.example.com", "status": "running", "internal_port": 2368 }
+  },
+  "services": {
+    "main-db": { "name": "main-db", "image": "postgres:16", "status": "running", "linked_apps": { "ghost": {} } }
+  }
+}
+```
+
+### neo status --json shape
+```json
+{
+  "server": "production",
+  "host": "root@1.2.3.4",
+  "reachable": true,
+  "latency_ms": 12,
+  "cpu_percent": "4.2",
+  "ram_used_mb": "512",
+  "ram_total_mb": "1024",
+  "disk_used": "4.2G",
+  "disk_total": "20G",
+  "uptime": "3 days, 4 hours",
+  "apps": { "running": 2, "stopped": 0, "total": 2 },
+  "services": { "running": 1, "total": 1 },
+  "containers": [
+    { "name": "app-ghost", "cpu": "0.5%", "memory": "128MiB / 1GiB" }
+  ]
+}
+```
+
+### neo env \<app\> --json shape
+```json
+{
+  "app": "ghost",
+  "vars": {
+    "MAIL_HOST": "smtp.example.com",
+    "MAIL_PORT": "587",
+    "SECRET_KEY": "ab**************************"
+  }
+}
+```
+
+## Common workflows
+
+### Deploy a new app from scratch
+```bash
+neo init root@1.2.3.4          # one-time: set up the server
+cd my-project                   # project must have a Dockerfile
+neo deploy --domain app.example.com
+```
+
+### Deploy with a database
+```bash
+neo service create postgres main-db
+neo deploy --domain app.example.com --name myapp
+neo service link main-db myapp   # injects DATABASE_URL into myapp and restarts it
+```
+
+### Update environment variables
+```bash
+neo env set myapp MAIL_HOST=smtp.example.com MAIL_PORT=587
+neo env import myapp .env.production
+```
+
+### Redeploy after code changes
+```bash
+neo deploy   # re-runs from current directory, zero-downtime
+```
+
+### Check what is running
+```bash
+neo list --json | jq '.apps'
+neo status --json | jq '{cpu: .cpu_percent, ram_used: .ram_used_mb, ram_total: .ram_total_mb}'
+```
+
+### Troubleshoot a failing app
+```bash
+neo logs myapp --tail 100
+neo status --json
+neo env myapp --json
+neo restart myapp
+```
+
+## .neo.yml (optional project config)
+
+Place in the project root to set defaults for `neo deploy`:
+
+```yaml
+name: my-app              # app name (default: directory name)
+domain: app.example.com   # domain
+port: 8080                # container port
+env_file: .env.production # load env vars from file
+env:                      # non-sensitive env var defaults
+  APP_ENV: production
+  LOG_LEVEL: info
+```
+
+## Error patterns
+
+- `app "name" not found` — the app is not deployed; run `neo list` to see deployed apps
+- `no server configured` — run `neo init <user@host>` first
+- `SSH connection refused` — check the server IP and that SSH is running; try `neo ssh`
+- `Docker not found` — server needs initialization; run `neo init <user@host>`
+- `OS not supported` — neo requires Ubuntu 24.04+ or Debian; other distros are not supported

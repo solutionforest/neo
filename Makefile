@@ -36,7 +36,7 @@ fmt:
 docker-build: image-build
 
 image-build:
-	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) -t $(IMAGE):latest .
+	docker build -f Dockerfile.runtime --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) -t $(IMAGE):latest .
 
 install: build
 	sudo cp bin/$(BINARY) /usr/local/bin/$(BINARY)

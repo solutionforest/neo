@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 
@@ -30,18 +29,9 @@ func runSSH() error {
 		return err
 	}
 
-	// Build ssh command args
-	var sshArgs []string
-	sshArgs = append(sshArgs, "-o", "StrictHostKeyChecking=accept-new")
-	if srv.Key != "" {
-		sshArgs = append(sshArgs, "-i", srv.Key)
-	}
-	if srv.Port != 0 && srv.Port != 22 {
-		sshArgs = append(sshArgs, "-p", fmt.Sprintf("%d", srv.Port))
-	}
+	sshArgs := buildSSHArgs(srv)
 	sshArgs = append(sshArgs, srv.Host)
 
-	// Replace process with ssh
 	sshPath, err := exec.LookPath("ssh")
 	if err != nil {
 		return err

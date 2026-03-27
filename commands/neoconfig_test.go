@@ -175,6 +175,93 @@ volumes:
 	}
 }
 
+func TestLoadNeoConfigRestartAndHealth(t *testing.T) {
+	tmp := t.TempDir()
+	content := `name: my-app
+port: 8080
+restart: on-failure
+health:
+  cmd: curl -f http://localhost:8080/health
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+workers:
+  queue:
+    command: php artisan queue:work
+    restart: always
+sidecars:
+  redis:
+    image: redis:7
+    restart: always
+    health:
+      cmd: redis-cli ping
+      interval: 10s
+environments:
+  staging:
+    restart: "no"
+    health:
+      cmd: curl -f http://localhost:8080/ping
+`
+	os.WriteFile(filepath.Join(tmp, ".neo.yml"), []byte(content), 0644)
+
+	cfg, err := loadNeoConfig(tmp)
+	if err != nil {
+		t.Fatalf("loadNeoConfig() error: %v", err)
+	}
+
+	// Top-level restart
+	if cfg.Restart != "on-failure" {
+		t.Errorf("Restart = %q, want %q", cfg.Restart, "on-failure")
+	}
+
+	// Top-level health
+	if cfg.Health == nil {
+		t.Fatal("Health is nil")
+	}
+	if cfg.Health.Cmd != "curl -f http://localhost:8080/health" {
+		t.Errorf("Health.Cmd = %q", cfg.Health.Cmd)
+	}
+	if cfg.Health.Interval != "30s" {
+		t.Errorf("Health.Interval = %q", cfg.Health.Interval)
+	}
+	if cfg.Health.Timeout != "10s" {
+		t.Errorf("Health.Timeout = %q", cfg.Health.Timeout)
+	}
+	if cfg.Health.Retries != 3 {
+		t.Errorf("Health.Retries = %d", cfg.Health.Retries)
+	}
+	if cfg.Health.StartPeriod != "40s" {
+		t.Errorf("Health.StartPeriod = %q", cfg.Health.StartPeriod)
+	}
+
+	// Worker restart
+	if cfg.Workers["queue"].Restart != "always" {
+		t.Errorf("Worker queue Restart = %q", cfg.Workers["queue"].Restart)
+	}
+
+	// Sidecar restart + health
+	redis := cfg.Sidecars["redis"]
+	if redis.Restart != "always" {
+		t.Errorf("Sidecar redis Restart = %q", redis.Restart)
+	}
+	if redis.Health == nil || redis.Health.Cmd != "redis-cli ping" {
+		t.Errorf("Sidecar redis Health.Cmd = %v", redis.Health)
+	}
+	if redis.Health.Interval != "10s" {
+		t.Errorf("Sidecar redis Health.Interval = %q", redis.Health.Interval)
+	}
+
+	// Environment override
+	staging := cfg.Environments["staging"]
+	if staging.Restart != "no" {
+		t.Errorf("Staging Restart = %q", staging.Restart)
+	}
+	if staging.Health == nil || staging.Health.Cmd != "curl -f http://localhost:8080/ping" {
+		t.Errorf("Staging Health = %v", staging.Health)
+	}
+}
+
 func TestLoadNeoConfigWorkersAndVolumes(t *testing.T) {
 	tmp := t.TempDir()
 	content := `name: neo-cms

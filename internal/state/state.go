@@ -41,11 +41,21 @@ type VolumeInfo struct {
 	Mount         *string `json:"mount"`
 }
 
+// HealthCheck represents Docker health check configuration stored in state.
+type HealthCheck struct {
+	Cmd         string `json:"cmd"`
+	Interval    string `json:"interval,omitempty"`
+	Timeout     string `json:"timeout,omitempty"`
+	Retries     int    `json:"retries,omitempty"`
+	StartPeriod string `json:"start_period,omitempty"`
+}
+
 // AppWorker represents a background worker container for an app.
 type AppWorker struct {
 	Command     string `json:"command"`
 	ContainerID string `json:"container_id,omitempty"`
 	Status      string `json:"status"`
+	Restart     string `json:"restart,omitempty"`
 }
 
 // AppSidecar represents a sidecar container for an app.
@@ -55,6 +65,8 @@ type AppSidecar struct {
 	Env     map[string]string `json:"env,omitempty"`
 	Command string            `json:"command,omitempty"`
 	Status  string            `json:"status"`
+	Restart string            `json:"restart,omitempty"`
+	Health  *HealthCheck      `json:"health,omitempty"`
 }
 
 // App represents an installed application on the server.
@@ -72,6 +84,8 @@ type App struct {
 	Services     map[string]AppService `json:"services,omitempty"`
 	Workers      map[string]AppWorker  `json:"workers,omitempty"`
 	Sidecars     map[string]AppSidecar `json:"sidecars,omitempty"`
+	Restart      string                `json:"restart,omitempty"`
+	Health       *HealthCheck          `json:"health,omitempty"`
 	InstalledAt  string                `json:"installed_at"`
 }
 

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -13,11 +14,15 @@ import (
 
 func newStatusCmd() *cobra.Command {
 	var liveFlag bool
+	var jsonFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show server health, resource usage, and container stats",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if jsonFlag {
+				return runStatusJSON()
+			}
 			if liveFlag {
 				return runStatusLive()
 			}
@@ -26,6 +31,7 @@ func newStatusCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&liveFlag, "live", false, "show live-updating metrics (refreshes every 3s)")
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "output server health and container stats as JSON")
 	return cmd
 }
 
@@ -210,6 +216,129 @@ func fetchLiveMetrics(exec *ssh.Executor) (string, error) {
 
 	sb.WriteString("\n")
 	return sb.String(), nil
+}
+
+type statusOutput struct {
+	Server     string          `json:"server"`
+	Host       string          `json:"host"`
+	Reachable  bool            `json:"reachable"`
+	LatencyMs  int64           `json:"latency_ms"`
+	CPU        string          `json:"cpu_percent"`
+	RAMUsedMB  string          `json:"ram_used_mb"`
+	RAMTotalMB string          `json:"ram_total_mb"`
+	DiskUsed   string          `json:"disk_used"`
+	DiskTotal  string          `json:"disk_total"`
+	Uptime     string          `json:"uptime"`
+	Apps       statusAppCount  `json:"apps"`
+	Services   statusSvcCount  `json:"services"`
+	Containers []containerStat `json:"containers"`
+}
+
+type statusAppCount struct {
+	Running int `json:"running"`
+	Stopped int `json:"stopped"`
+	Total   int `json:"total"`
+}
+
+type statusSvcCount struct {
+	Running int `json:"running"`
+	Total   int `json:"total"`
+}
+
+type containerStat struct {
+	Name   string `json:"name"`
+	CPU    string `json:"cpu"`
+	Memory string `json:"memory"`
+}
+
+func runStatusJSON() error {
+	_, srv, exec, err := mustResolveAndConnect()
+	if err != nil {
+		return err
+	}
+	defer exec.Close()
+
+	out := statusOutput{
+		Server: srv.Name,
+		Host:   srv.Host,
+	}
+
+	// Ping
+	start := time.Now()
+	if _, pingErr := exec.Run("true"); pingErr == nil {
+		out.Reachable = true
+		out.LatencyMs = time.Since(start).Milliseconds()
+	}
+
+	// State (app/service counts)
+	st, err := state.Load(exec)
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+	for _, a := range st.Apps {
+		out.Apps.Total++
+		if a.Status == "running" {
+			out.Apps.Running++
+		} else {
+			out.Apps.Stopped++
+		}
+	}
+	for _, svc := range st.Services {
+		out.Services.Total++
+		if svc.Status == "running" {
+			out.Services.Running++
+		}
+	}
+
+	// Server metrics
+	raw, _ := exec.Run(
+		`echo "CPU:$(top -bn1 2>/dev/null | grep '%Cpu' | awk '{print 100-$8}' || echo '?')" && ` +
+			`echo "MEM:$(free -m 2>/dev/null | awk '/Mem:/{printf "%d/%d", $3, $2}' || echo '?')" && ` +
+			`echo "DISK:$(df -h / 2>/dev/null | awk 'NR==2{printf "%s/%s", $3, $2}' || echo '?')" && ` +
+			`echo "UP:$(uptime -p 2>/dev/null | sed 's/^up //' || echo '?')"`)
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "CPU:"):
+			out.CPU = strings.TrimPrefix(line, "CPU:")
+		case strings.HasPrefix(line, "MEM:"):
+			parts := strings.SplitN(strings.TrimPrefix(line, "MEM:"), "/", 2)
+			if len(parts) == 2 {
+				out.RAMUsedMB, out.RAMTotalMB = parts[0], parts[1]
+			}
+		case strings.HasPrefix(line, "DISK:"):
+			parts := strings.SplitN(strings.TrimPrefix(line, "DISK:"), "/", 2)
+			if len(parts) == 2 {
+				out.DiskUsed, out.DiskTotal = parts[0], parts[1]
+			}
+		case strings.HasPrefix(line, "UP:"):
+			out.Uptime = strings.TrimPrefix(line, "UP:")
+		}
+	}
+
+	// Container stats
+	statsOut, _ := exec.Run(
+		`docker stats --no-stream --format '{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' 2>/dev/null`)
+	for _, line := range strings.Split(strings.TrimSpace(statsOut), "\n") {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) == 3 {
+			out.Containers = append(out.Containers, containerStat{
+				Name:   parts[0],
+				CPU:    parts[1],
+				Memory: parts[2],
+			})
+		}
+	}
+	if out.Containers == nil {
+		out.Containers = []containerStat{}
+	}
+
+	data, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal json: %w", err)
+	}
+	fmt.Println(string(data))
+	return nil
 }
 
 func formatAppCounts(running, stopped int) string {

@@ -12,17 +12,22 @@ import (
 
 func newListCmd() *cobra.Command {
 	var formatFlag string
+	var jsonFlag bool
 
 	cmd := &cobra.Command{
 		Use:     "list",
 		Short:   "List all apps on the current server",
 		Aliases: []string{"ls"},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if jsonFlag {
+				formatFlag = "json"
+			}
 			return runList(formatFlag)
 		},
 	}
 
 	cmd.Flags().StringVar(&formatFlag, "format", "table", "output format: table or json")
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "output as JSON (shorthand for --format json)")
 
 	return cmd
 }

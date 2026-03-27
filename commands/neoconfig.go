@@ -7,10 +7,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// NeoHealth represents Docker health check configuration in .neo.yml.
+type NeoHealth struct {
+	Cmd         string `yaml:"cmd"`
+	Interval    string `yaml:"interval,omitempty"`     // e.g. "30s"
+	Timeout     string `yaml:"timeout,omitempty"`      // e.g. "10s"
+	Retries     int    `yaml:"retries,omitempty"`      // e.g. 3
+	StartPeriod string `yaml:"start_period,omitempty"` // e.g. "40s"
+}
+
 // NeoWorker represents a background worker container in .neo.yml.
 type NeoWorker struct {
 	Command     string `yaml:"command"`
 	HealthCheck string `yaml:"health_check,omitempty"` // optional health check command
+	Restart     string `yaml:"restart,omitempty"`       // Docker restart policy
 }
 
 // SidecarBuild supports both string ("../path") and object ({context, dockerfile}) forms.
@@ -51,6 +61,8 @@ type NeoSidecar struct {
 	Volumes map[string]string `yaml:"volumes,omitempty"` // name: containerPath
 	Env     map[string]string `yaml:"env,omitempty"`     // sidecar-specific env vars
 	Command string            `yaml:"command,omitempty"` // override entrypoint/cmd
+	Restart string            `yaml:"restart,omitempty"` // Docker restart policy
+	Health  *NeoHealth        `yaml:"health,omitempty"`  // Docker health check
 }
 
 // NeoSSL represents custom SSL certificate configuration in .neo.yml.
@@ -73,8 +85,12 @@ type NeoEnvironment struct {
 	HTTPS   *bool                `yaml:"https,omitempty"`   // nil=default, true=HTTPS, false=HTTP-only
 	Env     map[string]string    `yaml:"env,omitempty"`
 	EnvFile string               `yaml:"env_file,omitempty"`
-	SSL     *NeoSSL              `yaml:"ssl,omitempty"`
-	Volumes map[string]NeoVolume `yaml:"volumes,omitempty"` // environment-specific persistent volumes
+	SSL      *NeoSSL                `yaml:"ssl,omitempty"`
+	Volumes  map[string]NeoVolume   `yaml:"volumes,omitempty"`  // environment-specific persistent volumes
+	Workers  map[string]NeoWorker   `yaml:"workers,omitempty"`  // environment-specific workers (override top-level)
+	Sidecars map[string]NeoSidecar  `yaml:"sidecars,omitempty"` // environment-specific sidecars (override top-level)
+	Restart  string                 `yaml:"restart,omitempty"`  // Docker restart policy override
+	Health   *NeoHealth             `yaml:"health,omitempty"`   // Docker health check override
 }
 
 // NeoConfig represents a .neo.yml project configuration file.
@@ -88,6 +104,8 @@ type NeoConfig struct {
 	Env            map[string]string         `yaml:"env,omitempty"`
 	EnvFile        string                    `yaml:"env_file,omitempty"`
 	ComposeService string                    `yaml:"compose_service,omitempty"`
+	Restart        string                    `yaml:"restart,omitempty"` // Docker restart policy (default: unless-stopped)
+	Health         *NeoHealth                `yaml:"health,omitempty"` // Docker health check
 	Environments   map[string]NeoEnvironment `yaml:"environments,omitempty"`
 	Workers        map[string]NeoWorker      `yaml:"workers,omitempty"`
 	Sidecars       map[string]NeoSidecar     `yaml:"sidecars,omitempty"`

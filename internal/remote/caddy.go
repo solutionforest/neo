@@ -135,42 +135,119 @@ func (c *Caddy) RemoveRoute(appID string) error {
 // UpdateRoute replaces an existing route's domains and upstream (HTTPS).
 func (c *Caddy) UpdateRoute(appID string, domains []string, upstream string) error {
 	c.RemoveRoute(appID) // ignore error if doesn't exist
+	c.removeFromAutoHTTPSSkip(domains)
 	return c.AddRoute(appID, domains, upstream)
 }
 
 // AddRouteHTTP adds an HTTP-only reverse proxy route (no auto-SSL).
-// Routes are added to a dedicated HTTP server (srv_http) on port 80.
+// Routes are added to srv0 with automatic_https.skip to prevent cert
+// provisioning and HTTP→HTTPS redirects for these domains.
 func (c *Caddy) AddRouteHTTP(appID string, domains []string, upstream string) error {
 	if len(domains) == 0 {
 		return fmt.Errorf("at least one domain is required")
 	}
-	// Ensure the HTTP-only server exists (create if missing, no-op if present)
-	ensure := fmt.Sprintf(
-		`curl -sf %s/config/apps/http/servers/srv_http >/dev/null 2>&1 || curl -sf -X PUT %s/config/apps/http/servers/srv_http -H 'Content-Type: application/json' -d '{"listen":[":80"],"routes":[]}'`,
-		CaddyAdminURL, CaddyAdminURL,
-	)
-	c.exec.RunQuiet(ensure)
-
-	route := caddyRoute{
-		ID:     appID,
-		Match:  []caddyMatch{{Host: domains}},
-		Handle: []caddyHandle{{Handler: "reverse_proxy", Upstreams: []caddyUpstream{{Dial: upstream}}}},
+	if err := c.addToAutoHTTPSSkip(domains); err != nil {
+		return fmt.Errorf("disable auto-https: %w", err)
 	}
-	data, err := json.Marshal(route)
-	if err != nil {
-		return fmt.Errorf("marshal route: %w", err)
-	}
-	cmd := fmt.Sprintf(
-		`curl -sf -X POST %s/config/apps/http/servers/srv_http/routes -H "Content-Type: application/json" -d '%s'`,
-		CaddyAdminURL, string(data),
-	)
-	return c.exec.RunQuiet(cmd)
+	return c.AddRoute(appID, domains, upstream)
 }
 
 // UpdateRouteHTTP replaces an existing route with an HTTP-only route.
 func (c *Caddy) UpdateRouteHTTP(appID string, domains []string, upstream string) error {
 	c.RemoveRoute(appID)
-	return c.AddRouteHTTP(appID, domains, upstream)
+	if err := c.addToAutoHTTPSSkip(domains); err != nil {
+		return fmt.Errorf("disable auto-https: %w", err)
+	}
+	return c.AddRoute(appID, domains, upstream)
+}
+
+// addToAutoHTTPSSkip adds domains to srv0's automatic_https.skip list so Caddy
+// does not provision certificates or redirect HTTP→HTTPS for them.
+func (c *Caddy) addToAutoHTTPSSkip(domains []string) error {
+	// Read current skip list (may not exist yet)
+	out, _ := c.exec.Run(fmt.Sprintf(
+		"curl -sf %s/config/apps/http/servers/srv0/automatic_https/skip 2>/dev/null || echo '[]'",
+		CaddyAdminURL,
+	))
+	var skip []string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &skip); err != nil {
+		skip = nil
+	}
+
+	existing := make(map[string]bool, len(skip))
+	for _, d := range skip {
+		existing[d] = true
+	}
+	for _, d := range domains {
+		if !existing[d] {
+			skip = append(skip, d)
+		}
+	}
+
+	data, _ := json.Marshal(skip)
+
+	// Ensure the automatic_https object exists, then set the skip list
+	c.exec.RunQuiet(fmt.Sprintf(
+		`curl -sf %s/config/apps/http/servers/srv0/automatic_https >/dev/null 2>&1 || curl -sf -X PUT %s/config/apps/http/servers/srv0/automatic_https -H 'Content-Type: application/json' -d '{}'`,
+		CaddyAdminURL, CaddyAdminURL,
+	))
+	cmd := fmt.Sprintf(
+		`curl -sf -X PUT %s/config/apps/http/servers/srv0/automatic_https/skip -H "Content-Type: application/json" -d '%s'`,
+		CaddyAdminURL, string(data),
+	)
+	return c.exec.RunQuiet(cmd)
+}
+
+// removeFromAutoHTTPSSkip removes domains from srv0's automatic_https.skip list
+// so Caddy resumes certificate provisioning and HTTPS redirects for them.
+func (c *Caddy) removeFromAutoHTTPSSkip(domains []string) {
+	out, _ := c.exec.Run(fmt.Sprintf(
+		"curl -sf %s/config/apps/http/servers/srv0/automatic_https/skip 2>/dev/null || echo '[]'",
+		CaddyAdminURL,
+	))
+	var skip []string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &skip); err != nil || len(skip) == 0 {
+		return
+	}
+
+	remove := make(map[string]bool, len(domains))
+	for _, d := range domains {
+		remove[d] = true
+	}
+	var newSkip []string
+	for _, d := range skip {
+		if !remove[d] {
+			newSkip = append(newSkip, d)
+		}
+	}
+
+	if len(newSkip) == 0 {
+		c.exec.RunQuiet(fmt.Sprintf(
+			"curl -sf -X DELETE %s/config/apps/http/servers/srv0/automatic_https/skip 2>/dev/null || true",
+			CaddyAdminURL,
+		))
+		return
+	}
+
+	data, _ := json.Marshal(newSkip)
+	c.exec.RunQuiet(fmt.Sprintf(
+		`curl -sf -X PUT %s/config/apps/http/servers/srv0/automatic_https/skip -H "Content-Type: application/json" -d '%s'`,
+		CaddyAdminURL, string(data),
+	))
+}
+
+// PatchUpstream atomically updates the upstream dial address for an existing route
+// without removing and re-adding it, preventing the brief routing gap of UpdateRoute.
+func (c *Caddy) PatchUpstream(appID string, dial string) error {
+	dialJSON, err := json.Marshal(dial)
+	if err != nil {
+		return err
+	}
+	cmd := fmt.Sprintf(
+		`curl -sf -X PATCH %s/id/%s/handle/0/upstreams/0/dial -H "Content-Type: application/json" -d '%s'`,
+		CaddyAdminURL, appID, string(dialJSON),
+	)
+	return c.exec.RunQuiet(cmd)
 }
 
 // LoadCertificate loads a custom TLS certificate and key into Caddy.

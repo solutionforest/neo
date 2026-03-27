@@ -2,6 +2,8 @@ package commands
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -102,13 +104,30 @@ func runBackup(appName string) error {
 	huh.NewConfirm().
 		Title("Download backup to local machine?").
 		Value(&download).
-		Run()
+		Run() //nolint:errcheck
 
-	if download {
-		ui.Info("Download not yet implemented — copy manually:")
-		ui.Info(fmt.Sprintf("  scp %s:%s .", exec.Host, backupFile))
+	if !download {
+		return nil
 	}
 
+	localFile := filepath.Base(backupFile)
+	f, err := os.Create(localFile)
+	if err != nil {
+		return fmt.Errorf("create local file: %w", err)
+	}
+	defer f.Close()
+
+	spin = ui.NewSpinner(fmt.Sprintf("Downloading %s...", localFile))
+	spin.Start()
+	err = exec.Stream(fmt.Sprintf("cat %s", backupFile), f)
+	spin.Stop()
+
+	if err != nil {
+		os.Remove(localFile)
+		return fmt.Errorf("download backup: %w", err)
+	}
+
+	ui.Success(fmt.Sprintf("Downloaded %s", localFile))
 	return nil
 }
 

@@ -1,25 +1,22 @@
-FROM golang:1.24-alpine AS build
+FROM golang:1.24-alpine3.22
 
-ARG VERSION=dev
+RUN apk add --no-cache git
 
-WORKDIR /src
+# Build the neo-builder HTTP service
+WORKDIR /app
+COPY neo-builder/go.mod neo-builder/main.go ./
+RUN go build -o /usr/local/bin/neo-builder .
 
-COPY go.mod go.sum ./
+# Copy Neo source code for compilation
+COPY go.mod go.sum* /src/neo/
+COPY cmd/ /src/neo/cmd/
+COPY commands/ /src/neo/commands/
+COPY internal/ /src/neo/internal/
+
+WORKDIR /src/neo
 RUN go mod download
 
-COPY . .
+VOLUME ["/output"]
+EXPOSE 9100
 
-RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-s -w -X main.version=${VERSION}" \
-    -o /out/neo \
-    ./cmd/neo
-
-FROM alpine:3.22
-
-RUN apk add --no-cache ca-certificates tzdata
-
-COPY --from=build /out/neo /usr/local/bin/neo
-
-WORKDIR /workspace
-
-ENTRYPOINT ["neo"]
+ENTRYPOINT ["neo-builder"]

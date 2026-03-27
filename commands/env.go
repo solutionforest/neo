@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,6 +26,8 @@ func resolveEnvApp(args []string) (appName string, rest []string) {
 }
 
 func newEnvCmd() *cobra.Command {
+	var jsonFlag bool
+
 	cmd := &cobra.Command{
 		Use:   "env [app]",
 		Short: "Manage environment variables for an app",
@@ -32,9 +35,14 @@ func newEnvCmd() *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, _ := resolveEnvApp(args)
+			if jsonFlag {
+				return runEnvListJSON(name)
+			}
 			return runEnvList(name)
 		},
 	}
+
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "output env vars as JSON (secrets masked)")
 
 	cmd.AddCommand(
 		newEnvSetCmd(),
@@ -133,6 +141,45 @@ func runEnvList(appName string) error {
 		fmt.Printf("  %-30s %s\n", ui.Green.Render(k), displayed)
 	}
 	fmt.Println()
+	return nil
+}
+
+// runEnvListJSON outputs env vars for an app as JSON, with secrets masked.
+func runEnvListJSON(appName string) error {
+	exec, st, err := mustResolveAndLoadState()
+	if err != nil {
+		return err
+	}
+	defer exec.Close()
+
+	app, ok := st.Apps[appName]
+	if !ok {
+		return fmt.Errorf("app %q not found", appName)
+	}
+
+	// Sort keys for stable output and mask secrets
+	masked := make(map[string]string, len(app.Env))
+	for k, v := range app.Env {
+		if looksLikeSecret(k) && len(v) > 4 {
+			masked[k] = v[:2] + strings.Repeat("*", len(v)-2)
+		} else {
+			masked[k] = v
+		}
+	}
+
+	out := struct {
+		App  string            `json:"app"`
+		Vars map[string]string `json:"vars"`
+	}{
+		App:  appName,
+		Vars: masked,
+	}
+
+	data, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal json: %w", err)
+	}
+	fmt.Println(string(data))
 	return nil
 }
 
@@ -294,13 +341,37 @@ func restartWithNewEnv(appName string, app state.App, exec *neossh.Executor) err
 		volArgs = append(volArgs, fmt.Sprintf("-v %s:%s", src, vol.ContainerPath))
 	}
 
-	cmd := fmt.Sprintf("docker run -d --name %s --network %s --restart unless-stopped %s %s %s",
+	restart := "unless-stopped"
+	if app.Restart != "" {
+		restart = app.Restart
+	}
+
+	cmd := fmt.Sprintf("docker run -d --name %s --network %s --restart %s %s %s",
 		containerName,
 		config.DockerNetwork,
+		restart,
 		strings.Join(envArgs, " "),
 		strings.Join(volArgs, " "),
-		app.Image,
 	)
+
+	// Add health check flags if configured
+	if app.Health != nil && app.Health.Cmd != "" {
+		cmd += fmt.Sprintf(" --health-cmd %s", neossh.ShellQuote(app.Health.Cmd))
+		if app.Health.Interval != "" {
+			cmd += fmt.Sprintf(" --health-interval %s", app.Health.Interval)
+		}
+		if app.Health.Timeout != "" {
+			cmd += fmt.Sprintf(" --health-timeout %s", app.Health.Timeout)
+		}
+		if app.Health.Retries > 0 {
+			cmd += fmt.Sprintf(" --health-retries %d", app.Health.Retries)
+		}
+		if app.Health.StartPeriod != "" {
+			cmd += fmt.Sprintf(" --health-start-period %s", app.Health.StartPeriod)
+		}
+	}
+
+	cmd += " " + app.Image
 
 	_, err := exec.Run(cmd)
 	spin.Stop()

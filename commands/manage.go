@@ -302,14 +302,16 @@ func runUpdate(appName string) error {
 	}
 
 	// Start new container with same config
-	_, err = docker.Run(remote.RunOpts{
+	updateOpts := remote.RunOpts{
 		Name:    containerName,
 		Image:   app.Image,
 		Network: config.DockerNetwork,
-		Restart: "unless-stopped",
+		Restart: restartPolicy(app.Restart),
 		Volumes: volumes,
 		Env:     app.Env,
-	})
+	}
+	applyHealth(&updateOpts, app.Health)
+	_, err = docker.Run(updateOpts)
 	spin.Stop()
 
 	if err != nil {
@@ -323,7 +325,7 @@ func runUpdate(appName string) error {
 			Name:    wContainer,
 			Image:   app.Image,
 			Network: config.DockerNetwork,
-			Restart: "unless-stopped",
+			Restart: restartPolicy(w.Restart),
 			Volumes: volumes,
 			Env:     app.Env,
 			Cmd:     w.Command,
@@ -341,15 +343,17 @@ func runUpdate(appName string) error {
 			appVolName := appName + "-" + volName
 			scVolumes = append(scVolumes, fmt.Sprintf("%s:%s", appVolName, containerPath))
 		}
-		_, scErr := docker.Run(remote.RunOpts{
+		scOpts := remote.RunOpts{
 			Name:    scContainer,
 			Image:   sc.Image,
 			Network: config.DockerNetwork,
-			Restart: "unless-stopped",
+			Restart: restartPolicy(sc.Restart),
 			Volumes: scVolumes,
 			Env:     sc.Env,
 			Cmd:     sc.Command,
-		})
+		}
+		applyHealth(&scOpts, sc.Health)
+		_, scErr := docker.Run(scOpts)
 		if scErr != nil {
 			ui.Error(fmt.Sprintf("Failed to restart sidecar %s: %s", scName, scErr))
 		}
@@ -461,7 +465,7 @@ func runWorkerRedeploy(appName, workerName string) error {
 		Name:    containerName,
 		Image:   app.Image,
 		Network: config.DockerNetwork,
-		Restart: "unless-stopped",
+		Restart: restartPolicy(w.Restart),
 		Volumes: volumes,
 		Env:     app.Env,
 		Cmd:     w.Command,
@@ -569,15 +573,17 @@ func runSidecarRedeploy(appName, sidecarName string) error {
 	docker.Stop(containerName)   //nolint:errcheck
 	docker.Remove(containerName) //nolint:errcheck
 
-	_, runErr := docker.Run(remote.RunOpts{
+	scRedeployOpts := remote.RunOpts{
 		Name:    containerName,
 		Image:   sc.Image,
 		Network: config.DockerNetwork,
-		Restart: "unless-stopped",
+		Restart: restartPolicy(sc.Restart),
 		Volumes: scVolumes,
 		Env:     sc.Env,
 		Cmd:     sc.Command,
-	})
+	}
+	applyHealth(&scRedeployOpts, sc.Health)
+	_, runErr := docker.Run(scRedeployOpts)
 
 	spin.Stop()
 

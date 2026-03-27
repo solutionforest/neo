@@ -74,6 +74,12 @@ type RunOpts struct {
 	Env        map[string]string // KEY=VALUE
 	Entrypoint string            // override entrypoint
 	Cmd        string            // override cmd
+	// Docker health check
+	HealthCmd         string
+	HealthInterval    string // e.g. "30s"
+	HealthTimeout     string // e.g. "10s"
+	HealthRetries     int    // e.g. 3
+	HealthStartPeriod string // e.g. "40s"
 }
 
 // Run creates and starts a container.
@@ -101,6 +107,21 @@ func (d *Docker) Run(opts RunOpts) (string, error) {
 	}
 	if opts.Entrypoint != "" {
 		args = append(args, "--entrypoint", ssh.ShellQuote(opts.Entrypoint))
+	}
+	if opts.HealthCmd != "" {
+		args = append(args, "--health-cmd", ssh.ShellQuote(opts.HealthCmd))
+		if opts.HealthInterval != "" {
+			args = append(args, "--health-interval", opts.HealthInterval)
+		}
+		if opts.HealthTimeout != "" {
+			args = append(args, "--health-timeout", opts.HealthTimeout)
+		}
+		if opts.HealthRetries > 0 {
+			args = append(args, "--health-retries", fmt.Sprintf("%d", opts.HealthRetries))
+		}
+		if opts.HealthStartPeriod != "" {
+			args = append(args, "--health-start-period", opts.HealthStartPeriod)
+		}
 	}
 	args = append(args, ssh.ShellQuote(opts.Image))
 	if opts.Cmd != "" {
@@ -151,6 +172,23 @@ func (d *Docker) IsRunning(name string) bool {
 		"docker inspect -f '{{.State.Running}}' %s 2>/dev/null", ssh.ShellQuote(name),
 	))
 	return err == nil && strings.TrimSpace(out) == "true"
+}
+
+// IsPortOpen checks if the container is accepting TCP connections on the given port.
+// It resolves the container's Docker network IP and tests connectivity from the server,
+// which mirrors exactly what Caddy does when proxying to the container.
+func (d *Docker) IsPortOpen(name string, port int) bool {
+	ip, err := d.exec.Run(fmt.Sprintf(
+		"docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' %s 2>/dev/null",
+		ssh.ShellQuote(name),
+	))
+	if err != nil || strings.TrimSpace(ip) == "" {
+		return false
+	}
+	return d.exec.RunQuiet(fmt.Sprintf(
+		"timeout 2 bash -c '</dev/tcp/%s/%d' 2>/dev/null",
+		strings.TrimSpace(ip), port,
+	)) == nil
 }
 
 // ContainerStatus returns the container status string.

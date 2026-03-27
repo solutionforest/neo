@@ -179,6 +179,21 @@ func runDeploy(projectPath string, flags deployFlags) error {
 					neoConfig.Volumes[k] = v
 				}
 			}
+			// Merge environment workers (full replace if any defined)
+			if len(env.Workers) > 0 {
+				neoConfig.Workers = env.Workers
+			}
+			// Merge environment sidecars (full replace if any defined)
+			if len(env.Sidecars) > 0 {
+				neoConfig.Sidecars = env.Sidecars
+			}
+			// Environment restart/health override top-level
+			if env.Restart != "" {
+				neoConfig.Restart = env.Restart
+			}
+			if env.Health != nil {
+				neoConfig.Health = env.Health
+			}
 		}
 	}
 
@@ -432,14 +447,16 @@ func runDeploy(projectPath string, flags deployFlags) error {
 
 		spin = ui.NewSpinner("Starting container with new env...")
 		spin.Start()
-		_, startErr := docker.Run(remote.RunOpts{
+		envOnlyOpts := remote.RunOpts{
 			Name:    containerName,
 			Image:   existing.Image,
 			Network: config.DockerNetwork,
-			Restart: "unless-stopped",
+			Restart: restartPolicy(existing.Restart),
 			Volumes: volumes,
 			Env:     env,
-		})
+		}
+		applyHealth(&envOnlyOpts, existing.Health)
+		_, startErr := docker.Run(envOnlyOpts)
 		spin.Stop()
 		if startErr != nil {
 			return fmt.Errorf("restart container: %w", startErr)
@@ -530,6 +547,14 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		}
 	}
 
+	// Resolve restart policy and health check from .neo.yml
+	appRestart := ""
+	var appHealth *state.HealthCheck
+	if neoConfig != nil {
+		appRestart = neoConfig.Restart
+		appHealth = neoHealthToState(neoConfig.Health)
+	}
+
 	// Blue-green deployment: start new container alongside old one
 	nextName := containerName + "-next"
 
@@ -539,14 +564,16 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	// Start new container with staging name
 	spin := ui.NewSpinner("Starting new container...")
 	spin.Start()
-	_, err = docker.Run(remote.RunOpts{
+	appOpts := remote.RunOpts{
 		Name:    nextName,
 		Image:   imageTag,
 		Network: config.DockerNetwork,
-		Restart: "unless-stopped",
+		Restart: restartPolicy(appRestart),
 		Volumes: volumes,
 		Env:     env,
-	})
+	}
+	applyHealth(&appOpts, appHealth)
+	_, err = docker.Run(appOpts)
 	spin.Stop()
 	if err != nil {
 		return fmt.Errorf("start container: %w", err)
@@ -686,11 +713,15 @@ func runDeploy(projectPath string, flags deployFlags) error {
 
 				spin = ui.NewSpinner(fmt.Sprintf("Starting worker: %s...", wName))
 				spin.Start()
+				wRestart := wCfg.Restart
+				if wRestart == "" {
+					wRestart = appRestart
+				}
 				_, wErr := docker.Run(remote.RunOpts{
 					Name:    workerNext,
 					Image:   imageTag,
 					Network: config.DockerNetwork,
-					Restart: "unless-stopped",
+					Restart: restartPolicy(wRestart),
 					Volumes: volumes,
 					Env:     env,
 					Cmd:     wCfg.Command,
@@ -709,7 +740,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 					docker.Remove(workerContainer)
 				}
 				docker.Rename(workerNext, workerContainer)
-				workerStates[wName] = state.AppWorker{Command: wCfg.Command, Status: "running"}
+				workerStates[wName] = state.AppWorker{Command: wCfg.Command, Status: "running", Restart: wRestart}
 				ui.Success(fmt.Sprintf("Worker %s started", wName))
 			}
 		} else {
@@ -729,11 +760,15 @@ func runDeploy(projectPath string, flags deployFlags) error {
 					workerContainer := fmt.Sprintf("app-%s-worker-%s", appName, name)
 					workerNext := workerContainer + "-next"
 					docker.Remove(workerNext)
+					wRst := cfg.Restart
+					if wRst == "" {
+						wRst = appRestart
+					}
 					_, wErr := docker.Run(remote.RunOpts{
 						Name:    workerNext,
 						Image:   imageTag,
 						Network: config.DockerNetwork,
-						Restart: "unless-stopped",
+						Restart: restartPolicy(wRst),
 						Volumes: volumes,
 						Env:     env,
 						Cmd:     cfg.Command,
@@ -751,7 +786,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 						docker.Remove(workerContainer)
 					}
 					docker.Rename(workerNext, workerContainer)
-					results <- workerResult{name: name, st: state.AppWorker{Command: cfg.Command, Status: "running"}}
+					results <- workerResult{name: name, st: state.AppWorker{Command: cfg.Command, Status: "running", Restart: wRst}}
 				}(wName, wCfg)
 			}
 			wg.Wait()
@@ -852,15 +887,21 @@ func runDeploy(projectPath string, flags deployFlags) error {
 
 			spin = ui.NewSpinner(fmt.Sprintf("Starting sidecar: %s...", scName))
 			spin.Start()
-			_, scErr := docker.Run(remote.RunOpts{
+			scRst := scCfg.Restart
+			if scRst == "" {
+				scRst = appRestart
+			}
+			scOpts := remote.RunOpts{
 				Name:    scNext,
 				Image:   scImageTag,
 				Network: config.DockerNetwork,
-				Restart: "unless-stopped",
+				Restart: restartPolicy(scRst),
 				Volumes: scVolumes,
 				Env:     scCfg.Env,
 				Cmd:     scCfg.Command,
-			})
+			}
+			applyHealth(&scOpts, neoHealthToState(scCfg.Health))
+			_, scErr := docker.Run(scOpts)
 			spin.Stop()
 
 			if scErr != nil {
@@ -886,12 +927,18 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			}
 			docker.Rename(scNext, scContainer)
 
+			scRstState := scCfg.Restart
+			if scRstState == "" {
+				scRstState = appRestart
+			}
 			sidecarStates[scName] = state.AppSidecar{
 				Image:   scImageTag,
 				Volumes: scCfg.Volumes,
 				Env:     scCfg.Env,
 				Command: scCfg.Command,
 				Status:  "running",
+				Restart: scRstState,
+				Health:  neoHealthToState(scCfg.Health),
 			}
 			ui.Success(fmt.Sprintf("Sidecar %s started", scName))
 		}
@@ -925,6 +972,8 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		Services:     make(map[string]state.AppService),
 		Workers:      workerStates,
 		Sidecars:     sidecarStates,
+		Restart:      appRestart,
+		Health:       appHealth,
 		InstalledAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 	if isRedeploy {
@@ -1196,6 +1245,40 @@ func sanitizeName(name string) string {
 		name = "app"
 	}
 	return name
+}
+
+// restartPolicy returns the restart policy, defaulting to "unless-stopped".
+func restartPolicy(r string) string {
+	if r == "" {
+		return "unless-stopped"
+	}
+	return r
+}
+
+// neoHealthToState converts a NeoHealth config to a state HealthCheck.
+func neoHealthToState(h *NeoHealth) *state.HealthCheck {
+	if h == nil || h.Cmd == "" {
+		return nil
+	}
+	return &state.HealthCheck{
+		Cmd:         h.Cmd,
+		Interval:    h.Interval,
+		Timeout:     h.Timeout,
+		Retries:     h.Retries,
+		StartPeriod: h.StartPeriod,
+	}
+}
+
+// applyHealth sets RunOpts health check fields from a state HealthCheck.
+func applyHealth(opts *remote.RunOpts, h *state.HealthCheck) {
+	if h == nil || h.Cmd == "" {
+		return
+	}
+	opts.HealthCmd = h.Cmd
+	opts.HealthInterval = h.Interval
+	opts.HealthTimeout = h.Timeout
+	opts.HealthRetries = h.Retries
+	opts.HealthStartPeriod = h.StartPeriod
 }
 
 // isProductionEnv returns true for environment names considered primary/production,
@@ -1693,7 +1776,7 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile,
 		return "", fmt.Errorf("load image: %w", err)
 	}
 
-	// Merge environment-specific volumes into neoConfig (overrides same key)
+	// Merge environment-specific overrides into neoConfig
 	if len(envCfg.Volumes) > 0 {
 		if neoConfig.Volumes == nil {
 			neoConfig.Volumes = make(map[string]NeoVolume)
@@ -1702,6 +1785,22 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile,
 			neoConfig.Volumes[k] = v
 		}
 	}
+	if len(envCfg.Workers) > 0 {
+		neoConfig.Workers = envCfg.Workers
+	}
+	if len(envCfg.Sidecars) > 0 {
+		neoConfig.Sidecars = envCfg.Sidecars
+	}
+	if envCfg.Restart != "" {
+		neoConfig.Restart = envCfg.Restart
+	}
+	if envCfg.Health != nil {
+		neoConfig.Health = envCfg.Health
+	}
+
+	// Resolve restart policy and health check
+	allRestart := neoConfig.Restart
+	allHealth := neoHealthToState(neoConfig.Health)
 
 	// Build volumes list
 	var volumes []string
@@ -1737,14 +1836,16 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile,
 	nextName := containerName + "-next"
 	docker.Remove(nextName)
 
-	if _, err := docker.Run(remote.RunOpts{
+	allOpts := remote.RunOpts{
 		Name:    nextName,
 		Image:   imageTag,
 		Network: config.DockerNetwork,
-		Restart: "unless-stopped",
+		Restart: restartPolicy(allRestart),
 		Volumes: volumes,
 		Env:     env,
-	}); err != nil {
+	}
+	applyHealth(&allOpts, allHealth)
+	if _, err := docker.Run(allOpts); err != nil {
 		return "", fmt.Errorf("start container: %w", err)
 	}
 
@@ -1811,6 +1912,8 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile,
 		Volumes:      declaredVolumes,
 		Services:     make(map[string]state.AppService),
 		Workers:      make(map[string]state.AppWorker),
+		Restart:      allRestart,
+		Health:       allHealth,
 		InstalledAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 	if isRedeploy {
