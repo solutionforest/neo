@@ -53,11 +53,24 @@ build-sandbox-test:
 sandbox: build build-sandbox-test
 	./test/sandbox/run-tests.sh
 
+sandbox-supported: build build-sandbox-test
+	./test/sandbox/run-tests.sh --supported
+
+sandbox-unsupported: build build-sandbox-test
+	./test/sandbox/run-tests.sh --unsupported
+
+sandbox-distro: build build-sandbox-test
+	@test -n "$(DISTRO)" || (echo "Usage: make sandbox-distro DISTRO=ubuntu-24.04" && exit 1)
+	./test/sandbox/run-tests.sh --distro $(DISTRO)
+
 sandbox-keep: build build-sandbox-test
 	./test/sandbox/run-tests.sh --keep
 
 sandbox-down:
 	./test/sandbox/run-tests.sh --down
+
+sandbox-list:
+	@./test/sandbox/run-tests.sh --list
 
 docker-run:
 	mkdir -p $$HOME/.neo

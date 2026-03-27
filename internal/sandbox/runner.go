@@ -3,6 +3,7 @@ package sandbox
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,21 +18,23 @@ type Runner struct {
 	Host       string // e.g. "root@localhost"
 	Port       int    // e.g. 2222
 	PrivateKey []byte // PEM-encoded private key
+	Distro     string // e.g. "ubuntu-24.04", "debian-12" (for display)
+	Supported  bool   // true = full test, false = expect OS rejection
 
 	exec         *ssh.Executor
 	docker       *remote.Docker
 	caddy        *remote.Caddy
 	results      []testinfra.StepResult
 	currentPhase string
-	containerIP  string // sandbox container's perceived IP
+	containerIP  string
 }
 
-// Run executes all test phases.
+// Run executes test phases appropriate for this distro.
 func (r *Runner) Run() error {
 	fmt.Println()
-	fmt.Println("  Neo Sandbox Tests")
-	fmt.Println("  ─────────────────")
-	fmt.Printf("  Target: %s:%d (Docker sandbox)\n", r.Host, r.Port)
+	fmt.Printf("  Neo Sandbox Tests — %s\n", r.Distro)
+	fmt.Printf("  %s\n", strings.Repeat("─", 20+len(r.Distro)))
+	fmt.Printf("  Target: %s:%d  Expected: %s\n", r.Host, r.Port, r.supportLabel())
 	fmt.Println()
 
 	// Phase 1: Connect
@@ -43,9 +46,20 @@ func (r *Runner) Run() error {
 		return fmt.Errorf("SSH connection failed, cannot continue")
 	}
 
-	// Phase 2: Server Init (mirrors neo init)
+	// Phase 2: OS Detection
+	r.phase("OS Detection")
+	r.step("Read /etc/os-release", r.stepDetectOS)
+	r.step("Validate OS support", r.stepValidateOS)
+
+	if !r.Supported {
+		// For unsupported distros, we're done — OS rejection was the test
+		r.printResults()
+		return nil
+	}
+
+	// ── Full test suite for supported distros ──
+
 	r.phase("Server Init")
-	r.step("Validate OS (Ubuntu 24.04)", r.stepValidateOS)
 	r.step("Verify Docker installed", r.stepVerifyDocker)
 	r.step("Get Docker version", r.stepDockerVersion)
 	r.step("Create network neo", r.stepCreateNetwork)
@@ -53,7 +67,6 @@ func (r *Runner) Run() error {
 	r.step("Get Caddy version", r.stepCaddyVersion)
 	r.step("Init state", r.stepInitState)
 
-	// Phase 3: Template Install — Uptime Kuma
 	r.phase("Template Install — Uptime Kuma")
 	r.step("Verify empty app list", r.stepVerifyEmptyApps)
 	r.step("Pull uptime-kuma image", r.stepPullUptimeKuma)
@@ -63,37 +76,31 @@ func (r *Runner) Run() error {
 	r.step("Save state with uptime-kuma", r.stepSaveUptimeKumaState)
 	r.step("Reload state and verify", r.stepReloadVerifyUptimeKuma)
 
-	// Phase 4: App Lifecycle
 	r.phase("App Lifecycle")
 	r.step("Stop uptime-kuma", r.stepStopUptimeKuma)
 	r.step("Start uptime-kuma", r.stepStartUptimeKuma)
 	r.step("Restart uptime-kuma", r.stepRestartUptimeKuma)
 	r.step("Get logs (tail 10)", r.stepGetLogs)
 
-	// Phase 5: Env Vars
 	r.phase("Env Vars")
 	r.step("Read initial env", r.stepReadEnv)
 	r.step("Set TEST_VAR=hello", r.stepSetEnvVar)
 	r.step("Verify TEST_VAR persisted", r.stepVerifyEnvVar)
 	r.step("Unset TEST_VAR", r.stepUnsetEnvVar)
 
-	// Phase 6: Domain
 	r.phase("Domain")
 	r.step("Update Caddy route with sslip.io domain", r.stepUpdateDomain)
 	r.step("Verify domain in state", r.stepVerifyDomain)
 
-	// Phase 7: Volumes
 	r.phase("Volumes")
 	r.step("List volumes", r.stepListVolumes)
 	r.step("Backup volume (tar)", r.stepBackupVolume)
 
-	// Phase 8: Update & Remove
 	r.phase("Update & Remove")
 	r.step("Update uptime-kuma (pull + recreate)", r.stepUpdateUptimeKuma)
 	r.step("Remove uptime-kuma", r.stepRemoveUptimeKuma)
 	r.step("Verify clean state", r.stepVerifyCleanState)
 
-	// Phase 9: Deploy inline hello-world
 	r.phase("Deploy — Inline Hello")
 	r.step("Create Dockerfile on server", r.stepCreateHelloDockerfile)
 	r.step("Build hello image", r.stepBuildHello)
@@ -115,12 +122,19 @@ func (r *Runner) HasFailures() bool {
 	return false
 }
 
+func (r *Runner) supportLabel() string {
+	if r.Supported {
+		return "supported"
+	}
+	return "unsupported (should reject)"
+}
+
 func (r *Runner) printResults() {
 	testinfra.PrintResults(testinfra.VMInfo{
 		Region: "local",
 		Size:   "docker",
-		Image:  "ubuntu-24.04",
-		IP:     r.Host,
+		Image:  r.Distro,
+		IP:     fmt.Sprintf("%s:%d", r.Host, r.Port),
 	}, r.results)
 }
 
@@ -164,7 +178,6 @@ func (r *Runner) stepConnect() error {
 	r.docker = remote.NewDocker(exec)
 	r.caddy = remote.NewCaddy(exec)
 
-	// Get container's IP for domain tests
 	ip, _ := r.exec.Run("hostname -I | awk '{print $1}'")
 	r.containerIP = strings.TrimSpace(ip)
 	if r.containerIP == "" {
@@ -173,26 +186,56 @@ func (r *Runner) stepConnect() error {
 	return nil
 }
 
-// ── Phase 2: Server Init ──
+// ── Phase 2: OS Detection & Validation ──
 
-func (r *Runner) stepValidateOS() error {
-	out, err := r.exec.Run("grep '^ID=' /etc/os-release | cut -d= -f2")
-	if err != nil {
-		return err
+func (r *Runner) stepDetectOS() error {
+	pretty, _ := r.exec.Run("grep PRETTY_NAME /etc/os-release | cut -d'\"' -f2")
+	pretty = strings.TrimSpace(pretty)
+	if pretty == "" {
+		return fmt.Errorf("could not read PRETTY_NAME from /etc/os-release")
 	}
-	osID := strings.TrimSpace(strings.Trim(out, "\""))
-	if osID != "ubuntu" {
-		return fmt.Errorf("unexpected OS: %s", osID)
-	}
-
-	out, err = r.exec.Run("grep '^VERSION_ID=' /etc/os-release | cut -d= -f2 | tr -d '\"'")
-	if err != nil {
-		return err
-	}
-	ver := strings.TrimSpace(out)
-	fmt.Printf("    Ubuntu %s\n", ver)
+	fmt.Printf("    %s\n", pretty)
 	return nil
 }
+
+func (r *Runner) stepValidateOS() error {
+	osID, err := r.exec.Run("grep '^ID=' /etc/os-release | cut -d= -f2")
+	if err != nil {
+		return err
+	}
+	osID = strings.TrimSpace(strings.Trim(osID, "\""))
+
+	versionID, _ := r.exec.Run("grep '^VERSION_ID=' /etc/os-release | cut -d= -f2 | tr -d '\"'")
+	versionID = strings.TrimSpace(versionID)
+
+	// Run the same validation logic as neo init (commands/init.go:validateOS)
+	supported := false
+	switch osID {
+	case "debian":
+		supported = true
+	case "ubuntu":
+		ver, err := strconv.ParseFloat(versionID, 64)
+		if err == nil && ver >= 24.04 {
+			supported = true
+		}
+	}
+
+	if r.Supported && !supported {
+		return fmt.Errorf("expected %s to be supported, but validateOS would reject it (ID=%s, VERSION_ID=%s)", r.Distro, osID, versionID)
+	}
+	if !r.Supported && supported {
+		return fmt.Errorf("expected %s to be unsupported, but validateOS would accept it (ID=%s, VERSION_ID=%s)", r.Distro, osID, versionID)
+	}
+
+	if r.Supported {
+		fmt.Printf("    OS validated: %s %s (supported)\n", osID, versionID)
+	} else {
+		fmt.Printf("    OS validated: %s %s (correctly rejected)\n", osID, versionID)
+	}
+	return nil
+}
+
+// ── Server Init ──
 
 func (r *Runner) stepVerifyDocker() error {
 	if !r.docker.IsInstalled() {
@@ -226,7 +269,6 @@ func (r *Runner) stepStartCaddy() error {
 		return fmt.Errorf("caddy not running after start")
 	}
 
-	// Bootstrap Caddy config
 	bootstrapConfig := `{"admin":{"listen":"0.0.0.0:2019"},"apps":{"http":{"servers":{"srv0":{"listen":[":80",":443"],"routes":[]}}}}}`
 	cmd := fmt.Sprintf(`curl -sf -X POST http://localhost:2019/load -H "Content-Type: application/json" -d '%s'`, bootstrapConfig)
 	if err := r.exec.RunQuiet(cmd); err != nil {
@@ -258,7 +300,7 @@ func (r *Runner) stepInitState() error {
 	return nil
 }
 
-// ── Phase 3: Template Install ──
+// ── Template Install ──
 
 func (r *Runner) stepVerifyEmptyApps() error {
 	st, err := state.Load(r.exec)
@@ -334,7 +376,7 @@ func (r *Runner) stepReloadVerifyUptimeKuma() error {
 	return nil
 }
 
-// ── Phase 4: App Lifecycle ──
+// ── App Lifecycle ──
 
 func (r *Runner) stepStopUptimeKuma() error {
 	if err := r.docker.Stop("app-uptime-kuma"); err != nil {
@@ -379,7 +421,7 @@ func (r *Runner) stepGetLogs() error {
 	return nil
 }
 
-// ── Phase 5: Env Vars ──
+// ── Env Vars ──
 
 func (r *Runner) stepReadEnv() error {
 	st, err := state.Load(r.exec)
@@ -442,7 +484,7 @@ func (r *Runner) stepUnsetEnvVar() error {
 	return nil
 }
 
-// ── Phase 6: Domain ──
+// ── Domain ──
 
 func (r *Runner) stepUpdateDomain() error {
 	domain := fmt.Sprintf("uptime-kuma.%s.sslip.io", r.containerIP)
@@ -462,7 +504,7 @@ func (r *Runner) stepVerifyDomain() error {
 	return nil
 }
 
-// ── Phase 7: Volumes ──
+// ── Volumes ──
 
 func (r *Runner) stepListVolumes() error {
 	out, err := r.docker.VolumeList()
@@ -486,7 +528,7 @@ func (r *Runner) stepBackupVolume() error {
 	return nil
 }
 
-// ── Phase 8: Update & Remove ──
+// ── Update & Remove ──
 
 func (r *Runner) stepUpdateUptimeKuma() error {
 	if err := r.exec.RunQuiet("docker pull louislam/uptime-kuma:1"); err != nil {
@@ -535,11 +577,9 @@ func (r *Runner) stepVerifyCleanState() error {
 	return nil
 }
 
-// ── Phase 9: Deploy inline hello-world ──
+// ── Deploy inline hello-world ──
 
 func (r *Runner) stepCreateHelloDockerfile() error {
-	// Create a minimal Go HTTP server directly on the sandbox.
-	// No need for testdata — everything is inline.
 	r.exec.RunQuiet("mkdir -p /tmp/neo-build/hello")
 
 	dockerfile := `FROM golang:1.24-alpine AS build

@@ -1,16 +1,18 @@
-# Neo Docker Sandbox — simulates a fresh Ubuntu 24.04 VPS for integration testing.
+# Neo Docker Sandbox — simulates a fresh Linux VPS for integration testing.
+# Supports multiple distros via BASE_IMAGE build arg.
 # Runs sshd + supports Docker-in-Docker (requires --privileged).
 #
 # Usage:
-#   docker compose up -d --build
-#   ./run-tests.sh
-#   docker compose down -v
+#   docker build --build-arg BASE_IMAGE=ubuntu:24.04 -t neo-sandbox:ubuntu-24.04 .
+#   docker build --build-arg BASE_IMAGE=debian:12 -t neo-sandbox:debian-12 .
 
-FROM ubuntu:24.04
+ARG BASE_IMAGE=ubuntu:24.04
+FROM ${BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Core packages that a real VPS would have
+# Core packages that a real VPS would have.
+# Works on all Debian/Ubuntu variants.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-server \
     curl \
@@ -26,17 +28,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # SSH configuration — allow root login with key auth
 RUN mkdir -p /run/sshd /root/.ssh && chmod 700 /root/.ssh
-RUN sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
-    sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
-    sed -i 's/#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+# Handle both old-style and new-style sshd_config
+RUN sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     echo "root:neotest" | chpasswd
 
-# Ensure /etc/os-release looks like a real Ubuntu 24.04 (it already does from base image)
-# Verify:
-RUN grep 'Ubuntu 24.04' /etc/os-release
-
-# Pre-install Docker so `neo init` detects it and skips the slow `get.docker.com` install.
-# This saves ~60s per test run. Neo init will still create the network and start Caddy.
+# Pre-install Docker so neo init skips the slow get.docker.com step.
+# This saves ~60s per test run.
 RUN curl -fsSL https://get.docker.com | sh && \
     rm -rf /var/lib/apt/lists/*
 
