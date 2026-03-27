@@ -1,0 +1,22 @@
+services:
+  sandbox:
+    build: .
+    privileged: true
+    container_name: neo-sandbox
+    ports:
+      - "2222:22"
+    tmpfs:
+      - /tmp
+      - /run
+    volumes:
+      # Persist Docker data across restarts (speeds up repeated runs)
+      - sandbox-docker:/var/lib/docker
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  sandbox-docker:

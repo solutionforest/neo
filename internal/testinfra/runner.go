@@ -456,7 +456,7 @@ func (r *Runner) stepHealthCheckUptimeKuma() error {
 
 func (r *Runner) stepAddUptimeKumaRoute() error {
 	domain := fmt.Sprintf("uptime-kuma.%s.nip.io", r.dropletIP)
-	return r.caddy.AddRoute("uptime-kuma", domain, "app-uptime-kuma:3001")
+	return r.caddy.AddRoute("uptime-kuma", []string{domain}, "app-uptime-kuma:3001")
 }
 
 func (r *Runner) stepSaveUptimeKumaState() error {
@@ -605,7 +605,7 @@ func (r *Runner) stepUnsetEnvVar() error {
 
 func (r *Runner) stepUpdateDomain() error {
 	domain := fmt.Sprintf("uptime-kuma.%s.nip.io", r.dropletIP)
-	return r.caddy.UpdateRoute("uptime-kuma", domain, "app-uptime-kuma:3001")
+	return r.caddy.UpdateRoute("uptime-kuma", []string{domain}, "app-uptime-kuma:3001")
 }
 
 func (r *Runner) stepVerifyDomain() error {
@@ -709,7 +709,7 @@ func (r *Runner) stepVerifyHello() error {
 
 func (r *Runner) stepAddHelloRoute() error {
 	domain := fmt.Sprintf("hello-test.%s.nip.io", r.dropletIP)
-	return r.caddy.AddRoute("hello-test", domain, "app-hello-test:3000")
+	return r.caddy.AddRoute("hello-test", []string{domain}, "app-hello-test:3000")
 }
 
 // ── Phase 9: Deploy Laravel ──
@@ -786,7 +786,7 @@ func (r *Runner) stepVerifyLaravel() error {
 
 func (r *Runner) stepAddLaravelRoute() error {
 	domain := fmt.Sprintf("laravel-app.%s.nip.io", r.dropletIP)
-	return r.caddy.AddRoute("laravel-app", domain, "app-laravel-app:8080")
+	return r.caddy.AddRoute("laravel-app", []string{domain}, "app-laravel-app:8080")
 }
 
 // ── Phase 10: Update & Remove ──
