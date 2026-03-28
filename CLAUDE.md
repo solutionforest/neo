@@ -245,7 +245,77 @@ When installing a template app that needs a service (e.g., Ghost → MySQL), if 
 
 ## Testing
 
-Automated tests exist, but container and VPS behavior still need manual verification:
+### Unit Tests
+
+```bash
+make test        # go test ./...
+```
+
+### Docker Sandbox (Integration Tests)
+
+The sandbox spins up Docker containers that simulate real VPS servers (Docker-in-Docker with SSH), runs `neo init`, deploys apps, tests lifecycle operations, then tears everything down. No real VPS or cloud API token needed.
+
+```bash
+make sandbox                           # test all 13 distros
+make sandbox-supported                 # only supported distros (full test suite)
+make sandbox-unsupported               # only unsupported distros (OS rejection test)
+make sandbox-distro DISTRO=debian-12   # single distro
+make sandbox-list                      # show the distro matrix
+make sandbox-keep                      # keep containers alive after tests
+make sandbox-down                      # tear down all sandbox containers
+```
+
+#### Distro Matrix
+
+| Distro | Port | Expected | Dockerfile |
+|---|---|---|---|
+| Ubuntu 24.04 | 2224 | supported | Dockerfile |
+| Ubuntu 24.10 | 2225 | supported | Dockerfile |
+| Debian 12 | 2230 | supported | Dockerfile |
+| Debian 11 | 2231 | supported | Dockerfile |
+| Fedora 41 | 2240 | supported | Dockerfile.rpm |
+| Fedora 40 | 2241 | supported | Dockerfile.rpm |
+| CentOS Stream 9 | 2250 | supported | Dockerfile.rpm |
+| AlmaLinux 9 | 2251 | supported | Dockerfile.rpm |
+| Rocky 9 | 2252 | supported | Dockerfile.rpm |
+| Ubuntu 22.04 | 2222 | rejected | Dockerfile |
+| Ubuntu 20.04 | 2220 | rejected | Dockerfile |
+| CentOS 7 | 2253 | rejected | Dockerfile.legacy |
+| Fedora 38 | 2242 | rejected | Dockerfile.legacy |
+
+Supported distros run 9 test phases (30 steps): SSH connect, server init, template install, app lifecycle, env vars, domain, volumes, update/remove, deploy + build.
+Unsupported distros only test SSH + OS detection to verify `validateOS()` correctly rejects them.
+
+#### Sandbox Structure
+
+```
+test/sandbox/
+├── Dockerfile          # apt-based (Ubuntu, Debian)
+├── Dockerfile.rpm      # dnf-based (Fedora, CentOS, Alma, Rocky)
+├── Dockerfile.legacy   # SSH-only, no DinD (for unsupported OS rejection tests)
+├── docker-compose.yml  # all 13 services with unique ports
+├── entrypoint.sh       # starts dockerd + sshd
+└── run-tests.sh        # automation: build → start → inject key → test → destroy
+```
+
+Go test code:
+- `internal/sandbox/matrix.go` — distro definitions (name, image, port, supported flag)
+- `internal/sandbox/runner.go` — test runner (reuses `testinfra.PrintResults` for reporting)
+- `cmd/neosandbox/main.go` — CLI entry point
+
+### Real VPS Tests (DigitalOcean)
+
+For production-like testing with real networking, DNS, and SSL:
+
+```bash
+make build-neotest
+./bin/neotest --token $DIGITALOCEAN_TOKEN   # creates droplet, tests, destroys
+./bin/neotest --keep                        # keep VM alive for manual testing
+```
+
+Code: `internal/testinfra/` + `cmd/neotest/`
+
+### Manual Smoke Tests
 
 ```bash
 make build
@@ -254,7 +324,7 @@ make image-build
 docker run --rm vxero/neo:latest --help
 ./bin/neo                    # dashboard (no server configured)
 ./bin/neo init root@<ip>     # test with a real VPS
-./bin/neo install             # interactive app picker
+./bin/neo install            # interactive app picker
 ```
 
 ## Differences from Vxero SaaS CLI (`cli/`)

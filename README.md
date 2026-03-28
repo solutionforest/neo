@@ -710,6 +710,23 @@ $ neo install ghost --server production           # or target per-command
 
 ---
 
+## Server Requirements
+
+Neo supports these Linux distributions on your remote server:
+
+| OS | Minimum Version |
+|---|---|
+| **Ubuntu** | 24.04+ |
+| **Debian** | any |
+| **Fedora** | 39+ |
+| **CentOS / RHEL** | 9+ |
+| **AlmaLinux** | 9+ |
+| **Rocky Linux** | 9+ |
+
+Package manager is auto-detected: `apt` for Debian/Ubuntu, `dnf` for RPM-based distros.
+
+---
+
 ## Building
 
 ```bash
@@ -718,6 +735,35 @@ make build-all   # Dockerized cross-compile → dist/
 make image-build # Build runtime container image → vxero/neo:latest
 make test        # go test ./...
 make fmt         # gofmt -w .
+```
+
+## Testing
+
+### Docker Sandbox (Local Integration Tests)
+
+Test neo against 13 Linux distros without a real VPS. Each distro runs in a Docker container with SSH + Docker-in-Docker:
+
+```bash
+make sandbox                           # test all distros
+make sandbox-supported                 # supported distros only (full test suite)
+make sandbox-unsupported               # unsupported distros only (rejection test)
+make sandbox-distro DISTRO=debian-12   # single distro
+make sandbox-list                      # show distro matrix
+make sandbox-keep                      # keep containers alive after tests
+make sandbox-down                      # tear down everything
+```
+
+Supported distros run a full 9-phase integration test: server init, template install (Uptime Kuma), app lifecycle (start/stop/restart/logs), env vars, domain routing, volumes, update/remove, and a Docker build+deploy cycle.
+
+Unsupported distros verify that `neo init` correctly rejects them.
+
+### Real VPS Tests
+
+For production-like testing with real networking and SSL:
+
+```bash
+make build-neotest
+./bin/neotest --token $DIGITALOCEAN_TOKEN
 ```
 
 ## Project Structure
