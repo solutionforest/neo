@@ -14,6 +14,9 @@ const (
 	PlanPlus = "plus"
 )
 
+// MaxActivations is the maximum number of devices per license key.
+const MaxActivations = 2
+
 // gate defines limits for a single feature across plans.
 type gate struct {
 	Description string

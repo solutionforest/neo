@@ -90,7 +90,7 @@ func Activate(key string) (*Status, error) {
 	return status, nil
 }
 
-// Validate checks the key against the API (non-activating).
+// Validate checks the key against the API and registers the device.
 func Validate(key string) (*Status, error) {
 	apiURL := LicenseAPIURL() + "/validate"
 
