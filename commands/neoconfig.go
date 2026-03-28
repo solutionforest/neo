@@ -71,6 +71,31 @@ type NeoSSL struct {
 	PrivateKey  string `yaml:"private_key"`  // path to PEM private key file (relative to .neo.yml)
 }
 
+// HookCommands holds one or more shell commands for a deploy hook.
+// Accepts both a single string and a list of strings in YAML.
+type HookCommands []string
+
+// UnmarshalYAML allows HookCommands to parse from a string or a list.
+func (h *HookCommands) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var single string
+	if err := unmarshal(&single); err == nil {
+		*h = HookCommands{single}
+		return nil
+	}
+	var list []string
+	if err := unmarshal(&list); err != nil {
+		return err
+	}
+	*h = HookCommands(list)
+	return nil
+}
+
+// NeoHooks represents deploy lifecycle hooks in .neo.yml.
+type NeoHooks struct {
+	PreBuild   HookCommands `yaml:"pre_build,omitempty"`
+	PostDeploy HookCommands `yaml:"post_deploy,omitempty"`
+}
+
 // NeoVolume represents a persistent volume declaration in .neo.yml.
 type NeoVolume struct {
 	Path string `yaml:"path"` // container path to mount
@@ -91,6 +116,7 @@ type NeoEnvironment struct {
 	Sidecars map[string]NeoSidecar  `yaml:"sidecars,omitempty"` // environment-specific sidecars (override top-level)
 	Restart  string                 `yaml:"restart,omitempty"`  // Docker restart policy override
 	Health   *NeoHealth             `yaml:"health,omitempty"`   // Docker health check override
+	Hooks    *NeoHooks              `yaml:"hooks,omitempty"`    // deploy lifecycle hooks (override top-level)
 }
 
 // NeoConfig represents a .neo.yml project configuration file.
@@ -106,6 +132,7 @@ type NeoConfig struct {
 	ComposeService string                    `yaml:"compose_service,omitempty"`
 	Restart        string                    `yaml:"restart,omitempty"` // Docker restart policy (default: unless-stopped)
 	Health         *NeoHealth                `yaml:"health,omitempty"` // Docker health check
+	Hooks          *NeoHooks                 `yaml:"hooks,omitempty"`
 	Environments   map[string]NeoEnvironment `yaml:"environments,omitempty"`
 	Workers        map[string]NeoWorker      `yaml:"workers,omitempty"`
 	Sidecars       map[string]NeoSidecar     `yaml:"sidecars,omitempty"`

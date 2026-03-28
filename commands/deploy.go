@@ -194,6 +194,10 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			if env.Health != nil {
 				neoConfig.Health = env.Health
 			}
+			// Environment hooks fully replace top-level hooks
+			if env.Hooks != nil {
+				neoConfig.Hooks = env.Hooks
+			}
 		}
 	}
 
@@ -505,6 +509,14 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		}
 		if arch == "aarch64" || arch == "arm64" {
 			serverPlatform = "linux/arm64"
+		}
+	}
+
+	// Run pre-build hook locally before Docker build
+	if neoConfig != nil && neoConfig.Hooks != nil {
+		hEnv := hookEnvVars(appName, resolvedEnv, domain, srv.Host)
+		if err := runHook("pre_build", neoConfig.Hooks.PreBuild, absPath, hEnv); err != nil {
+			return err
 		}
 	}
 
@@ -983,6 +995,14 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	}
 	st.Apps[appName] = stateApp
 	state.Save(sshExec, st)
+
+	// Run post-deploy hook locally (failure is logged but does not roll back)
+	if neoConfig != nil && neoConfig.Hooks != nil {
+		hEnv := hookEnvVars(appName, resolvedEnv, domain, srv.Host)
+		if err := runHook("post_deploy", neoConfig.Hooks.PostDeploy, absPath, hEnv); err != nil {
+			ui.Error(fmt.Sprintf("post_deploy hook failed: %s", err))
+		}
+	}
 
 	// Success card
 	card := ui.NewCard()
@@ -1575,6 +1595,14 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 		ui.Bold.Render(baseAppName), len(neoConfig.Environments))
 	fmt.Println()
 
+	// Run top-level pre-build hook once before the shared build
+	if neoConfig.Hooks != nil {
+		hEnv := hookEnvVars(baseAppName, "", "", "")
+		if err := runHook("pre_build", neoConfig.Hooks.PreBuild, absPath, hEnv); err != nil {
+			return err
+		}
+	}
+
 	// Build image once for all environments (default linux/amd64; all envs must share arch).
 	if err := buildImageLocally(absPath, dockerfile, imageTag, "linux/amd64"); err != nil {
 		return err
@@ -1925,6 +1953,15 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile,
 	}
 	st.Apps[appName] = stateApp
 	state.Save(sshExec, st)
+
+	// Run per-environment post-deploy hook
+	hooks := resolveHooks(neoConfig.Hooks, envCfg.Hooks)
+	if hooks != nil {
+		hEnv := hookEnvVars(appName, envName, domain, srv.Host)
+		if err := runHook("post_deploy", hooks.PostDeploy, absPath, hEnv); err != nil {
+			ui.Error(fmt.Sprintf("[%s] post_deploy hook failed: %s", envName, err))
+		}
+	}
 
 	url := ""
 	if domain != "" {
