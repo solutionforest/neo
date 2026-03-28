@@ -31,14 +31,30 @@ func (c *CrowdSec) IsInstalled() bool {
 	return c.exec.RunQuiet("command -v cscli >/dev/null 2>&1") == nil
 }
 
-// Install installs CrowdSec and the nftables firewall bouncer via apt.
+// Install installs CrowdSec and the nftables firewall bouncer.
+// Detects the OS and uses the appropriate package manager (apt or dnf/yum).
 // Output is streamed to w so the caller can display progress.
 func (c *CrowdSec) Install(w io.Writer) error {
-	steps := []string{
-		"curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash",
-		"DEBIAN_FRONTEND=noninteractive apt-get install -y crowdsec crowdsec-firewall-bouncer-nftables",
-		"systemctl enable --now crowdsec crowdsec-firewall-bouncer",
+	// Detect OS family for package manager selection
+	osID, _ := c.exec.Run("grep '^ID=' /etc/os-release | cut -d= -f2 | tr -d '\"'")
+	osID = strings.TrimSpace(strings.ToLower(osID))
+
+	var steps []string
+	switch osID {
+	case "fedora", "centos", "rhel", "almalinux", "rocky":
+		steps = []string{
+			"curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.rpm.sh | bash",
+			"dnf install -y crowdsec crowdsec-firewall-bouncer-nftables",
+			"systemctl enable --now crowdsec crowdsec-firewall-bouncer",
+		}
+	default:
+		steps = []string{
+			"curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash",
+			"DEBIAN_FRONTEND=noninteractive apt-get install -y crowdsec crowdsec-firewall-bouncer-nftables",
+			"systemctl enable --now crowdsec crowdsec-firewall-bouncer",
+		}
 	}
+
 	for _, step := range steps {
 		if err := c.exec.Stream(step, w); err != nil {
 			return fmt.Errorf("install step failed: %w", err)

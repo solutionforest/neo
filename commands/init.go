@@ -173,7 +173,7 @@ func setupServer(exec *ssh.Executor, cfg *config.Config, name, host, keyPath str
 	totalRAMMB, _ := strconv.Atoi(strings.TrimSpace(totalRAMMBStr))
 	cpuInfo, _ := exec.Run("nproc")
 
-	// Validate OS — only Ubuntu 24.04+ and Debian are supported
+	// Validate OS — Ubuntu 24.04+, Debian, Fedora 39+, CentOS/RHEL/Alma/Rocky 9+ are supported
 	if err := validateOS(osID, osVersionID, osInfo); err != nil {
 		return err
 	}
@@ -186,11 +186,19 @@ func setupServer(exec *ssh.Executor, cfg *config.Config, name, host, keyPath str
 		serverIP, _ = exec.Run("curl -sf https://ifconfig.me")
 	}
 
-	// System update
+	// System update — use the right package manager for the OS
 	spin := ui.NewSpinner("Updating system packages...")
 	spin.Start()
-	exec.RunQuiet("DEBIAN_FRONTEND=noninteractive apt-get update -qq")
-	exec.RunQuiet("DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq")
+	pkgMgr := detectPackageManager(osID)
+	switch pkgMgr {
+	case "dnf":
+		exec.RunQuiet("dnf upgrade -y -q")
+	case "yum":
+		exec.RunQuiet("yum upgrade -y -q")
+	default:
+		exec.RunQuiet("DEBIAN_FRONTEND=noninteractive apt-get update -qq")
+		exec.RunQuiet("DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq")
+	}
 	spin.Stop()
 	ui.Success("System packages updated")
 
@@ -394,7 +402,10 @@ func extractIP(host string) string {
 	return ""
 }
 
-// validateOS checks that the server runs a supported OS (Ubuntu 24.04+ or Debian).
+// supportedOSMsg is the standard message listing supported operating systems.
+const supportedOSMsg = "Neo supports Ubuntu 24.04+, Debian, Fedora 39+, CentOS/RHEL/Alma/Rocky 9+."
+
+// validateOS checks that the server runs a supported OS.
 func validateOS(osID, versionID, prettyName string) error {
 	osID = strings.TrimSpace(strings.ToLower(osID))
 	versionID = strings.TrimSpace(versionID)
@@ -405,14 +416,45 @@ func validateOS(osID, versionID, prettyName string) error {
 	case "ubuntu":
 		ver, err := strconv.ParseFloat(versionID, 64)
 		if err != nil {
-			return fmt.Errorf("unsupported OS: %s\n\n  Neo only supports Ubuntu 24.04+ and Debian.\n  Detected Ubuntu but could not parse version %q.", prettyName, versionID)
+			return fmt.Errorf("unsupported OS: %s\n\n  %s\n  Detected Ubuntu but could not parse version %q.", prettyName, supportedOSMsg, versionID)
 		}
 		if ver < 24.04 {
-			return fmt.Errorf("unsupported OS: %s\n\n  Neo only supports Ubuntu 24.04+ and Debian.\n  Your Ubuntu version (%s) is too old — please upgrade to 24.04 or later.", prettyName, versionID)
+			return fmt.Errorf("unsupported OS: %s\n\n  %s\n  Your Ubuntu version (%s) is too old — please upgrade to 24.04 or later.", prettyName, supportedOSMsg, versionID)
+		}
+		return nil
+	case "fedora":
+		ver, err := strconv.ParseFloat(versionID, 64)
+		if err != nil {
+			return fmt.Errorf("unsupported OS: %s\n\n  %s\n  Detected Fedora but could not parse version %q.", prettyName, supportedOSMsg, versionID)
+		}
+		if ver < 39 {
+			return fmt.Errorf("unsupported OS: %s\n\n  %s\n  Your Fedora version (%s) is too old — please upgrade to 39 or later.", prettyName, supportedOSMsg, versionID)
+		}
+		return nil
+	case "centos", "rhel", "almalinux", "rocky":
+		ver, err := strconv.ParseFloat(versionID, 64)
+		if err != nil {
+			return fmt.Errorf("unsupported OS: %s\n\n  %s\n  Could not parse version %q.", prettyName, supportedOSMsg, versionID)
+		}
+		if ver < 9 {
+			return fmt.Errorf("unsupported OS: %s\n\n  %s\n  Version %s is too old — please upgrade to 9 or later.", prettyName, supportedOSMsg, versionID)
 		}
 		return nil
 	default:
-		return fmt.Errorf("unsupported OS: %s\n\n  Neo only supports Ubuntu 24.04+ and Debian.\n  Please reinstall your server with a supported OS.", prettyName)
+		return fmt.Errorf("unsupported OS: %s\n\n  %s\n  Please reinstall your server with a supported OS.", prettyName, supportedOSMsg)
+	}
+}
+
+// detectPackageManager returns the package manager for the given OS ID.
+func detectPackageManager(osID string) string {
+	osID = strings.TrimSpace(strings.ToLower(osID))
+	switch osID {
+	case "fedora":
+		return "dnf"
+	case "centos", "rhel", "almalinux", "rocky":
+		return "dnf" // CentOS 9+ / RHEL 9+ all use dnf
+	default:
+		return "apt"
 	}
 }
 

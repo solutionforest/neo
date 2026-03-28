@@ -1,0 +1,39 @@
+# Neo Docker Sandbox — RPM-based distros (Fedora, CentOS, AlmaLinux, Rocky)
+# Same purpose as Dockerfile but uses dnf instead of apt-get.
+
+ARG BASE_IMAGE=fedora:41
+FROM ${BASE_IMAGE}
+
+# Core packages that a real VPS would have
+RUN dnf install -y \
+    openssh-server \
+    curl \
+    sudo \
+    iproute \
+    procps-ng \
+    ca-certificates \
+    gnupg2 \
+    iptables \
+    kmod \
+    passwd \
+    && dnf clean all
+
+# SSH configuration — allow root login with key auth
+RUN mkdir -p /run/sshd /root/.ssh && chmod 700 /root/.ssh
+RUN ssh-keygen -A
+RUN sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    echo "root:neotest" | chpasswd
+
+# Pre-install Docker so neo init skips the slow get.docker.com step.
+RUN curl -fsSL https://get.docker.com | sh && \
+    dnf clean all
+
+# Entrypoint: start dockerd in background, then sshd in foreground
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 22
+
+ENTRYPOINT ["/entrypoint.sh"]

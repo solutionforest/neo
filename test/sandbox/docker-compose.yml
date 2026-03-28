@@ -1,0 +1,220 @@
+# Neo Sandbox — Multi-Distro Test Matrix
+#
+# Each service simulates a VPS running a different Linux distro.
+# Apt-based distros use Dockerfile, RPM-based use Dockerfile.rpm,
+# legacy unsupported distros use Dockerfile.legacy (no Docker needed).
+#
+# Usage:
+#   docker compose up -d --build                    # start all distros
+#   docker compose up -d --build ubuntu-24.04       # start one distro
+#   docker compose down -v                          # tear down all
+
+# ── Shared base configs ──
+
+x-dind: &dind-base
+  privileged: true
+  tmpfs:
+    - /tmp
+    - /run
+  healthcheck:
+    test: ["CMD", "docker", "info"]
+    interval: 5s
+    timeout: 5s
+    retries: 12
+    start_period: 10s
+
+x-no-dind: &no-dind-base
+  tmpfs:
+    - /tmp
+    - /run
+
+services:
+  # ══════════════════════════════════════════════════
+  # Supported: Debian/Ubuntu (apt-based)
+  # ══════════════════════════════════════════════════
+
+  ubuntu-24.04:
+    <<: *dind-base
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: ubuntu:24.04
+    container_name: neo-sandbox-ubuntu-24.04
+    ports:
+      - "2224:22"
+    volumes:
+      - docker-ubuntu-24.04:/var/lib/docker
+
+  ubuntu-24.10:
+    <<: *dind-base
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: ubuntu:24.10
+    container_name: neo-sandbox-ubuntu-24.10
+    ports:
+      - "2225:22"
+    volumes:
+      - docker-ubuntu-24.10:/var/lib/docker
+
+  debian-12:
+    <<: *dind-base
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: debian:12
+    container_name: neo-sandbox-debian-12
+    ports:
+      - "2230:22"
+    volumes:
+      - docker-debian-12:/var/lib/docker
+
+  debian-11:
+    <<: *dind-base
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: debian:11
+    container_name: neo-sandbox-debian-11
+    ports:
+      - "2231:22"
+    volumes:
+      - docker-debian-11:/var/lib/docker
+
+  # ══════════════════════════════════════════════════
+  # Supported: RPM-based (dnf)
+  # ══════════════════════════════════════════════════
+
+  fedora-41:
+    <<: *dind-base
+    build:
+      context: .
+      dockerfile: Dockerfile.rpm
+      args:
+        BASE_IMAGE: fedora:41
+    container_name: neo-sandbox-fedora-41
+    ports:
+      - "2240:22"
+    volumes:
+      - docker-fedora-41:/var/lib/docker
+
+  fedora-40:
+    <<: *dind-base
+    build:
+      context: .
+      dockerfile: Dockerfile.rpm
+      args:
+        BASE_IMAGE: fedora:40
+    container_name: neo-sandbox-fedora-40
+    ports:
+      - "2241:22"
+    volumes:
+      - docker-fedora-40:/var/lib/docker
+
+  centos-stream-9:
+    <<: *dind-base
+    build:
+      context: .
+      dockerfile: Dockerfile.rpm
+      args:
+        BASE_IMAGE: quay.io/centos/centos:stream9
+    container_name: neo-sandbox-centos-stream-9
+    ports:
+      - "2250:22"
+    volumes:
+      - docker-centos-stream-9:/var/lib/docker
+
+  almalinux-9:
+    <<: *dind-base
+    build:
+      context: .
+      dockerfile: Dockerfile.rpm
+      args:
+        BASE_IMAGE: almalinux:9
+    container_name: neo-sandbox-almalinux-9
+    ports:
+      - "2251:22"
+    volumes:
+      - docker-almalinux-9:/var/lib/docker
+
+  rocky-9:
+    <<: *dind-base
+    build:
+      context: .
+      dockerfile: Dockerfile.rpm
+      args:
+        BASE_IMAGE: rockylinux:9
+    container_name: neo-sandbox-rocky-9
+    ports:
+      - "2252:22"
+    volumes:
+      - docker-rocky-9:/var/lib/docker
+
+  # ══════════════════════════════════════════════════
+  # Unsupported (OS rejection tests — no DinD needed)
+  # ══════════════════════════════════════════════════
+
+  ubuntu-22.04:
+    <<: *dind-base
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: ubuntu:22.04
+    container_name: neo-sandbox-ubuntu-22.04
+    ports:
+      - "2222:22"
+    volumes:
+      - docker-ubuntu-22.04:/var/lib/docker
+
+  ubuntu-20.04:
+    <<: *dind-base
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: ubuntu:20.04
+    container_name: neo-sandbox-ubuntu-20.04
+    ports:
+      - "2220:22"
+    volumes:
+      - docker-ubuntu-20.04:/var/lib/docker
+
+  centos-7:
+    <<: *no-dind-base
+    build:
+      context: .
+      dockerfile: Dockerfile.legacy
+      args:
+        BASE_IMAGE: centos:7
+    container_name: neo-sandbox-centos-7
+    ports:
+      - "2253:22"
+
+  fedora-38:
+    <<: *no-dind-base
+    build:
+      context: .
+      dockerfile: Dockerfile.legacy
+      args:
+        BASE_IMAGE: fedora:38
+    container_name: neo-sandbox-fedora-38
+    ports:
+      - "2242:22"
+
+volumes:
+  docker-ubuntu-24.04:
+  docker-ubuntu-24.10:
+  docker-debian-12:
+  docker-debian-11:
+  docker-fedora-41:
+  docker-fedora-40:
+  docker-centos-stream-9:
+  docker-almalinux-9:
+  docker-rocky-9:
+  docker-ubuntu-22.04:
+  docker-ubuntu-20.04:
