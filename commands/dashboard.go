@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/vxero/neo/internal/config"
+	"github.com/vxero/neo/internal/license"
 	"github.com/vxero/neo/internal/remote"
 	neossh "github.com/vxero/neo/internal/ssh"
 	"github.com/vxero/neo/internal/state"
@@ -98,6 +99,10 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 			if err := runConnect(); err != nil {
 				ui.Error(err.Error())
 			}
+		case "plus":
+			if err := runPlus(); err != nil {
+				ui.Error(err.Error())
+			}
 		}
 
 		// Refresh cache after every action so the menu shows updated counts
@@ -173,6 +178,15 @@ func cachedDashboardSummaries(cfg *config.Config) (string, string) {
 	app := ui.Faint.Render(fmt.Sprintf("%d apps, %d running · %s", sc.AppCount, sc.RunningApps, age))
 	svc := ui.Faint.Render(fmt.Sprintf("%d services, %d running · %s", sc.ServiceCount, sc.RunningServices, age))
 	return app, svc
+}
+
+// plusSummary returns a short status string for the Neo+ menu item.
+func plusSummary(cfg *config.Config) string {
+	status := license.Check(cfg.LicenseKey)
+	if status.Valid && status.Plan == license.PlanPlus {
+		return ui.Green.Render("Plus · unlimited servers")
+	}
+	return ui.Faint.Render("Free plan · 1 server")
 }
 
 // formatCacheAge returns a human-readable duration string for cache age display.
@@ -282,7 +296,7 @@ func tuiMainMenu(cfg *config.Config, appSummary, serviceSummary string) string {
 		{fmt.Sprintf("%-22s%s", "Services", serviceSummary), "services"},
 		{fmt.Sprintf("%-22s%s", "Live Metrics", ui.Faint.Render("CPU, RAM, containers")), "metrics"},
 		{"Deploy Project", "deploy"},
-		{fmt.Sprintf("%-22s%s", "Try Vxero", ui.Faint.Render("vxero.dev")), "connect"},
+		{fmt.Sprintf("%-22s%s", "Neo+", plusSummary(cfg)), "plus"},
 	}
 
 	action := ui.Select(title, opts)

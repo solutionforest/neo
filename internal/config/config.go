@@ -18,7 +18,7 @@ const (
 	DefaultAgentInstallURL  = "https://get.vxero.dev/agent"
 	DefaultDockerInstallURL = "https://get.docker.com"
 
-	DefaultFreeServerLimit = 2
+	DefaultFreeServerLimit = 1
 
 	// Container naming conventions.
 	AppContainerPrefix = "app-"
