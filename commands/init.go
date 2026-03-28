@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/vxero/neo/internal/config"
+	"github.com/vxero/neo/internal/license"
 	"github.com/vxero/neo/internal/remote"
 	"github.com/vxero/neo/internal/ssh"
 	"github.com/vxero/neo/internal/state"
@@ -58,6 +59,8 @@ func runInit(host, name string) error {
 		if !overwrite {
 			return nil
 		}
+	} else if err := checkServerLimit(cfg); err != nil {
+		return err
 	}
 
 	// Ask for password if no SSH key auth available
@@ -142,6 +145,8 @@ func runInitWithKey(host, name, keyPath string) error {
 		if !overwrite {
 			return nil
 		}
+	} else if err := checkServerLimit(cfg); err != nil {
+		return err
 	}
 
 	// Load key from disk
@@ -542,4 +547,20 @@ func deployNeoKey(exec *ssh.Executor) {
 	if err := exec.RunQuiet(cmd); err == nil {
 		ui.Success("SSH key deployed — future connections won't need a password")
 	}
+}
+
+// checkServerLimit verifies the user hasn't exceeded the free-tier server limit.
+func checkServerLimit(cfg *config.Config) error {
+	plan := license.CurrentPlan(cfg.LicenseKey)
+	if license.Allowed(license.FeatureMultiServer, plan, len(cfg.Servers)) {
+		return nil
+	}
+	fmt.Println()
+	ui.Error("Free plan is limited to 1 server")
+	fmt.Println()
+	fmt.Printf("  Upgrade to %s for unlimited servers:\n", ui.Bold.Render("Neo+"))
+	fmt.Printf("    %s\n", ui.Cyan.Render("https://neo.vxero.dev/"))
+	fmt.Printf("  Or activate a license: %s\n", ui.Faint.Render("neo plus activate <key>"))
+	fmt.Println()
+	return fmt.Errorf("server limit reached — upgrade to Neo+")
 }

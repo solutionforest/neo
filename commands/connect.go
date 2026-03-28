@@ -2,11 +2,8 @@ package commands
 
 import (
 	"fmt"
-	"os/exec"
-	"runtime"
 
 	"github.com/spf13/cobra"
-	"github.com/vxero/neo/internal/ui"
 )
 
 func newConnectCmd() *cobra.Command {
@@ -20,22 +17,7 @@ func newConnectCmd() *cobra.Command {
 }
 
 func runConnect() error {
-	url := "https://vxero.dev"
 	fmt.Println()
-	ui.Info("Opening " + url + " in your browser...")
-
-	var err error
-	switch runtime.GOOS {
-	case "darwin":
-		err = exec.Command("open", url).Start()
-	case "linux":
-		err = exec.Command("xdg-open", url).Start()
-	case "windows":
-		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	}
-
-	if err != nil {
-		ui.Info("Visit: " + ui.Bold.Render(url))
-	}
+	openBrowser("https://vxero.dev")
 	return nil
 }
