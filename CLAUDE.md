@@ -157,11 +157,67 @@ Optional file in project root. All fields optional:
 name: my-app              # app name (default: directory name)
 domain: app.example.com   # domain (default: prompt)
 port: 8080                # container port (default: Dockerfile EXPOSE)
+https: true               # nil=default, true=HTTPS, false=HTTP-only
 env_file: .env.production # load env vars from file
 compose_service: app      # which docker-compose service to extract from
+restart: unless-stopped   # Docker restart policy
 env:                      # env var defaults (non-sensitive)
   APP_ENV: production
   LOG_LEVEL: info
+
+# Deploy lifecycle hooks (run locally)
+hooks:
+  pre_build:              # before Docker build
+    - npm run build
+    - npm test
+  post_deploy:            # after successful deploy
+    - curl -X POST https://hooks.slack.com/...
+
+# Health check
+health:
+  cmd: "curl -f http://localhost:8080/health"
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+
+# Background workers (separate containers sharing app image)
+workers:
+  queue:
+    command: "node worker.js"
+    restart: always
+
+# Sidecar containers (separate images, same network)
+sidecars:
+  redis:
+    image: redis:7-alpine
+    volumes:
+      data: /data
+
+# Persistent volumes
+volumes:
+  uploads:
+    path: /app/uploads
+
+# Custom SSL certificates
+ssl:
+  certificate: certs/cert.pem
+  private_key: certs/key.pem
+
+# Named deployment environments (override top-level fields)
+environments:
+  staging:
+    server: staging-server
+    domain: staging.example.com
+    env:
+      APP_ENV: staging
+    hooks:
+      pre_build: ["npm test"]
+  production:
+    server: prod-server
+    domain: app.example.com
+    env:
+      APP_ENV: production
 ```
 
 ### Docker Compose Auto-Detection:
@@ -171,6 +227,19 @@ If a `docker-compose.yml` / `compose.yml` exists in the project dir, `neo deploy
 - Container port from `ports:`
 - Auto-detects the app service (prefers `build:` context, skips infra images like mysql/redis/postgres)
 - Use `compose_service` in `.neo.yml` to specify which service if auto-detection fails
+
+### Deploy Hooks (`hooks.go`):
+Local shell commands that run during deploy lifecycle:
+- **`pre_build`** — runs before Docker build (e.g., `npm test`, `npm run build`)
+- **`post_deploy`** — runs after successful deploy (e.g., Slack notification)
+- Commands run via `sh -c` with NEO_* environment variables: `NEO_APP`, `NEO_ENV`, `NEO_DOMAIN`, `NEO_SERVER`
+- Hooks abort on first failure
+- Environment-level hooks in `.neo.yml` fully replace top-level hooks
+
+### Workers and Sidecars:
+- **Workers** — background containers sharing the app image but running a different command (e.g., queue workers)
+- **Sidecars** — separate containers with their own image/build, running alongside the app on the same Docker network
+- Both support per-environment overrides in `.neo.yml`
 
 ### Shared helpers in `root.go`:
 - `resolveServer(cfg)` — resolves --server flag or config.Current
@@ -237,6 +306,45 @@ When installing a template app that needs a service (e.g., Ghost → MySQL), if 
 - Caddy container: `neo-caddy`
 - Docker network: `neo`
 - Volumes: `<app>-<purpose>` (e.g., `ghost-content`, `ghost-mysql`), `<svc>-data` (shared services)
+
+## Neo+ Licensing (`internal/license/`)
+
+Feature-gated commercial tier:
+- **`neo plus`** — interactive license management menu
+- **`neo plus activate <key>`** — activate license on this machine
+- **`neo plus status`** — show current license state
+- **`neo plus deactivate`** — remove license from machine
+
+### Feature Gates
+- `FeatureMultiServer` — Free: 1 server, Plus: unlimited
+- `FeatureBackup` — Free: blocked, Plus: unlimited
+- Max 2 device activations per license key
+
+### License Validation
+- API: `https://neo.vxero.dev/api/license` (overridable via `NEO_LICENSE_URL` env var)
+- Machine fingerprint: SHA-256 of `hostname-os-arch`
+- Offline cache: `~/.neo/license.json` with 7-day grace period
+- Config stores license key in `~/.neo/config.json` as `license_key`
+
+## CrowdSec / Firewall (`commands/firewall.go`, `internal/remote/crowdsec.go`)
+
+CrowdSec intrusion prevention via SSH:
+- `neo firewall install` — install CrowdSec + nftables bouncer on server
+- `neo firewall status` — show CrowdSec status and decision count
+- `neo firewall block <ip>` — manually ban an IP
+- `neo firewall unblock <ip>` — remove ban
+- `neo firewall list` — list active decisions (bans)
+
+### Stealth Mode (`commands/stealth.go`)
+- `neo stealth` — toggle: hides server from IP-based discovery by removing Caddy's catch-all welcome page. Only configured domains serve traffic.
+
+## Additional Commands
+
+- **`neo dev [down]`** — local development: wraps `docker compose` with Neo's env loading. Flags: `--build`, `--detach`
+- **`neo db <app> [shell]`** — interactive TUI database browser for app's linked DB, or raw `mysql`/`psql` shell
+- **`neo ask`** — interactive skill assistant, guides through common tasks via Q&A
+- **`neo sync [app]`** — sync server state back to `.neo.yml` (shows diff before writing). Flag: `--dry-run`
+- **`neo backup <app>`** / **`neo restore <app> <backup>`** — volume backup/restore (Neo+ feature)
 
 ## Platform-Specific Code
 
@@ -326,6 +434,69 @@ docker run --rm vxero/neo:latest --help
 ./bin/neo init root@<ip>     # test with a real VPS
 ./bin/neo install            # interactive app picker
 ```
+
+## Directory Layout
+
+```
+cmd/neo/main.go              # CLI entry point
+cmd/neotest/main.go          # DigitalOcean integration test runner
+cmd/neosandbox/main.go       # Docker sandbox test runner
+commands/                    # All command implementations (~35 files)
+internal/
+  app/                       # App template system + embedded YAML manifests
+    templates/               # 10 app templates (ghost, wordpress, gitea, etc.)
+  bridge/                    # Vxero migration API (currently disabled)
+  config/                    # Local config (~/.neo/config.json), cache, file locking
+  license/                   # Neo+ licensing (feature gates, API client, offline cache)
+  remote/                    # Remote operations via SSH (docker.go, caddy.go, crowdsec.go)
+  sandbox/                   # Docker sandbox test matrix and runner
+  ssh/                       # SSH executor (central abstraction for all remote ops)
+  state/                     # Remote server state (/etc/neo/state.json)
+  testinfra/                 # DigitalOcean integration test infrastructure
+  ui/                        # TUI components (spinner, cards, progress, selection)
+neo-builder/                 # Build service (separate Go module)
+scripts/                     # build-template-index.go, validate-templates.go
+site/                        # Website, download server, install script
+test/sandbox/                # Docker Compose sandbox (13 distros)
+plans/                       # Planning documents
+```
+
+## All CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `neo` (no args) | Interactive TUI dashboard |
+| `neo init <user@host>` | Initialize remote server |
+| `neo deploy [app]` | Deploy app/project to server |
+| `neo install` | Interactive app template picker |
+| `neo list` | List apps on server |
+| `neo status` | Show app/service status |
+| `neo start/stop/restart <app>` | App lifecycle |
+| `neo remove <app>` | Remove app from server |
+| `neo update <app> <image>` | Update app image |
+| `neo logs <app>` | View app logs |
+| `neo domain <app> <domain>` | Set/update app domain |
+| `neo env <app>` | List/set/unset/import env vars |
+| `neo volumes <app>` | List app volumes |
+| `neo service create/list/link/unlink/remove` | Shared services |
+| `neo backup <app>` | Backup app data (Neo+) |
+| `neo restore <app> <backup>` | Restore from backup (Neo+) |
+| `neo db <app> [shell]` | Interactive database browser |
+| `neo dev [down]` | Local development with docker compose |
+| `neo sync [app]` | Sync server state to .neo.yml |
+| `neo run <cmd>` | Execute command on server |
+| `neo ssh` | SSH into server |
+| `neo servers` | List configured servers |
+| `neo use <name>` | Switch active server |
+| `neo config` | Manage local config |
+| `neo firewall install/status/block/unblock/list` | CrowdSec firewall |
+| `neo stealth` | Toggle stealth mode |
+| `neo plus activate/status/deactivate` | Neo+ license management |
+| `neo connect` | Vxero bridge (Coming Soon) |
+| `neo ask` | Interactive skill assistant |
+| `neo version` | Show version, check for updates |
+| `neo upgrade` | Self-update binary |
+| `neo help` | Grouped command help |
 
 ## Differences from Vxero SaaS CLI (`cli/`)
 
