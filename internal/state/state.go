@@ -24,6 +24,7 @@ type SharedService struct {
 	Env         map[string]string `json:"env,omitempty"`
 	Volumes     map[string]string `json:"volumes,omitempty"` // volumeName: containerPath
 	Port        int               `json:"port,omitempty"`
+	DefaultDB   string            `json:"default_db,omitempty"`  // auto-created database name
 	LinkedApps  map[string]Link   `json:"linked_apps,omitempty"` // appName → link details
 	CreatedAt   string            `json:"created_at"`
 }

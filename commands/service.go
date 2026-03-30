@@ -293,6 +293,13 @@ func runServiceCreate(typeName, svcName string) error {
 	// Create a default database so the service is immediately usable
 	defaultDB := createDefaultDatabase(docker, containerName, svcType.Name, svcName, svcEnv)
 
+	// Persist default DB name in state if created
+	if defaultDB != "" {
+		svcState.DefaultDB = defaultDB
+		st.Services[svcName] = svcState
+		state.Save(exec, st)
+	}
+
 	card := ui.NewCard()
 	card.Add(ui.Green.Render("✓") + " Shared " + svcType.Name + " ready")
 	card.Blank()
@@ -314,7 +321,7 @@ func createDefaultDatabase(docker *remote.Docker, containerName, svcTypeName, sv
 	spin.Start()
 
 	var ready bool
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 45; i++ {
 		time.Sleep(2 * time.Second)
 		var pingCmd string
 		switch svcTypeName {
@@ -323,9 +330,9 @@ func createDefaultDatabase(docker *remote.Docker, containerName, svcTypeName, sv
 			if rootPass == "" {
 				rootPass = env["MARIADB_ROOT_PASSWORD"]
 			}
-			pingCmd = fmt.Sprintf(`mysql -uroot -p'%s' -e "SELECT 1" 2>/dev/null`, safeSQLValue(rootPass))
+			pingCmd = fmt.Sprintf(`mysqladmin -uroot -p'%s' ping --silent 2>/dev/null`, safeSQLValue(rootPass))
 		case "postgres":
-			pingCmd = `psql -U postgres -c "SELECT 1" -q 2>/dev/null`
+			pingCmd = `pg_isready -U postgres -q 2>/dev/null`
 		default:
 			ready = true // redis etc — no DB to create
 		}
@@ -434,7 +441,7 @@ func runServiceInfo(svcName string) error {
 	card.Add(ui.Bold.Render(svc.Name) + "  " + ui.Faint.Render(svc.Image))
 	card.Add(fmt.Sprintf("Status: %s %s", ui.StatusBullet(svc.Status), svc.Status))
 	card.Blank()
-	printConnInfoLines(card, svc, "")
+	printConnInfoLines(card, svc, svc.DefaultDB)
 	card.Render()
 
 	return nil

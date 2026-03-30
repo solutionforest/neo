@@ -1180,7 +1180,7 @@ func tuiShowServiceInfo(svc state.SharedService) {
 	card.Add(ui.Bold.Render(svc.Name) + "  " + ui.Faint.Render(svc.Image))
 	card.Add(fmt.Sprintf("Status: %s %s", ui.StatusBullet(svc.Status), svc.Status))
 	card.Blank()
-	printConnInfoLines(card, svc, "")
+	printConnInfoLines(card, svc, svc.DefaultDB)
 	card.Render()
 
 	// Wait for Enter/Esc via a confirm prompt with no real choice
