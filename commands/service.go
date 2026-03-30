@@ -21,6 +21,7 @@ type serviceType struct {
 	Image   string
 	Port    int
 	RootEnv string // env var for root password
+	DBEnv   string // env var for auto-creating a default database on container start
 	Volumes map[string]string
 }
 
@@ -30,6 +31,7 @@ var serviceTypes = []serviceType{
 		Image:   "mysql:8.4",
 		Port:    3306,
 		RootEnv: "MYSQL_ROOT_PASSWORD",
+		DBEnv:   "MYSQL_DATABASE",
 		Volumes: map[string]string{"svc-mysql": "/var/lib/mysql"},
 	},
 	{
@@ -37,6 +39,7 @@ var serviceTypes = []serviceType{
 		Image:   "postgres:17-alpine",
 		Port:    5432,
 		RootEnv: "POSTGRES_PASSWORD",
+		DBEnv:   "POSTGRES_DB",
 		Volumes: map[string]string{"svc-postgres": "/var/lib/postgresql/data"},
 	},
 	{
@@ -50,6 +53,7 @@ var serviceTypes = []serviceType{
 		Image:   "mariadb:11.4",
 		Port:    3306,
 		RootEnv: "MARIADB_ROOT_PASSWORD",
+		DBEnv:   "MARIADB_DATABASE",
 		Volumes: map[string]string{"svc-mariadb": "/var/lib/mysql"},
 	},
 }
@@ -257,6 +261,13 @@ func runServiceCreate(typeName, svcName string) error {
 		svcEnv[svcType.RootEnv] = rootPass
 	}
 
+	// Auto-create a default database via the image's built-in env var support
+	var defaultDB string
+	if svcType.DBEnv != "" {
+		defaultDB = strings.ReplaceAll(sanitizeName(svcName), "-", "_") + "_db"
+		svcEnv[svcType.DBEnv] = defaultDB
+	}
+
 	// Build volumes
 	var volumes []string
 	for _, containerPath := range svcType.Volumes {
@@ -277,28 +288,19 @@ func runServiceCreate(typeName, svcName string) error {
 		return fmt.Errorf("start %s: %w", containerName, err)
 	}
 
-	// Save state (before DB creation so info is persisted even if DB step fails)
+	// Save state
 	svcState := state.SharedService{
-		Name:        svcName,
-		Image:       svcType.Image,
-		Status:      "running",
-		Env:         svcEnv,
-		Volumes:     svcType.Volumes,
-		Port:        svcType.Port,
-		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+		Name:      svcName,
+		Image:     svcType.Image,
+		Status:    "running",
+		Env:       svcEnv,
+		Volumes:   svcType.Volumes,
+		Port:      svcType.Port,
+		DefaultDB: defaultDB,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	st.Services[svcName] = svcState
 	state.Save(exec, st)
-
-	// Create a default database so the service is immediately usable
-	defaultDB := createDefaultDatabase(docker, containerName, svcType.Name, svcName, svcEnv)
-
-	// Persist default DB name in state if created
-	if defaultDB != "" {
-		svcState.DefaultDB = defaultDB
-		st.Services[svcName] = svcState
-		state.Save(exec, st)
-	}
 
 	card := ui.NewCard()
 	card.Add(ui.Green.Render("✓") + " Shared " + svcType.Name + " ready")
@@ -306,79 +308,12 @@ func runServiceCreate(typeName, svcName string) error {
 	card.AddKV("Container", containerName)
 	card.AddKV("Image", svcType.Image)
 	card.Blank()
-	printConnInfoLines(card, st.Services[svcName], defaultDB)
+	printConnInfoLines(card, svcState, defaultDB)
 	card.Render()
 
 	return nil
 }
 
-// createDefaultDatabase waits for the service to accept connections, then creates
-// a default database named after the service. Returns the database name (or "").
-func createDefaultDatabase(docker *remote.Docker, containerName, svcTypeName, svcName string, env map[string]string) string {
-	dbName := strings.ReplaceAll(sanitizeName(svcName), "-", "_") + "_db"
-
-	spin := ui.NewSpinner("Waiting for " + svcTypeName + " to be ready...")
-	spin.Start()
-
-	var ready bool
-	for i := 0; i < 45; i++ {
-		time.Sleep(2 * time.Second)
-		var pingCmd string
-		switch svcTypeName {
-		case "mysql", "mariadb":
-			rootPass := env["MYSQL_ROOT_PASSWORD"]
-			if rootPass == "" {
-				rootPass = env["MARIADB_ROOT_PASSWORD"]
-			}
-			// Use MYSQL_PWD env var to avoid shell quoting issues with passwords
-			pingCmd = fmt.Sprintf(`MYSQL_PWD=%s mysqladmin -uroot ping --silent 2>/dev/null`, safeSQLValue(rootPass))
-		case "postgres":
-			pingCmd = `pg_isready -U postgres -q 2>/dev/null`
-		default:
-			ready = true // redis etc — no DB to create
-		}
-		if pingCmd == "" {
-			break
-		}
-		if _, err := docker.Exec(containerName, pingCmd); err == nil {
-			ready = true
-			break
-		}
-	}
-	spin.Stop()
-
-	if !ready {
-		ui.Info(svcTypeName + " not ready after 90s — skipping default database creation")
-		return ""
-	}
-
-	switch svcTypeName {
-	case "mysql", "mariadb":
-		rootPass := env["MYSQL_ROOT_PASSWORD"]
-		if rootPass == "" {
-			rootPass = env["MARIADB_ROOT_PASSWORD"]
-		}
-		// Use MYSQL_PWD env var to avoid shell quoting issues with passwords
-		createDB := fmt.Sprintf(`MYSQL_PWD=%s mysql -uroot -e "CREATE DATABASE IF NOT EXISTS %s;"`, safeSQLValue(rootPass), dbName)
-		if _, err := docker.Exec(containerName, createDB); err != nil {
-			ui.Info("Could not create default database — create it manually with: CREATE DATABASE " + dbName)
-			return ""
-		}
-		ui.Success(fmt.Sprintf("Default database %q created", dbName))
-		return dbName
-
-	case "postgres":
-		createDB := fmt.Sprintf(`psql -U postgres -c "CREATE DATABASE %s;"`, dbName)
-		if _, err := docker.Exec(containerName, createDB); err != nil {
-			ui.Info("Could not create default database — create it manually with: CREATE DATABASE " + dbName)
-			return ""
-		}
-		ui.Success(fmt.Sprintf("Default database %q created", dbName))
-		return dbName
-	}
-
-	return ""
-}
 
 // runServiceList lists all shared services.
 func runServiceList() error {
