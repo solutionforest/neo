@@ -330,7 +330,8 @@ func createDefaultDatabase(docker *remote.Docker, containerName, svcTypeName, sv
 			if rootPass == "" {
 				rootPass = env["MARIADB_ROOT_PASSWORD"]
 			}
-			pingCmd = fmt.Sprintf(`mysqladmin -uroot -p'%s' ping --silent 2>/dev/null`, safeSQLValue(rootPass))
+			// Use MYSQL_PWD env var to avoid shell quoting issues with passwords
+			pingCmd = fmt.Sprintf(`MYSQL_PWD=%s mysqladmin -uroot ping --silent 2>/dev/null`, safeSQLValue(rootPass))
 		case "postgres":
 			pingCmd = `pg_isready -U postgres -q 2>/dev/null`
 		default:
@@ -347,7 +348,7 @@ func createDefaultDatabase(docker *remote.Docker, containerName, svcTypeName, sv
 	spin.Stop()
 
 	if !ready {
-		ui.Info(svcTypeName + " not ready after 60s — skipping default database creation")
+		ui.Info(svcTypeName + " not ready after 90s — skipping default database creation")
 		return ""
 	}
 
@@ -357,7 +358,8 @@ func createDefaultDatabase(docker *remote.Docker, containerName, svcTypeName, sv
 		if rootPass == "" {
 			rootPass = env["MARIADB_ROOT_PASSWORD"]
 		}
-		createDB := fmt.Sprintf(`mysql -uroot -p'%s' -e "CREATE DATABASE IF NOT EXISTS %s;" 2>/dev/null`, safeSQLValue(rootPass), dbName)
+		// Use MYSQL_PWD env var to avoid shell quoting issues with passwords
+		createDB := fmt.Sprintf(`MYSQL_PWD=%s mysql -uroot -e "CREATE DATABASE IF NOT EXISTS %s;"`, safeSQLValue(rootPass), dbName)
 		if _, err := docker.Exec(containerName, createDB); err != nil {
 			ui.Info("Could not create default database — create it manually with: CREATE DATABASE " + dbName)
 			return ""
@@ -366,7 +368,7 @@ func createDefaultDatabase(docker *remote.Docker, containerName, svcTypeName, sv
 		return dbName
 
 	case "postgres":
-		createDB := fmt.Sprintf(`psql -U postgres -c "CREATE DATABASE %s;" 2>/dev/null`, dbName)
+		createDB := fmt.Sprintf(`psql -U postgres -c "CREATE DATABASE %s;"`, dbName)
 		if _, err := docker.Exec(containerName, createDB); err != nil {
 			ui.Info("Could not create default database — create it manually with: CREATE DATABASE " + dbName)
 			return ""
