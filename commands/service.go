@@ -17,12 +17,13 @@ import (
 
 // serviceType defines a creatable shared service template.
 type serviceType struct {
-	Name    string
-	Image   string
-	Port    int
-	RootEnv string // env var for root password
-	DBEnv   string // env var for auto-creating a default database on container start
-	Volumes map[string]string
+	Name     string
+	Image    string
+	Port     int
+	RootEnv  string            // env var for root password
+	DBEnv    string            // env var for auto-creating a default database on container start
+	ExtraEnv map[string]string // additional env vars always set at container creation
+	Volumes  map[string]string
 }
 
 var serviceTypes = []serviceType{
@@ -32,7 +33,9 @@ var serviceTypes = []serviceType{
 		Port:    3306,
 		RootEnv: "MYSQL_ROOT_PASSWORD",
 		DBEnv:   "MYSQL_DATABASE",
-		Volumes: map[string]string{"svc-mysql": "/var/lib/mysql"},
+		// Allow root connections from any host in the Docker network (default is localhost-only)
+		ExtraEnv: map[string]string{"MYSQL_ROOT_HOST": "%"},
+		Volumes:  map[string]string{"svc-mysql": "/var/lib/mysql"},
 	},
 	{
 		Name:    "postgres",
@@ -268,6 +271,11 @@ func runServiceCreate(typeName, svcName string) error {
 		svcEnv[svcType.DBEnv] = defaultDB
 	}
 
+	// Apply any additional static env vars defined for this service type
+	for k, v := range svcType.ExtraEnv {
+		svcEnv[k] = v
+	}
+
 	// Build volumes
 	var volumes []string
 	for _, containerPath := range svcType.Volumes {
@@ -300,7 +308,9 @@ func runServiceCreate(typeName, svcName string) error {
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	st.Services[svcName] = svcState
-	state.Save(exec, st)
+	if err := state.Save(exec, st); err != nil {
+		return fmt.Errorf("save state: %w", err)
+	}
 
 	card := ui.NewCard()
 	card.Add(ui.Green.Render("✓") + " Shared " + svcType.Name + " ready")
