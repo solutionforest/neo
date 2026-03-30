@@ -17,22 +17,26 @@ import (
 
 // serviceType defines a creatable shared service template.
 type serviceType struct {
-	Name     string
-	Image    string
-	Port     int
-	RootEnv  string            // env var for root password
-	DBEnv    string            // env var for auto-creating a default database on container start
-	ExtraEnv map[string]string // additional env vars always set at container creation
-	Volumes  map[string]string
+	Name        string
+	Image       string
+	Port        int
+	RootEnv     string            // env var for root password
+	DBEnv       string            // env var for auto-creating a default database on container start
+	UserEnv     string            // env var for creating an app user (MySQL/MariaDB only)
+	UserPassEnv string            // env var for the app user's password
+	ExtraEnv    map[string]string // additional env vars always set at container creation
+	Volumes     map[string]string
 }
 
 var serviceTypes = []serviceType{
 	{
-		Name:    "mysql",
-		Image:   "mysql:8.4",
-		Port:    3306,
-		RootEnv: "MYSQL_ROOT_PASSWORD",
-		DBEnv:   "MYSQL_DATABASE",
+		Name:        "mysql",
+		Image:       "mysql:8.4",
+		Port:        3306,
+		RootEnv:     "MYSQL_ROOT_PASSWORD",
+		DBEnv:       "MYSQL_DATABASE",
+		UserEnv:     "MYSQL_USER",
+		UserPassEnv: "MYSQL_PASSWORD",
 		// Allow root connections from any host in the Docker network (default is localhost-only)
 		ExtraEnv: map[string]string{"MYSQL_ROOT_HOST": "%"},
 		Volumes:  map[string]string{"svc-mysql": "/var/lib/mysql"},
@@ -52,12 +56,14 @@ var serviceTypes = []serviceType{
 		Volumes: map[string]string{"svc-redis": "/data"},
 	},
 	{
-		Name:    "mariadb",
-		Image:   "mariadb:11.4",
-		Port:    3306,
-		RootEnv: "MARIADB_ROOT_PASSWORD",
-		DBEnv:   "MARIADB_DATABASE",
-		Volumes: map[string]string{"svc-mariadb": "/var/lib/mysql"},
+		Name:        "mariadb",
+		Image:       "mariadb:11.4",
+		Port:        3306,
+		RootEnv:     "MARIADB_ROOT_PASSWORD",
+		DBEnv:       "MARIADB_DATABASE",
+		UserEnv:     "MARIADB_USER",
+		UserPassEnv: "MARIADB_PASSWORD",
+		Volumes:     map[string]string{"svc-mariadb": "/var/lib/mysql"},
 	},
 }
 
@@ -271,6 +277,16 @@ func runServiceCreate(typeName, svcName string) error {
 		svcEnv[svcType.DBEnv] = defaultDB
 	}
 
+	// Generate an app-level user with host=% so apps can connect without root host restrictions
+	if svcType.UserEnv != "" && svcType.UserPassEnv != "" {
+		appPass, err := app.GenerateValue("hex:32")
+		if err != nil {
+			return err
+		}
+		svcEnv[svcType.UserEnv] = "neo"
+		svcEnv[svcType.UserPassEnv] = appPass
+	}
+
 	// Apply any additional static env vars defined for this service type
 	for k, v := range svcType.ExtraEnv {
 		svcEnv[k] = v
@@ -415,12 +431,31 @@ func printConnInfoLines(card *ui.Card, svc state.SharedService, defaultDB string
 		if rootPass == "" {
 			rootPass = svc.Env["MARIADB_ROOT_PASSWORD"]
 		}
-		card.AddKV("  User", "root")
-		card.AddKV("  Password", rootPass)
+		appUser := svc.Env["MYSQL_USER"]
+		if appUser == "" {
+			appUser = svc.Env["MARIADB_USER"]
+		}
+		appPass := svc.Env["MYSQL_PASSWORD"]
+		if appPass == "" {
+			appPass = svc.Env["MARIADB_PASSWORD"]
+		}
 		if defaultDB != "" {
 			card.AddKV("  Database", defaultDB)
 		}
-		card.AddKV("  URL", fmt.Sprintf("mysql://root:%s@%s:3306/%s", rootPass, containerName, dbPlaceholder))
+		if appUser != "" {
+			// Show app user first — this is what apps should use (host=% by default)
+			card.Add("  App user (recommended for applications):")
+			card.AddKV("    User", appUser)
+			card.AddKV("    Password", appPass)
+			card.AddKV("    URL", fmt.Sprintf("mysql://%s:%s@%s:3306/%s", appUser, appPass, containerName, dbPlaceholder))
+			card.Add("  Root user (admin only):")
+			card.AddKV("    User", "root")
+			card.AddKV("    Password", rootPass)
+		} else {
+			card.AddKV("  User", "root")
+			card.AddKV("  Password", rootPass)
+			card.AddKV("  URL", fmt.Sprintf("mysql://root:%s@%s:3306/%s", rootPass, containerName, dbPlaceholder))
+		}
 	case "postgres":
 		rootPass := svc.Env["POSTGRES_PASSWORD"]
 		card.AddKV("  User", "postgres")
