@@ -22,11 +22,21 @@ type Executor struct {
 	Port            int
 	Password        string // optional password for auth
 	PrivateKey      []byte // optional raw PEM key (for programmatic use)
-	InsecureHostKey bool   // skip host key verification (for tests)
+	insecureHostKey bool   // skip host key verification (for tests only)
 	NonInteractive  bool   // reject unknown hosts instead of prompting (for background use)
 	Verbose         bool   // log SSH commands and results to stderr
 	client          *ssh.Client
 	agentConn       net.Conn // SSH agent connection, closed on Close()
+}
+
+// SetInsecureHostKey disables SSH host key verification. Only use in tests.
+func (e *Executor) SetInsecureHostKey() {
+	e.insecureHostKey = true
+}
+
+// IsInsecureHostKey returns whether host key verification is disabled.
+func (e *Executor) IsInsecureHostKey() bool {
+	return e.insecureHostKey
 }
 
 // debugf writes a debug line to stderr when Verbose is enabled.
@@ -49,7 +59,7 @@ func (e *Executor) Connect() error {
 	user, host := parseHost(e.Host)
 
 	hkCallback := hostKeyCallback(e.NonInteractive)
-	if e.InsecureHostKey {
+	if e.insecureHostKey {
 		hkCallback = ssh.InsecureIgnoreHostKey()
 	}
 
@@ -234,6 +244,40 @@ func truncate(s string, n int) string {
 func ShellQuote(s string) string {
 	escaped := strings.ReplaceAll(s, "'", "'\\''")
 	return "'" + escaped + "'"
+}
+
+// ValidateRestartPolicy returns true if s is a valid Docker restart policy.
+func ValidateRestartPolicy(s string) bool {
+	switch s {
+	case "no", "always", "unless-stopped", "on-failure":
+		return true
+	}
+	return false
+}
+
+// ValidateDuration returns true if s looks like a valid Docker duration (e.g. "30s", "5m", "1h30m").
+func ValidateDuration(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || r == 'h' || r == 'm' || r == 's' || r == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+// SafeSQLIdentifierMySQL escapes a SQL identifier for MySQL using backticks.
+func SafeSQLIdentifierMySQL(s string) string {
+	s = strings.ReplaceAll(s, "`", "``")
+	return "`" + s + "`"
+}
+
+// SafeSQLIdentifierPG escapes a SQL identifier for PostgreSQL using double quotes.
+func SafeSQLIdentifierPG(s string) string {
+	s = strings.ReplaceAll(s, `"`, `""`)
+	return `"` + s + `"`
 }
 
 // parseHost splits "user@host" into user and host.

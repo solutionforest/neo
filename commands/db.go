@@ -156,10 +156,10 @@ func runDbShell(appName string) error {
 	var remoteCmd string
 	switch db.Type {
 	case "mysql", "mariadb":
-		remoteCmd = fmt.Sprintf("docker exec -it %s mysql --user=%s --password=%s --database=%s",
+		remoteCmd = fmt.Sprintf("docker exec -it -e MYSQL_PWD=%s %s mysql --user=%s --database=%s",
+			neossh.ShellQuote(db.Password),
 			neossh.ShellQuote(db.Container),
 			neossh.ShellQuote(db.User),
-			neossh.ShellQuote(db.Password),
 			neossh.ShellQuote(db.Database),
 		)
 	case "postgres":
@@ -258,10 +258,10 @@ func execRemoteQuery(sshExec *neossh.Executor, db *dbConn, sql string) ([]string
 	case "mysql", "mariadb":
 		// --batch: tab-separated, first row = column names, no decoration
 		cmd = fmt.Sprintf(
-			"docker exec %s mysql --user=%s --password=%s --database=%s --batch -e %s 2>&1",
+			"docker exec -e MYSQL_PWD=%s %s mysql --user=%s --database=%s --batch -e %s 2>&1",
+			neossh.ShellQuote(db.Password),
 			neossh.ShellQuote(db.Container),
 			neossh.ShellQuote(db.User),
-			neossh.ShellQuote(db.Password),
 			neossh.ShellQuote(db.Database),
 			neossh.ShellQuote(sql),
 		)

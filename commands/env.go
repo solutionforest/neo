@@ -323,7 +323,7 @@ func restartWithNewEnv(appName string, app state.App, exec *neossh.Executor) err
 	containerName := config.AppContainer(appName)
 
 	// Stop and remove old container
-	exec.Run(fmt.Sprintf("docker stop %s 2>/dev/null; docker rm %s 2>/dev/null", containerName, containerName))
+	exec.Run(fmt.Sprintf("docker stop %s 2>/dev/null; docker rm %s 2>/dev/null", neossh.ShellQuote(containerName), neossh.ShellQuote(containerName)))
 
 	// Build docker run command with all env vars
 	var envArgs []string
@@ -338,17 +338,17 @@ func restartWithNewEnv(appName string, app state.App, exec *neossh.Executor) err
 		if vol.Mount != nil {
 			src = *vol.Mount
 		}
-		volArgs = append(volArgs, fmt.Sprintf("-v %s:%s", src, vol.ContainerPath))
+		volArgs = append(volArgs, fmt.Sprintf("-v %s:%s", neossh.ShellQuote(src), neossh.ShellQuote(vol.ContainerPath)))
 	}
 
 	restart := "unless-stopped"
-	if app.Restart != "" {
+	if app.Restart != "" && neossh.ValidateRestartPolicy(app.Restart) {
 		restart = app.Restart
 	}
 
 	cmd := fmt.Sprintf("docker run -d --name %s --network %s --restart %s %s %s",
-		containerName,
-		config.DockerNetwork,
+		neossh.ShellQuote(containerName),
+		neossh.ShellQuote(config.DockerNetwork),
 		restart,
 		strings.Join(envArgs, " "),
 		strings.Join(volArgs, " "),
@@ -357,16 +357,16 @@ func restartWithNewEnv(appName string, app state.App, exec *neossh.Executor) err
 	// Add health check flags if configured
 	if app.Health != nil && app.Health.Cmd != "" {
 		cmd += fmt.Sprintf(" --health-cmd %s", neossh.ShellQuote(app.Health.Cmd))
-		if app.Health.Interval != "" {
+		if app.Health.Interval != "" && neossh.ValidateDuration(app.Health.Interval) {
 			cmd += fmt.Sprintf(" --health-interval %s", app.Health.Interval)
 		}
-		if app.Health.Timeout != "" {
+		if app.Health.Timeout != "" && neossh.ValidateDuration(app.Health.Timeout) {
 			cmd += fmt.Sprintf(" --health-timeout %s", app.Health.Timeout)
 		}
 		if app.Health.Retries > 0 {
 			cmd += fmt.Sprintf(" --health-retries %d", app.Health.Retries)
 		}
-		if app.Health.StartPeriod != "" {
+		if app.Health.StartPeriod != "" && neossh.ValidateDuration(app.Health.StartPeriod) {
 			cmd += fmt.Sprintf(" --health-start-period %s", app.Health.StartPeriod)
 		}
 	}

@@ -296,7 +296,7 @@ func (r *Runner) stepWaitSSH() error {
 	for time.Now().Before(deadline) {
 		exec := ssh.New("root@"+r.dropletIP, 22)
 		exec.PrivateKey = r.key.PrivateKeyPEM
-		exec.InsecureHostKey = true
+		exec.SetInsecureHostKey()
 		if err := exec.Connect(); err != nil {
 			time.Sleep(3 * time.Second)
 			continue

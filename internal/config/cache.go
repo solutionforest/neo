@@ -89,7 +89,15 @@ func LoadCache() *DashboardCache {
 }
 
 // SaveCache writes the dashboard cache to both memory and disk.
+// Safe to call from multiple goroutines.
 func SaveCache(c *DashboardCache) {
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	saveCacheLocked(c)
+}
+
+// saveCacheLocked writes cache to memory and disk. Caller must hold cacheMu.
+func saveCacheLocked(c *DashboardCache) {
 	memCache = c
 
 	data, err := json.MarshalIndent(c, "", "  ")
@@ -97,7 +105,12 @@ func SaveCache(c *DashboardCache) {
 		return
 	}
 	os.MkdirAll(Dir(), 0o700)
-	os.WriteFile(CachePath(), data, 0o600) //nolint:errcheck
+	// Atomic write: temp file + rename to prevent corruption on crash
+	tmpPath := CachePath() + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		return
+	}
+	os.Rename(tmpPath, CachePath()) //nolint:errcheck
 }
 
 // UpdateServerCache atomically updates one server entry in both memory and disk.
@@ -121,5 +134,5 @@ func UpdateServerCache(serverName string, sc ServerCache) {
 		c = &DashboardCache{Servers: make(map[string]ServerCache)}
 	}
 	c.Set(serverName, sc)
-	SaveCache(c)
+	saveCacheLocked(c)
 }

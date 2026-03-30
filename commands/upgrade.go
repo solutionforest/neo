@@ -113,21 +113,26 @@ func runUpgrade() error {
 	spin.Stop()
 	ui.Success("Downloaded")
 
-	// Verify checksum if available
+	// Verify checksum (mandatory — abort if server provides no checksum for this platform)
 	platform := fmt.Sprintf("%s-%s", goos, goarch)
-	if latest.Checksums != nil {
-		if expectedHash, ok := latest.Checksums[platform]; ok {
-			data, readErr := os.ReadFile(tmpFile)
-			if readErr != nil {
-				return fmt.Errorf("failed to read downloaded binary: %w", readErr)
-			}
-			hash := sha256.Sum256(data)
-			actualHash := "sha256:" + hex.EncodeToString(hash[:])
-			if actualHash != expectedHash {
-				return fmt.Errorf("checksum verification failed — expected %s, got %s", expectedHash, actualHash)
-			}
-			ui.Success("Checksum verified")
+	if latest.Checksums == nil {
+		return fmt.Errorf("upgrade aborted: server did not provide checksums — cannot verify binary integrity")
+	}
+	expectedHash, ok := latest.Checksums[platform]
+	if !ok {
+		return fmt.Errorf("upgrade aborted: no checksum available for %s — cannot verify binary integrity", platform)
+	}
+	{
+		data, readErr := os.ReadFile(tmpFile)
+		if readErr != nil {
+			return fmt.Errorf("failed to read downloaded binary: %w", readErr)
 		}
+		hash := sha256.Sum256(data)
+		actualHash := "sha256:" + hex.EncodeToString(hash[:])
+		if actualHash != expectedHash {
+			return fmt.Errorf("checksum verification failed — expected %s, got %s", expectedHash, actualHash)
+		}
+		ui.Success("Checksum verified")
 	}
 
 	// Replace current binary

@@ -170,7 +170,7 @@ func (r *Runner) step(name string, fn func() error) {
 func (r *Runner) stepConnect() error {
 	exec := ssh.New(r.Host, r.Port)
 	exec.PrivateKey = r.PrivateKey
-	exec.InsecureHostKey = true
+	exec.SetInsecureHostKey()
 	if err := exec.Connect(); err != nil {
 		return fmt.Errorf("SSH connect: %w", err)
 	}

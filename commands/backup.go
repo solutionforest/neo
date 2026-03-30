@@ -12,6 +12,7 @@ import (
 	"github.com/vxero/neo/internal/config"
 	"github.com/vxero/neo/internal/license"
 	"github.com/vxero/neo/internal/remote"
+	neossh "github.com/vxero/neo/internal/ssh"
 	"github.com/vxero/neo/internal/ui"
 )
 
@@ -86,7 +87,7 @@ func runBackup(appName string) error {
 		if vol.Mount != nil {
 			src = *vol.Mount
 		}
-		volumeArgs += fmt.Sprintf(" -v %s:/backup/%s:ro", src, volName)
+		volumeArgs += fmt.Sprintf(" -v %s:%s:ro", neossh.ShellQuote(src), neossh.ShellQuote("/backup/"+volName))
 	}
 
 	// Create backup
@@ -94,7 +95,7 @@ func runBackup(appName string) error {
 	spin.Start()
 	tarCmd := fmt.Sprintf(
 		"docker run --rm%s -v %s:/out alpine tar czf /out/%s-%s.tar.gz -C /backup .",
-		volumeArgs, config.BackupDir, appName, timestamp,
+		volumeArgs, neossh.ShellQuote(config.BackupDir), sanitizeName(appName), timestamp,
 	)
 	err = exec.RunQuiet(tarCmd)
 	spin.Stop()
@@ -112,7 +113,7 @@ func runBackup(appName string) error {
 	spin.Stop()
 
 	// Get backup size
-	size, _ := exec.Run(fmt.Sprintf("du -h %s | cut -f1", backupFile))
+	size, _ := exec.Run(fmt.Sprintf("du -h %s | cut -f1", neossh.ShellQuote(backupFile)))
 
 	ui.Success(fmt.Sprintf("Backup created: %s (%s)", backupFile, size))
 
@@ -136,7 +137,7 @@ func runBackup(appName string) error {
 
 	spin = ui.NewSpinner(fmt.Sprintf("Downloading %s...", localFile))
 	spin.Start()
-	err = exec.Stream(fmt.Sprintf("cat %s", backupFile), f)
+	err = exec.Stream(fmt.Sprintf("cat %s", neossh.ShellQuote(backupFile)), f)
 	spin.Stop()
 
 	if err != nil {
@@ -149,8 +150,15 @@ func runBackup(appName string) error {
 }
 
 func runRestore(appName, backupFile string) error {
-	if strings.Contains(backupFile, "..") {
+	cleaned := filepath.Clean(backupFile)
+	if strings.Contains(cleaned, "..") {
 		return fmt.Errorf("backup file path must not contain '..'")
+	}
+	// Reject paths with shell metacharacters
+	for _, c := range backupFile {
+		if c == ';' || c == '|' || c == '&' || c == '$' || c == '`' || c == '(' || c == ')' || c == '\'' || c == '"' || c == '\n' {
+			return fmt.Errorf("backup file path contains invalid characters")
+		}
 	}
 
 	exec, st, err := mustResolveAndLoadState()
@@ -194,7 +202,7 @@ func runRestore(appName, backupFile string) error {
 		if vol.Mount != nil {
 			dst = *vol.Mount
 		}
-		volumeArgs += fmt.Sprintf(" -v %s:/restore/%s", dst, volName)
+		volumeArgs += fmt.Sprintf(" -v %s:%s", neossh.ShellQuote(dst), neossh.ShellQuote("/restore/"+volName))
 	}
 
 	// Extract backup
@@ -203,7 +211,7 @@ func runRestore(appName, backupFile string) error {
 
 	backupPath := backupFile
 	if !exec.FileExists(backupFile) {
-		remotePath := fmt.Sprintf("/tmp/neo-restore-%s.tar.gz", appName)
+		remotePath := fmt.Sprintf("/tmp/neo-restore-%s.tar.gz", sanitizeName(appName))
 		if err := exec.Upload(backupFile, remotePath); err != nil {
 			spin.Stop()
 			return fmt.Errorf("upload backup: %w", err)
@@ -213,7 +221,7 @@ func runRestore(appName, backupFile string) error {
 
 	restoreCmd := fmt.Sprintf(
 		"docker run --rm -v %s:/backup.tar.gz:ro%s alpine sh -c 'cd /restore && tar xzf /backup.tar.gz --no-same-owner --no-same-permissions 2>/dev/null; true'",
-		backupPath, volumeArgs,
+		neossh.ShellQuote(backupPath), volumeArgs,
 	)
 	err = exec.RunQuiet(restoreCmd)
 	spin.Stop()

@@ -291,6 +291,13 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		}
 	}
 
+	// Validate domain before proceeding
+	if domain != "" {
+		if err := validateDomain(domain); err != nil {
+			return err
+		}
+	}
+
 	// Prompt for port if still unknown
 	if port == 0 {
 		portStr := "8080"
@@ -1095,7 +1102,7 @@ func deployViaRemoteBuild(projectPath, dockerfile, imageTag string, sshExec *neo
 
 	spin = ui.NewSpinner("Uploading to server...")
 	spin.Start()
-	sshExec.RunQuiet(fmt.Sprintf("mkdir -p %s", remoteBuildDir))
+	sshExec.RunQuiet(fmt.Sprintf("mkdir -p %s", neossh.ShellQuote(remoteBuildDir)))
 	err = sshExec.UploadReader(tarBuf, size, remoteTarPath, 0644)
 	spin.Stop()
 	if err != nil {
@@ -1106,7 +1113,7 @@ func deployViaRemoteBuild(projectPath, dockerfile, imageTag string, sshExec *neo
 	// Extract on server
 	spin = ui.NewSpinner("Extracting source...")
 	spin.Start()
-	_, err = sshExec.Run(fmt.Sprintf("cd %s && tar xzf source.tar.gz && rm source.tar.gz", remoteBuildDir))
+	_, err = sshExec.Run(fmt.Sprintf("cd %s && tar xzf source.tar.gz && rm source.tar.gz", neossh.ShellQuote(remoteBuildDir)))
 	spin.Stop()
 	if err != nil {
 		return fmt.Errorf("extract source: %w", err)
@@ -1136,7 +1143,7 @@ func deployViaRemoteBuild(projectPath, dockerfile, imageTag string, sshExec *neo
 	ui.Success("Image built on server")
 
 	// Clean up build context
-	sshExec.RunQuiet(fmt.Sprintf("rm -rf %s", remoteBuildDir))
+	sshExec.RunQuiet(fmt.Sprintf("rm -rf %s", neossh.ShellQuote(remoteBuildDir)))
 
 	return nil
 }
@@ -1548,7 +1555,9 @@ func transferImageParallel(tmpFile string, fileSize int64, sshExec *neossh.Execu
 			// Each goroutine opens its own SSH connection for a separate TCP stream.
 			conn := neossh.New(sshExec.Host, sshExec.Port)
 			conn.PrivateKey = sshExec.PrivateKey
-			conn.InsecureHostKey = sshExec.InsecureHostKey
+			if sshExec.IsInsecureHostKey() {
+				conn.SetInsecureHostKey()
+			}
 			if cErr := conn.Connect(); cErr != nil {
 				errs[idx] = cErr
 				return
