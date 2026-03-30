@@ -226,6 +226,24 @@ func MaskKey(key string) string {
 	return key[:4] + strings.Repeat("*", len(key)-8) + key[len(key)-4:]
 }
 
+// CheckDaily refreshes the cached license status if more than 24 hours have passed
+// since the last check. It is intended to be called once at startup — it never blocks
+// for more than 3 seconds and never surfaces errors to the caller.
+func CheckDaily(licenseKey string) {
+	if licenseKey == "" {
+		return
+	}
+	if cached := loadCache(); cached != nil {
+		if t, err := time.Parse(time.RFC3339, cached.ValidatedAt); err == nil {
+			if time.Since(t) < 24*time.Hour {
+				return // already checked within the last 24 hours
+			}
+		}
+	}
+	// Cache is missing or older than 24 h — refresh silently (Check updates the cache).
+	Check(licenseKey)
+}
+
 func loadCache() *Status {
 	data, err := os.ReadFile(cacheFile())
 	if err != nil {

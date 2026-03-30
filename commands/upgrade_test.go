@@ -15,11 +15,7 @@ func TestFetchLatestVersion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Override the URL for testing
-	origURL := versionURL
-	defer func() { _ = origURL }()
-
-	// We can't override the const, so test the parsing directly
+	// Test the parsing directly
 	resp, err := http.Get(server.URL)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)

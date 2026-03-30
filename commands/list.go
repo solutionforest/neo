@@ -3,7 +3,6 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/vxero/neo/internal/state"
@@ -90,20 +89,12 @@ func runList(format string) error {
 	if len(st.Services) > 0 {
 		fmt.Println()
 		fmt.Println("  " + ui.Bold.Render("Shared Services"))
-		fmt.Println("  " + fmt.Sprintf("%-18s %-25s %-12s %s", "NAME", "IMAGE", "STATUS", "LINKED APPS"))
-		fmt.Println("  " + ui.Faint.Render("──────────────────────────────────────────────────────────────────────────"))
+		fmt.Println("  " + fmt.Sprintf("%-18s %-25s %s", "NAME", "IMAGE", "STATUS"))
+		fmt.Println("  " + ui.Faint.Render("────────────────────────────────────────────────────────"))
 
 		for _, svc := range st.Services {
 			bullet := ui.StatusBullet(svc.Status)
-			linked := "—"
-			if len(svc.LinkedApps) > 0 {
-				names := make([]string, 0, len(svc.LinkedApps))
-				for appName := range svc.LinkedApps {
-					names = append(names, appName)
-				}
-				linked = strings.Join(names, ", ")
-			}
-			fmt.Printf("  %s %-17s %-25s %-12s %s\n", bullet, svc.Name, ui.Faint.Render(svc.Image), svc.Status, linked)
+			fmt.Printf("  %s %-17s %-25s %s\n", bullet, svc.Name, ui.Faint.Render(svc.Image), svc.Status)
 		}
 	}
 

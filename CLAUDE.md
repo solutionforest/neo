@@ -149,7 +149,11 @@ func newFooCmd() *cobra.Command {
 - `neo deploy --env KEY=VALUE` — set env on deploy (repeatable `-e`)
 - `neo deploy --env-file .env` — load env file on deploy
 
-**Env var priority** (highest wins): CLI `--env` > `--env-file` > `.neo.yml` env > `docker-compose.yml` > server state (redeploy)
+**Deploy env var priority** (highest wins): CLI `--env` > `--env-file` > `.neo.yml` env > `docker-compose.yml` > server state (redeploy)
+
+**Dev env var priority** (highest wins): `dev.env` > `dev.env_file` > top-level `env` > top-level `env_file` > auto-loaded `.env`
+
+**Env interpolation** (`neo dev` only): Values like `${APP_KEY}` in `.neo.yml` are resolved from the merged env map or `os.Getenv`. Unresolved refs are left as-is. Single-pass, no circular resolution.
 
 ### Project Config (`.neo.yml`):
 Optional file in project root. All fields optional:
@@ -194,15 +198,38 @@ sidecars:
     volumes:
       data: /data
 
-# Persistent volumes
+# Persistent volumes (both flat and structured formats supported)
 volumes:
-  uploads:
-    path: /app/uploads
+  uploads: /app/uploads               # flat string (named Docker volume)
+  logs: /var/log/myapp:/var/log/app   # host:container (bind mount on server)
+  data:
+    path: /app/data                    # structured format
+    mount: /mnt/ssd/data               # optional: host bind mount path on server
 
 # Custom SSL certificates
 ssl:
   certificate: certs/cert.pem
   private_key: certs/key.pem
+
+# HTTP Basic Auth (handled by Caddy at proxy layer; app container unaffected)
+basic_auth:
+  user: admin
+  password: secret
+  bypass:                            # paths that skip auth entirely
+    - /api/*
+    - /webhooks/*
+
+# Dev-only settings (used exclusively by `neo dev`, ignored during deploy)
+dev:
+  env_file: .env                     # auto-loaded for dev
+  port: 8000                         # local port override
+  volumes:                           # override local mount paths
+    uploads: ./uploads               # short form: inherits container path from top-level
+    cache: ./tmp/cache:/tmp/cache    # full form: dev-only bind mount
+  env:
+    APP_ENV: local
+    APP_DEBUG: "true"
+    APP_KEY: "${APP_KEY}"            # interpolated from .env or OS env
 
 # Named deployment environments (override top-level fields)
 environments:
@@ -211,6 +238,11 @@ environments:
     domain: staging.example.com
     env:
       APP_ENV: staging
+    basic_auth:                      # staging-only basic auth
+      user: admin
+      password: secret
+      bypass:
+        - /api/*
     hooks:
       pre_build: ["npm test"]
   production:
@@ -219,6 +251,36 @@ environments:
     env:
       APP_ENV: production
 ```
+
+### Local Development (`dev.go`):
+`neo dev` runs the app locally via Docker. Two modes:
+- **Compose mode** — if `docker-compose.yml` exists, wraps `docker compose up`
+- **Standalone mode** — builds from `Dockerfile`, runs with `docker run`
+
+**Workers & sidecars** — automatically started alongside the app in standalone mode:
+- Workers share the app image with a different command, same env/volumes
+- Sidecars build or pull their own image, get their own env vars (not inherited)
+- All containers join a shared Docker network (`neo-dev-{appName}`) for inter-container communication
+- Sidecars start first (services), then workers, then the app
+- `neo dev down` cleans up all containers and the network
+
+Key helpers:
+- `buildDevEnv(projectDir, neoConfig)` — merges env sources with dev priority chain, applies `${VAR}` interpolation
+- `buildDevVolumes(projectDir, neoConfig)` — auto-mounts top-level volumes to `./{name}`, supports short-form overrides and full-form `local:container` dev-only mounts
+- `resolveDevPort(neoConfig)` — `dev.port` > top-level `port` > 8080
+- `startDevWorkers(appName, imageName, networkName, env, volumes, workers)` — starts worker containers (detached)
+- `startDevSidecars(appName, projectDir, networkName, buildFlag, sidecars)` — builds/pulls and starts sidecar containers
+
+### Volume Resolution (`neoconfig.go`):
+Shared helpers used by both dev and deploy:
+- `resolveConfigVolumes(neoConfig)` — extracts `[]ResolvedVolume` from `.neo.yml` volumes (single source of truth)
+- `volumesFromState(stateVolumes)` — reconstructs `[]string` mount flags from server state
+- `buildDeployVolumes(appName, neoConfig, existing)` — resolves volumes for deploy (named volumes or bind mounts, with redeploy state preservation)
+
+`NeoVolume` supports three formats:
+- Flat string: `database: /app/data` (named Docker volume)
+- Flat bind mount: `logs: /host/path:/container/path` (bind mount)
+- Structured: `{path: /app/data, mount: /host/path}` (optional bind mount)
 
 ### Docker Compose Auto-Detection:
 If a `docker-compose.yml` / `compose.yml` exists in the project dir, `neo deploy` auto-extracts:
@@ -240,6 +302,7 @@ Local shell commands that run during deploy lifecycle:
 - **Workers** — background containers sharing the app image but running a different command (e.g., queue workers)
 - **Sidecars** — separate containers with their own image/build, running alongside the app on the same Docker network
 - Both support per-environment overrides in `.neo.yml`
+- Both are automatically started by `neo dev` in standalone Dockerfile mode (see Local Development section)
 
 ### Shared helpers in `root.go`:
 - `resolveServer(cfg)` — resolves --server flag or config.Current
@@ -300,12 +363,21 @@ When installing a template app that needs a service (e.g., Ghost → MySQL), if 
 
 ## Docker Naming Conventions
 
+### Deploy (remote server)
 - App containers: `app-<name>` (e.g., `app-ghost`)
+- Worker containers: `app-<app>-worker-<worker>` (e.g., `app-ghost-worker-queue`)
 - Shared service containers: `svc-<name>` (e.g., `svc-mysql`, `svc-redis`)
 - Bundled service containers (legacy): `svc-<app>-<service>` (e.g., `svc-ghost-mysql`)
 - Caddy container: `neo-caddy`
 - Docker network: `neo`
 - Volumes: `<app>-<purpose>` (e.g., `ghost-content`, `ghost-mysql`), `<svc>-data` (shared services)
+
+### Dev (local, `neo dev`)
+- App container: `neo-dev-<app>` (e.g., `neo-dev-my-app`)
+- Worker containers: `neo-dev-<app>-worker-<name>` (e.g., `neo-dev-my-app-worker-queue`)
+- Sidecar containers: `neo-dev-<app>-sidecar-<name>` (e.g., `neo-dev-my-app-sidecar-redis`)
+- Docker network: `neo-dev-<app>` (created only when workers or sidecars exist)
+- Dev image: `neo-dev-<app>:latest`
 
 ## Neo+ Licensing (`internal/license/`)
 
@@ -340,7 +412,7 @@ CrowdSec intrusion prevention via SSH:
 
 ## Additional Commands
 
-- **`neo dev [down]`** — local development: wraps `docker compose` with Neo's env loading. Flags: `--build`, `--detach`
+- **`neo dev [down]`** — local development: wraps `docker compose` or builds from `Dockerfile`. Auto-loads `.env`, mounts volumes, starts workers and sidecars, supports `dev:` section. Flags: `--build`, `--detach`
 - **`neo db <app> [shell]`** — interactive TUI database browser for app's linked DB, or raw `mysql`/`psql` shell
 - **`neo ask`** — interactive skill assistant, guides through common tasks via Q&A
 - **`neo sync [app]`** — sync server state back to `.neo.yml` (shows diff before writing). Flag: `--dry-run`
@@ -482,7 +554,7 @@ plans/                       # Planning documents
 | `neo backup <app>` | Backup app data (Neo+) |
 | `neo restore <app> <backup>` | Restore from backup (Neo+) |
 | `neo db <app> [shell]` | Interactive database browser |
-| `neo dev [down]` | Local development with docker compose |
+| `neo dev [down]` | Local development (compose or Dockerfile, with workers/sidecars) |
 | `neo sync [app]` | Sync server state to .neo.yml |
 | `neo run <cmd>` | Execute command on server |
 | `neo ssh` | SSH into server |

@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/vxero/neo/internal/config"
+	"github.com/vxero/neo/internal/license"
 	"github.com/vxero/neo/internal/remote"
 	neossh "github.com/vxero/neo/internal/ssh"
 	"github.com/vxero/neo/internal/state"
@@ -198,6 +199,10 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			if env.Hooks != nil {
 				neoConfig.Hooks = env.Hooks
 			}
+			// Environment basic_auth overrides top-level
+			if env.BasicAuth != nil {
+				neoConfig.BasicAuth = env.BasicAuth
+			}
 		}
 	}
 
@@ -234,7 +239,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		return err
 	}
 	defer sshExec.Close()
-	_ = cfg
+	licenseKey := cfg.LicenseKey
 
 	// Load state
 	st, err := state.Load(sshExec)
@@ -272,8 +277,8 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	} else if domain == "" {
 		if isRedeploy && existing.Domain != "" {
 			domain = existing.Domain
-		} else if neoConfig != nil && neoConfig.Domain != "" {
-			domain = neoConfig.Domain
+		} else if neoConfig != nil && neoConfig.PrimaryDomain() != "" {
+			domain = neoConfig.PrimaryDomain()
 		} else {
 			err := huh.NewInput().
 				Title("Domain for " + appName).
@@ -435,14 +440,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		fmt.Println()
 
 		// Rebuild volumes list from state
-		var volumes []string
-		for name, vol := range existing.Volumes {
-			if vol.Mount != nil {
-				volumes = append(volumes, fmt.Sprintf("%s:%s", *vol.Mount, vol.ContainerPath))
-			} else {
-				volumes = append(volumes, fmt.Sprintf("%s:%s", name, vol.ContainerPath))
-			}
-		}
+		volumes := volumesFromState(existing.Volumes)
 
 		spin := ui.NewSpinner("Stopping old container...")
 		spin.Start()
@@ -521,7 +519,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	}
 
 	if localDocker {
-		err = deployViaLocalBuild(absPath, dockerfile, imageTag, serverPlatform, sshExec)
+		err = deployViaLocalBuild(absPath, dockerfile, imageTag, serverPlatform, sshExec, licenseKey)
 	} else {
 		err = deployViaRemoteBuild(absPath, dockerfile, imageTag, sshExec, docker)
 	}
@@ -530,34 +528,11 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	}
 
 	// Build volumes list: .neo.yml declarations on first deploy, state on redeploy
-	var volumes []string
-	declaredVolumes := make(map[string]state.VolumeInfo)
+	var existingApp *state.App
 	if isRedeploy {
-		for name, vol := range existing.Volumes {
-			if vol.Mount != nil {
-				volumes = append(volumes, fmt.Sprintf("%s:%s", *vol.Mount, vol.ContainerPath))
-			} else {
-				volumes = append(volumes, fmt.Sprintf("%s:%s", name, vol.ContainerPath))
-			}
-			declaredVolumes[name] = vol
-		}
-		// Add any new volumes from .neo.yml that weren't in previous state
-		if neoConfig != nil {
-			for name, vol := range neoConfig.Volumes {
-				volName := appName + "-" + name
-				if _, exists := existing.Volumes[volName]; !exists {
-					volumes = append(volumes, fmt.Sprintf("%s:%s", volName, vol.Path))
-					declaredVolumes[volName] = state.VolumeInfo{ContainerPath: vol.Path}
-				}
-			}
-		}
-	} else if neoConfig != nil {
-		for name, vol := range neoConfig.Volumes {
-			volName := appName + "-" + name
-			volumes = append(volumes, fmt.Sprintf("%s:%s", volName, vol.Path))
-			declaredVolumes[volName] = state.VolumeInfo{ContainerPath: vol.Path}
-		}
+		existingApp = &existing
 	}
+	volumes, declaredVolumes := buildDeployVolumes(appName, neoConfig, existingApp)
 
 	// Resolve restart policy and health check from .neo.yml
 	appRestart := ""
@@ -617,16 +592,33 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		httpOnly = !*neoConfig.HTTPS
 	}
 
-	// Build the full domain list for Caddy: primary + any extras from previous deploy.
-	// On redeploy, extra domains are preserved; on first deploy there are none.
+	// Build the full domain list for Caddy: primary + config extras + state extras (redeploy).
 	deployDomains := func() []string {
 		if domain == "" {
 			return nil
 		}
-		if isRedeploy {
-			return append([]string{domain}, existing.ExtraDomains...)
+		seen := map[string]bool{domain: true}
+		result := []string{domain}
+
+		// Extra domains from .neo.yml domains: list
+		if neoConfig != nil {
+			for _, d := range neoConfig.ExtraConfigDomains() {
+				if !seen[d] {
+					seen[d] = true
+					result = append(result, d)
+				}
+			}
 		}
-		return []string{domain}
+		// Extra domains manually added via `neo domain --add` (preserved on redeploy)
+		if isRedeploy {
+			for _, d := range existing.ExtraDomains {
+				if !seen[d] {
+					seen[d] = true
+					result = append(result, d)
+				}
+			}
+		}
+		return result
 	}()
 
 	addCaddyRoute := func(cName string, domains []string, p int) {
@@ -634,24 +626,37 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			return
 		}
 		upstream := fmt.Sprintf("%s:%d", cName, p)
+		authOpts := neoBasicAuthToRouteOpts(neoConfig)
 		if httpOnly {
-			caddy.UpdateRouteHTTP(cName, domains, upstream)
+			caddy.UpdateRouteHTTP(cName, domains, upstream, authOpts...)
 		} else {
-			caddy.UpdateRoute(cName, domains, upstream)
+			caddy.UpdateRoute(cName, domains, upstream, authOpts...)
 		}
 	}
 
 	if isRedeploy {
+		authOpts := neoBasicAuthToRouteOpts(neoConfig)
+		hasAuth := len(authOpts) > 0 && authOpts[0].BasicAuth != nil
+
 		// Zero-downtime swap:
-		// 1. Atomically patch Caddy upstream to new container (no route removal = no gap)
+		// 1. Point Caddy at the new (next) container.
+		// If basic_auth is configured we must do a full UpdateRoute so the route
+		// structure (subroute + authentication handler) is rebuilt — PatchUpstream
+		// only changes the dial address and cannot add or remove auth.
 		if len(deployDomains) > 0 {
 			dial := fmt.Sprintf("%s:%d", nextName, port)
-			if err := caddy.PatchUpstream(containerName, dial); err != nil {
+			if hasAuth {
+				if httpOnly {
+					caddy.UpdateRouteHTTP(containerName, deployDomains, dial, authOpts...)
+				} else {
+					caddy.UpdateRoute(containerName, deployDomains, dial, authOpts...)
+				}
+			} else if err := caddy.PatchUpstream(containerName, dial); err != nil {
 				// Fallback: route may not exist yet (e.g. app deployed before this version)
 				if httpOnly {
-					caddy.UpdateRouteHTTP(containerName, deployDomains, dial)
+					caddy.UpdateRouteHTTP(containerName, deployDomains, dial, authOpts...)
 				} else {
-					caddy.UpdateRoute(containerName, deployDomains, dial)
+					caddy.UpdateRoute(containerName, deployDomains, dial, authOpts...)
 				}
 			}
 		}
@@ -668,7 +673,9 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		// 4. Atomically patch Caddy back to canonical container name
 		if len(deployDomains) > 0 {
 			dial := fmt.Sprintf("%s:%d", containerName, port)
-			if err := caddy.PatchUpstream(containerName, dial); err != nil {
+			if hasAuth {
+				addCaddyRoute(containerName, deployDomains, port)
+			} else if err := caddy.PatchUpstream(containerName, dial); err != nil {
 				addCaddyRoute(containerName, deployDomains, port)
 			}
 			ui.Success(fmt.Sprintf("Traffic switched to new version (%s)", domain))
@@ -682,6 +689,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		if domain != "" {
 			upstream := fmt.Sprintf("%s:%d", containerName, port)
 			domains := []string{domain}
+			authOpts := neoBasicAuthToRouteOpts(neoConfig)
 
 			// Check for custom SSL certificate from .neo.yml
 			if neoConfig != nil && neoConfig.SSL != nil && neoConfig.SSL.Certificate != "" && neoConfig.SSL.PrivateKey != "" {
@@ -695,18 +703,18 @@ func runDeploy(projectPath string, flags deployFlags) error {
 				}
 				if err := runDomainCustomCert(appName, domain, certPath, keyPath); err != nil {
 					ui.Error(fmt.Sprintf("Custom SSL setup failed: %s — falling back to HTTP", err))
-					caddy.AddRouteHTTP(containerName, domains, upstream)
+					caddy.AddRouteHTTP(containerName, domains, upstream, authOpts...)
 				}
 				httpOnly = false
 			} else if neoConfig != nil && neoConfig.HTTPS != nil && *neoConfig.HTTPS {
 				// HTTPS enabled via .neo.yml https: true
-				if err := caddy.AddRoute(containerName, domains, upstream); err != nil {
+				if err := caddy.AddRoute(containerName, domains, upstream, authOpts...); err != nil {
 					ui.Error(fmt.Sprintf("Failed to add Caddy HTTPS route: %s", err))
 				}
 				httpOnly = false
 			} else {
 				// HTTP-only by default (user can enable HTTPS via neo domain --temp or neo domain <app> <domain>)
-				if err := caddy.AddRouteHTTP(containerName, domains, upstream); err != nil {
+				if err := caddy.AddRouteHTTP(containerName, domains, upstream, authOpts...); err != nil {
 					ui.Error(fmt.Sprintf("Failed to add Caddy route: %s", err))
 				}
 			}
@@ -1044,7 +1052,7 @@ func (cr *countingReader) Read(p []byte) (int, error) {
 }
 
 // deployViaLocalBuild builds the image locally and transfers it to the server.
-func deployViaLocalBuild(projectPath, dockerfile, imageTag, platform string, sshExec *neossh.Executor) error {
+func deployViaLocalBuild(projectPath, dockerfile, imageTag, platform string, sshExec *neossh.Executor, licenseKey string) error {
 	ui.Info(fmt.Sprintf("Docker detected locally — building on this machine (%s)", platform))
 
 	if err := buildImageLocally(projectPath, dockerfile, imageTag, platform); err != nil {
@@ -1057,7 +1065,12 @@ func deployViaLocalBuild(projectPath, dockerfile, imageTag, platform string, ssh
 	}
 	defer os.Remove(tmpFile)
 
-	return transferImageParallel(tmpFile, fileSize, sshExec)
+	plan := license.CurrentPlan(licenseKey)
+	numStreams := license.Limit(license.FeatureParallelUploads, plan)
+	if numStreams <= 0 {
+		numStreams = 2
+	}
+	return transferImageParallel(tmpFile, fileSize, sshExec, numStreams)
 }
 
 // deployViaRemoteBuild uploads source and builds on the server.
@@ -1275,6 +1288,21 @@ func restartPolicy(r string) string {
 	return r
 }
 
+// neoBasicAuthToRouteOpts converts a NeoConfig's BasicAuth into remote.RouteOptions.
+// Returns nil slice (no options) when basic auth is not configured.
+func neoBasicAuthToRouteOpts(cfg *NeoConfig) []remote.RouteOptions {
+	if cfg == nil || cfg.BasicAuth == nil || cfg.BasicAuth.User == "" || cfg.BasicAuth.Password == "" {
+		return nil
+	}
+	return []remote.RouteOptions{{
+		BasicAuth: &remote.BasicAuthConfig{
+			Username:    cfg.BasicAuth.User,
+			Password:    cfg.BasicAuth.Password,
+			BypassPaths: cfg.BasicAuth.Bypass,
+		},
+	}}
+}
+
 // neoHealthToState converts a NeoHealth config to a state HealthCheck.
 func neoHealthToState(h *NeoHealth) *state.HealthCheck {
 	if h == nil || h.Cmd == "" {
@@ -1466,12 +1494,11 @@ func saveImageToTempFile(imageTag string) (string, int64, error) {
 	return name, size, nil
 }
 
-// transferImageParallel uploads a gzipped image to the server using 5 parallel SSH
+// transferImageParallel uploads a gzipped image to the server using numStreams parallel SSH
 // connections for faster throughput on high-latency links. Each connection uploads an
 // equal byte-range slice of the file; the server then reassembles with `cat` and pipes
 // the result into `docker load`.
-func transferImageParallel(tmpFile string, fileSize int64, sshExec *neossh.Executor) error {
-	const numStreams = 5
+func transferImageParallel(tmpFile string, fileSize int64, sshExec *neossh.Executor, numStreams int) error {
 
 	remoteDir := fmt.Sprintf("/tmp/neo-upload-%d", time.Now().UnixNano())
 	if err := sshExec.RunQuiet("mkdir -p " + remoteDir); err != nil {
@@ -1485,7 +1512,7 @@ func transferImageParallel(tmpFile string, fileSize int64, sshExec *neossh.Execu
 	}
 	defer f.Close()
 
-	chunkSize := (fileSize + numStreams - 1) / int64(numStreams)
+	chunkSize := (fileSize + int64(numStreams) - 1) / int64(numStreams)
 
 	var sent int64 // updated atomically by upload goroutines
 	spin := ui.NewSpinner(fmt.Sprintf("Transferring image (%d parallel streams)... 0 MB sent", numStreams))
@@ -1699,13 +1726,15 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile,
 		}
 	}
 
-	// Resolve domain
+	// Resolve domain (domains: list takes precedence over domain: string in both env and top-level)
 	domain := flags.domain
 	if domain == "" {
-		if envCfg.Domain != "" {
+		if len(envCfg.Domains) > 0 {
+			domain = envCfg.Domains[0]
+		} else if envCfg.Domain != "" {
 			domain = envCfg.Domain
-		} else if neoConfig.Domain != "" {
-			domain = neoConfig.Domain
+		} else if neoConfig.PrimaryDomain() != "" {
+			domain = neoConfig.PrimaryDomain()
 		}
 	}
 
@@ -1831,34 +1860,11 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile,
 	allHealth := neoHealthToState(neoConfig.Health)
 
 	// Build volumes list
-	var volumes []string
-	declaredVolumes := make(map[string]state.VolumeInfo)
+	var allExistingApp *state.App
 	if isRedeploy {
-		for name, vol := range existing.Volumes {
-			if vol.Mount != nil {
-				volumes = append(volumes, fmt.Sprintf("%s:%s", *vol.Mount, vol.ContainerPath))
-			} else {
-				volumes = append(volumes, fmt.Sprintf("%s:%s", name, vol.ContainerPath))
-			}
-			declaredVolumes[name] = vol
-		}
-		// Add any new volumes from .neo.yml that weren't in previous state
-		if neoConfig != nil {
-			for name, vol := range neoConfig.Volumes {
-				volName := appName + "-" + name
-				if _, exists := existing.Volumes[volName]; !exists {
-					volumes = append(volumes, fmt.Sprintf("%s:%s", volName, vol.Path))
-					declaredVolumes[volName] = state.VolumeInfo{ContainerPath: vol.Path}
-				}
-			}
-		}
-	} else {
-		for name, vol := range neoConfig.Volumes {
-			volName := appName + "-" + name
-			volumes = append(volumes, fmt.Sprintf("%s:%s", volName, vol.Path))
-			declaredVolumes[volName] = state.VolumeInfo{ContainerPath: vol.Path}
-		}
+		allExistingApp = &existing
 	}
+	volumes, declaredVolumes := buildDeployVolumes(appName, neoConfig, allExistingApp)
 
 	// Blue-green: start new container alongside old one
 	nextName := containerName + "-next"
@@ -1893,10 +1899,29 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile,
 
 	var deployDomains []string
 	if domain != "" {
-		if isRedeploy {
-			deployDomains = append([]string{domain}, existing.ExtraDomains...)
+		seen := map[string]bool{domain: true}
+		deployDomains = []string{domain}
+		// Extra domains from .neo.yml domains: list
+		envExtraDomains := envCfg.Domains
+		if len(envExtraDomains) == 0 {
+			envExtraDomains = neoConfig.ExtraConfigDomains()
 		} else {
-			deployDomains = []string{domain}
+			envExtraDomains = envExtraDomains[1:] // skip the first (used as primary)
+		}
+		for _, d := range envExtraDomains {
+			if !seen[d] {
+				seen[d] = true
+				deployDomains = append(deployDomains, d)
+			}
+		}
+		// State extra domains (manually added via neo domain --add)
+		if isRedeploy {
+			for _, d := range existing.ExtraDomains {
+				if !seen[d] {
+					seen[d] = true
+					deployDomains = append(deployDomains, d)
+				}
+			}
 		}
 	}
 
@@ -1904,10 +1929,11 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile,
 		if len(deployDomains) == 0 {
 			return
 		}
+		authOpts := neoBasicAuthToRouteOpts(neoConfig)
 		if httpOnly {
-			caddy.UpdateRouteHTTP(cName, deployDomains, upstream)
+			caddy.UpdateRouteHTTP(cName, deployDomains, upstream, authOpts...)
 		} else {
-			caddy.UpdateRoute(cName, deployDomains, upstream)
+			caddy.UpdateRoute(cName, deployDomains, upstream, authOpts...)
 		}
 	}
 
@@ -1920,10 +1946,11 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile,
 		docker.Rename(nextName, containerName)
 		if domain != "" {
 			upstream := fmt.Sprintf("%s:%d", containerName, port)
+			authOpts := neoBasicAuthToRouteOpts(neoConfig)
 			if httpOnly {
-				caddy.AddRouteHTTP(containerName, deployDomains, upstream)
+				caddy.AddRouteHTTP(containerName, deployDomains, upstream, authOpts...)
 			} else {
-				caddy.AddRoute(containerName, deployDomains, upstream)
+				caddy.AddRoute(containerName, deployDomains, upstream, authOpts...)
 			}
 		}
 	}

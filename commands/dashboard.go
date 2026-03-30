@@ -1076,11 +1076,7 @@ func tuiServicesMenu(cfg *config.Config) error {
 		for _, name := range svcNames {
 			svc := st.Services[name]
 			bullet := ui.StatusBullet(svc.Status)
-			linked := ""
-			if len(svc.LinkedApps) > 0 {
-				linked = fmt.Sprintf(" (%d apps)", len(svc.LinkedApps))
-			}
-			label := fmt.Sprintf("%s %-15s %s%s", bullet, name, ui.Faint.Render(svc.Image), ui.Faint.Render(linked))
+			label := fmt.Sprintf("%s %-15s %s", bullet, name, ui.Faint.Render(svc.Image))
 			opts = append(opts, ui.SelectOption{label, name})
 		}
 		opts = append(opts,
@@ -1125,36 +1121,29 @@ func tuiServiceActions(svcName string, st *state.State) (bool, error) {
 		return false, nil
 	}
 
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("  %s  %s\n", ui.Bold.Render(svc.Name), ui.Faint.Render(svc.Image)))
-	sb.WriteString(fmt.Sprintf("  Status: %s %s", ui.StatusBullet(svc.Status), svc.Status))
-	if len(svc.LinkedApps) > 0 {
-		sb.WriteString("\n  Linked apps:")
-		for appName, link := range svc.LinkedApps {
-			detail := appName
-			if link.Database != "" {
-				detail += " → " + link.Database
-			}
-			sb.WriteString(fmt.Sprintf("\n    %s %s", ui.Faint.Render("├"), detail))
-		}
-	}
+	label := fmt.Sprintf("  %s  %s\n  Status: %s %s",
+		ui.Bold.Render(svc.Name), ui.Faint.Render(svc.Image),
+		ui.StatusBullet(svc.Status), svc.Status)
+
+	svcType := detectServiceType(svc.Image)
+	isDB := svcType == "mysql" || svcType == "mariadb" || svcType == "postgres"
 
 	opts := []ui.SelectOption{
 		{"View Logs", "logs"},
+		{"Connection Info", "info"},
+	}
+
+	if isDB && svc.Status == "running" {
+		opts = append(opts, ui.SelectOption{"Browse Database", "db"})
 	}
 
 	if svc.Status == "running" {
 		opts = append(opts,
 			ui.SelectOption{"Restart", "restart"},
 			ui.SelectOption{"Stop", "stop"},
-			ui.SelectOption{"Link to App", "link"},
 		)
 	} else {
 		opts = append(opts, ui.SelectOption{"Start", "start"})
-	}
-
-	if len(svc.LinkedApps) > 0 {
-		opts = append(opts, ui.SelectOption{"Unlink App", "unlink"})
 	}
 
 	opts = append(opts,
@@ -1162,7 +1151,7 @@ func tuiServiceActions(svcName string, st *state.State) (bool, error) {
 		ui.SelectOption{"Back", "back"},
 	)
 
-	action := ui.Select(sb.String(), opts)
+	action := ui.Select(label, opts)
 
 	if action == "" || action == "back" {
 		return false, nil
@@ -1171,12 +1160,13 @@ func tuiServiceActions(svcName string, st *state.State) (bool, error) {
 	switch action {
 	case "logs":
 		return false, runServiceLogs(svcName, 50, false)
+	case "info":
+		tuiShowServiceInfo(svc)
+		return false, nil
+	case "db":
+		return false, runServiceDBTUI(svcName)
 	case "start", "stop", "restart":
 		return false, runServiceManage(svcName, action)
-	case "link":
-		return false, tuiServiceLink(svcName, st)
-	case "unlink":
-		return false, tuiServiceUnlink(svcName, st)
 	case "remove":
 		return false, runServiceRemove(svcName)
 	}
@@ -1184,56 +1174,21 @@ func tuiServiceActions(svcName string, st *state.State) (bool, error) {
 	return false, nil
 }
 
-// tuiServiceLink prompts the user to select an app to link.
-func tuiServiceLink(svcName string, st *state.State) error {
-	svc := st.Services[svcName]
+// tuiShowServiceInfo renders the connection card and waits for the user to dismiss it.
+func tuiShowServiceInfo(svc state.SharedService) {
+	card := ui.NewCard()
+	card.Add(ui.Bold.Render(svc.Name) + "  " + ui.Faint.Render(svc.Image))
+	card.Add(fmt.Sprintf("Status: %s %s", ui.StatusBullet(svc.Status), svc.Status))
+	card.Blank()
+	printConnInfoLines(card, svc, "")
+	card.Render()
 
-	// Build list of unlinked apps
-	unlinked := make([]string, 0)
-	for appName := range st.Apps {
-		if _, already := svc.LinkedApps[appName]; !already {
-			unlinked = append(unlinked, appName)
-		}
-	}
-
-	if len(unlinked) == 0 {
-		ui.Info("All apps are already linked to this service.")
-		return nil
-	}
-
-	opts := make([]ui.SelectOption, len(unlinked))
-	for i, name := range unlinked {
-		opts[i] = ui.SelectOption{name, name}
-	}
-
-	selected := ui.Select("Link "+svcName+" to which app?", opts)
-
-	if selected == "" {
-		return nil
-	}
-
-	return runServiceLink(svcName, selected)
-}
-
-// tuiServiceUnlink prompts the user to select an app to unlink.
-func tuiServiceUnlink(svcName string, st *state.State) error {
-	svc := st.Services[svcName]
-
-	names := make([]string, 0, len(svc.LinkedApps))
-	for appName := range svc.LinkedApps {
-		names = append(names, appName)
-	}
-
-	opts := make([]ui.SelectOption, len(names))
-	for i, name := range names {
-		opts[i] = ui.SelectOption{name, name}
-	}
-
-	selected := ui.Select("Unlink "+svcName+" from which app?", opts)
-
-	if selected == "" {
-		return nil
-	}
-
-	return runServiceUnlink(svcName, selected)
+	// Wait for Enter/Esc via a confirm prompt with no real choice
+	var dismiss bool
+	huh.NewConfirm().
+		Title("Press Enter to go back").
+		Affirmative("Back").
+		Negative("").
+		Value(&dismiss).
+		Run() //nolint:errcheck
 }

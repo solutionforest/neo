@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/vxero/neo/internal/config"
+	"github.com/vxero/neo/internal/license"
 	"github.com/vxero/neo/internal/ssh"
 	"github.com/vxero/neo/internal/state"
 	"github.com/vxero/neo/internal/ui"
@@ -31,6 +32,14 @@ func NewRootCmd(version string) *cobra.Command {
 
 	root.PersistentFlags().StringVar(&serverFlag, "server", "", "target a specific server by name")
 	root.PersistentFlags().BoolVar(&debugFlag, "debug", false, "log SSH commands for diagnostics")
+
+	// Daily license refresh — runs once per startup, skipped if already checked today.
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if cfg, err := config.Load(); err == nil {
+			license.CheckDaily(cfg.LicenseKey)
+		}
+		return nil
+	}
 
 	root.AddCommand(
 		newInitCmd(),

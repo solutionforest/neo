@@ -265,12 +265,10 @@ func runInstall(appName string) error {
 	}
 	st.Apps[manifest.Name] = stateApp
 
-	// Link shared services to this app
+	// Configure shared services for this app — create DB/user and inject env vars
 	for svcSpecName, sharedName := range linkedShared {
 		shared := st.Services[sharedName]
 		svcType := detectServiceType(shared.Image)
-
-		link := state.Link{EnvVars: make(map[string]string)}
 		containerName := config.SvcContainerShared(sharedName)
 
 		switch svcType {
@@ -287,11 +285,6 @@ func runInstall(appName string) error {
 				safeSQLValue(rootPass), dbUser, safeSQLValue(dbPass), dbName, dbUser)
 			docker.Exec(containerName, createUser)
 
-			link.Database = dbName
-			link.User = dbUser
-			link.EnvVars["DATABASE_URL"] = fmt.Sprintf("mysql://%s:%s@%s:3306/%s", dbUser, dbPass, containerName, dbName)
-
-			// Also override the app env to point to the shared service
 			stateApp.Env["database__connection__host"] = containerName
 			stateApp.Env["database__connection__user"] = dbUser
 			stateApp.Env["database__connection__password"] = dbPass
@@ -308,18 +301,13 @@ func runInstall(appName string) error {
 			createDB := fmt.Sprintf(`psql -U postgres -c "CREATE DATABASE %s OWNER %s;" 2>/dev/null; true`, dbName, dbUser)
 			docker.Exec(containerName, createDB)
 
-			link.Database = dbName
-			link.User = dbUser
-			link.EnvVars["DATABASE_URL"] = fmt.Sprintf("postgres://%s:%s@%s:5432/%s", dbUser, dbPass, containerName, dbName)
+			stateApp.Env["DATABASE_URL"] = fmt.Sprintf("postgres://%s:%s@%s:5432/%s", dbUser, dbPass, containerName, dbName)
 
 		case "redis":
-			dbNum := len(shared.LinkedApps)
-			link.EnvVars["REDIS_URL"] = fmt.Sprintf("redis://%s:6379/%d", containerName, dbNum)
+			stateApp.Env["REDIS_URL"] = fmt.Sprintf("redis://%s:6379", containerName)
 		}
 
 		_ = svcSpecName
-		shared.LinkedApps[manifest.Name] = link
-		st.Services[sharedName] = shared
 	}
 
 	st.Apps[manifest.Name] = stateApp

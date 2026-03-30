@@ -69,6 +69,44 @@ func parseEnvPairs(pairs []string) (map[string]string, error) {
 	return env, nil
 }
 
+// interpolateEnvValues replaces ${VAR} references in values with values from
+// the combined env map or the OS environment. Single-pass: unresolved refs
+// are left as-is.
+func interpolateEnvValues(env map[string]string) map[string]string {
+	result := make(map[string]string, len(env))
+	for k, v := range env {
+		result[k] = interpolateString(v, env)
+	}
+	return result
+}
+
+// interpolateString replaces all ${VAR} patterns in s.
+// Lookup order: env map first, then os.Getenv. Unresolved references are left as-is.
+func interpolateString(s string, env map[string]string) string {
+	var buf strings.Builder
+	i := 0
+	for i < len(s) {
+		if i+1 < len(s) && s[i] == '$' && s[i+1] == '{' {
+			end := strings.IndexByte(s[i+2:], '}')
+			if end >= 0 {
+				varName := s[i+2 : i+2+end]
+				if val, ok := env[varName]; ok {
+					buf.WriteString(val)
+				} else if val := os.Getenv(varName); val != "" {
+					buf.WriteString(val)
+				} else {
+					buf.WriteString(s[i : i+2+end+1]) // leave unresolved
+				}
+				i = i + 2 + end + 1
+				continue
+			}
+		}
+		buf.WriteByte(s[i])
+		i++
+	}
+	return buf.String()
+}
+
 // unquote strips matching single or double quotes from a value.
 func unquote(s string) string {
 	if len(s) >= 2 {

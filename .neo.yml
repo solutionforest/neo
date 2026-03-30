@@ -10,3 +10,4 @@ env:
 volumes:
   binaries:
     path: /output
+    mount: /srv/neo-binaries

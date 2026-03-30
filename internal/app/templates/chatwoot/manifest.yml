@@ -46,7 +46,7 @@ env:
 
 services:
   - name: postgres
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     port: 5432
     volumes:
       - name: chatwoot-db
@@ -61,7 +61,7 @@ services:
         generate: hex:32
 
   - name: redis
-    image: redis:7-alpine
+    image: redis:7.2-alpine
     port: 6379
     volumes:
       - name: chatwoot-redis

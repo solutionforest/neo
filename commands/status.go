@@ -73,20 +73,31 @@ func runStatus() error {
 
 	// Server resources (single command to reduce SSH round trips)
 	cpuUsage, memUsed, memTotal, diskUsed, diskTotal, uptime := "?", "?", "?", "?", "?", "?"
+	var cpuPct, memPct, diskPct int
 	out, err := exec.Run(`echo "CPU:$(top -bn1 2>/dev/null | grep '%Cpu' | awk '{print 100-$8}' || echo '?')" && ` +
 		`echo "MEM:$(free -m 2>/dev/null | awk '/Mem:/{printf "%d/%d", $3, $2}' || echo '?')" && ` +
 		`echo "DISK:$(df -h / 2>/dev/null | awk 'NR==2{printf "%s/%s", $3, $2}' || echo '?')" && ` +
+		`echo "DISKPCT:$(df / 2>/dev/null | awk 'NR==2{printf "%d", int($3*100/$2)}' || echo '0')" && ` +
 		`echo "UP:$(uptime -p 2>/dev/null | sed 's/^up //' || echo '?')"`)
 	if err == nil {
 		for _, line := range strings.Split(out, "\n") {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "CPU:") {
 				cpuUsage = strings.TrimPrefix(line, "CPU:")
+				fmt.Sscanf(cpuUsage, "%d", &cpuPct)
 			} else if strings.HasPrefix(line, "MEM:") {
 				parts := strings.SplitN(strings.TrimPrefix(line, "MEM:"), "/", 2)
 				if len(parts) == 2 {
 					memUsed, memTotal = parts[0], parts[1]
+					var used, total int
+					fmt.Sscanf(memUsed, "%d", &used)
+					fmt.Sscanf(memTotal, "%d", &total)
+					if total > 0 {
+						memPct = used * 100 / total
+					}
 				}
+			} else if strings.HasPrefix(line, "DISKPCT:") {
+				fmt.Sscanf(strings.TrimPrefix(line, "DISKPCT:"), "%d", &diskPct)
 			} else if strings.HasPrefix(line, "DISK:") {
 				parts := strings.SplitN(strings.TrimPrefix(line, "DISK:"), "/", 2)
 				if len(parts) == 2 {
@@ -109,13 +120,16 @@ func runStatus() error {
 	fmt.Printf("  Server: %s (%s)\n", ui.Bold.Render(srv.Name), srv.Host)
 	fmt.Println()
 	fmt.Printf("  %s Reachable (%s)\n", ui.Green.Render("●"), latency.Round(time.Millisecond))
-	fmt.Printf("  %-11s %s\n", "CPU:", cpuUsage+"%")
-	fmt.Printf("  %-11s %s MB / %s MB\n", "RAM:", memUsed, memTotal)
-	fmt.Printf("  %-11s %s / %s\n", "Disk:", diskUsed, diskTotal)
+	fmt.Printf("  %-11s %s\n", "CPU:", colorResourcePct(cpuPct, cpuUsage+"%"))
+	fmt.Printf("  %-11s %s MB / %s MB\n", "RAM:", colorResourcePct(memPct, memUsed), memTotal)
+	fmt.Printf("  %-11s %s / %s\n", "Disk:", colorResourcePct(diskPct, diskUsed), diskTotal)
 	fmt.Printf("  %-11s %s\n", "Uptime:", uptime)
 	fmt.Println()
 	fmt.Printf("  %-11s %s\n", "Apps:", formatAppCounts(runningApps, stoppedApps))
 	fmt.Printf("  %-11s %d running\n", "Services:", runningServices)
+
+	// Resource advisories
+	printResourceAdvisory(cpuPct, memPct, diskPct)
 
 	// Container table
 	if containerStats != "" {
@@ -161,6 +175,7 @@ func fetchLiveMetrics(exec *ssh.Executor) (string, error) {
 		`echo "CPU:$(top -bn1 2>/dev/null | grep '%Cpu' | awk '{print 100-$8}' || echo '?')" && ` +
 			`echo "MEM:$(free -m 2>/dev/null | awk '/Mem:/{printf "%d/%d", $3, $2}' || echo '?')" && ` +
 			`echo "DISK:$(df -h / 2>/dev/null | awk 'NR==2{printf "%s/%s (%s)", $3, $2, $5}' || echo '?')" && ` +
+			`echo "DISKPCT:$(df / 2>/dev/null | awk 'NR==2{printf "%d", int($3*100/$2)}' || echo '0')" && ` +
 			`echo "LOAD:$(cat /proc/loadavg 2>/dev/null | awk '{printf "%s %s %s", $1, $2, $3}' || echo '?')" && ` +
 			`echo "UP:$(uptime -p 2>/dev/null | sed 's/^up //' || echo '?')" && ` +
 			`echo "NET:$(cat /proc/net/dev 2>/dev/null | awk '/eth0:|ens[0-9]/{gsub(/:/,""); printf "%s rx=%s tx=%s", $1, $2, $10}' || echo '?')"`)
@@ -183,13 +198,26 @@ func fetchLiveMetrics(exec *ssh.Executor) (string, error) {
 
 	var sb strings.Builder
 
+	// Parse numeric percentages for coloring and advisories
+	var cpuPct, memPct, diskPct int
+	fmt.Sscanf(vm["CPU"], "%d", &cpuPct)
+	if parts := strings.SplitN(vm["MEM"], "/", 2); len(parts) == 2 {
+		var used, total int
+		fmt.Sscanf(parts[0], "%d", &used)
+		fmt.Sscanf(parts[1], "%d", &total)
+		if total > 0 {
+			memPct = used * 100 / total
+		}
+	}
+	fmt.Sscanf(vm["DISKPCT"], "%d", &diskPct)
+
 	// Server section
 	sb.WriteString("\n")
 	sb.WriteString(fmt.Sprintf("  %s\n", ui.Bold.Render("SERVER")))
 	sb.WriteString(fmt.Sprintf("  %s\n", ui.Faint.Render("─────────────────────────────────────")))
-	sb.WriteString(fmt.Sprintf("  %-11s %s%%\n", "CPU:", vm["CPU"]))
+	sb.WriteString(fmt.Sprintf("  %-11s %s\n", "CPU:", colorResourcePct(cpuPct, vm["CPU"]+"%")))
 	if parts := strings.SplitN(vm["MEM"], "/", 2); len(parts) == 2 {
-		sb.WriteString(fmt.Sprintf("  %-11s %s MB / %s MB\n", "RAM:", parts[0], parts[1]))
+		sb.WriteString(fmt.Sprintf("  %-11s %s MB / %s MB\n", "RAM:", colorResourcePct(memPct, parts[0]), parts[1]))
 	} else {
 		sb.WriteString(fmt.Sprintf("  %-11s %s\n", "RAM:", vm["MEM"]))
 	}
@@ -201,21 +229,95 @@ func fetchLiveMetrics(exec *ssh.Executor) (string, error) {
 	// Container section
 	containerOut = strings.TrimSpace(containerOut)
 	if containerOut != "" {
+		const (
+			nameWidth  = 34
+			cpuWidth   = 8
+			memWidth   = 19
+			netWidth   = 18
+			blockWidth = 18
+		)
+
 		sb.WriteString("\n")
 		sb.WriteString(fmt.Sprintf("  %s\n", ui.Bold.Render("CONTAINERS")))
 		sb.WriteString(fmt.Sprintf("  %s\n", ui.Faint.Render("──────────────────────────────────────────────────────────────────────────")))
-		sb.WriteString(fmt.Sprintf("  %-22s %-8s %-22s %-16s %s\n", "NAME", "CPU", "MEMORY", "NET I/O", "BLOCK I/O"))
+		sb.WriteString(fmt.Sprintf("  %s %s %s %s %s\n",
+			fitTableCell("NAME", nameWidth),
+			fitTableCell("CPU", cpuWidth),
+			fitTableCell("MEMORY", memWidth),
+			fitTableCell("NET I/O", netWidth),
+			fitTableCell("BLOCK I/O", blockWidth),
+		))
 		for _, line := range strings.Split(containerOut, "\n") {
 			parts := strings.SplitN(line, "\t", 5)
 			if len(parts) == 5 {
-				sb.WriteString(fmt.Sprintf("  %-22s %-8s %-22s %-16s %s\n",
-					parts[0], parts[1], ui.Faint.Render(parts[2]), ui.Faint.Render(parts[3]), ui.Faint.Render(parts[4])))
+				sb.WriteString(fmt.Sprintf("  %s %s %s %s %s\n",
+					fitTableCell(parts[0], nameWidth),
+					fitTableCell(parts[1], cpuWidth),
+					ui.Faint.Render(fitTableCell(parts[2], memWidth)),
+					ui.Faint.Render(fitTableCell(parts[3], netWidth)),
+					ui.Faint.Render(fitTableCell(parts[4], blockWidth)),
+				))
 			}
+		}
+	}
+
+	// Advisories
+	type liveAdvisory struct{ icon, msg, hint string }
+	var livAdvisories []liveAdvisory
+	if cpuPct >= 90 {
+		livAdvisories = append(livAdvisories, liveAdvisory{ui.Red.Render("!"), fmt.Sprintf("CPU at %d%% — heavy load", cpuPct), "Avoid new deployments. Check `neo logs <app>`."})
+	} else if cpuPct >= 75 {
+		livAdvisories = append(livAdvisories, liveAdvisory{ui.Red.Render("!"), fmt.Sprintf("CPU at %d%%", cpuPct), "Defer new deployments until load drops."})
+	} else if cpuPct >= 50 {
+		livAdvisories = append(livAdvisories, liveAdvisory{ui.Yellow.Render("!"), fmt.Sprintf("CPU at %d%%", cpuPct), "Monitor for sustained high usage."})
+	}
+	if memPct >= 90 {
+		livAdvisories = append(livAdvisories, liveAdvisory{ui.Red.Render("!"), fmt.Sprintf("RAM at %d%% — OOM risk", memPct), "Stop unused apps: `neo stop <app>`"})
+	} else if memPct >= 75 {
+		livAdvisories = append(livAdvisories, liveAdvisory{ui.Red.Render("!"), fmt.Sprintf("RAM at %d%%", memPct), "Avoid deploying new services."})
+	} else if memPct >= 50 {
+		livAdvisories = append(livAdvisories, liveAdvisory{ui.Yellow.Render("!"), fmt.Sprintf("RAM at %d%%", memPct), "New deployments may push memory higher."})
+	}
+	if diskPct >= 90 {
+		livAdvisories = append(livAdvisories, liveAdvisory{ui.Red.Render("!"), fmt.Sprintf("Disk at %d%% — critical", diskPct), "Run: neo run 'docker system prune -af'"})
+	} else if diskPct >= 75 {
+		livAdvisories = append(livAdvisories, liveAdvisory{ui.Red.Render("!"), fmt.Sprintf("Disk at %d%%", diskPct), "Run: neo run 'docker image prune -af'"})
+	} else if diskPct >= 50 {
+		livAdvisories = append(livAdvisories, liveAdvisory{ui.Yellow.Render("!"), fmt.Sprintf("Disk at %d%%", diskPct), "Consider: neo run 'docker image prune -f'"})
+	}
+	if len(livAdvisories) > 0 {
+		sb.WriteString("\n")
+		sb.WriteString(fmt.Sprintf("  %s\n", ui.Bold.Render("ADVISORIES")))
+		sb.WriteString(fmt.Sprintf("  %s\n", ui.Faint.Render("─────────────────────────────────────")))
+		for _, a := range livAdvisories {
+			sb.WriteString(fmt.Sprintf("  %s %s\n", a.icon, a.msg))
+			sb.WriteString(fmt.Sprintf("    %s\n", ui.Faint.Render(a.hint)))
 		}
 	}
 
 	sb.WriteString("\n")
 	return sb.String(), nil
+}
+
+func fitTableCell(s string, width int) string {
+	s = strings.TrimSpace(s)
+	if width <= 0 {
+		return s
+	}
+
+	r := []rune(s)
+	if len(r) > width {
+		if width <= 3 {
+			return string(r[:width])
+		}
+		return string(r[:width-3]) + "..."
+	}
+
+	if len(r) < width {
+		return s + strings.Repeat(" ", width-len(r))
+	}
+
+	return s
 }
 
 type statusOutput struct {
@@ -339,6 +441,108 @@ func runStatusJSON() error {
 	}
 	fmt.Println(string(data))
 	return nil
+}
+
+// colorResourcePct colorizes a resource value string based on its usage percentage.
+// Green < 50%, Yellow 50–75%, Red > 75%.
+func colorResourcePct(pct int, label string) string {
+	switch {
+	case pct >= 75:
+		return ui.Red.Render(label)
+	case pct >= 50:
+		return ui.Yellow.Render(label)
+	default:
+		return label
+	}
+}
+
+// printResourceAdvisory prints actionable warnings below `neo status` when CPU, RAM,
+// or disk usage crosses the 50% or 75% threshold.
+func printResourceAdvisory(cpuPct, memPct, diskPct int) {
+	type advisory struct {
+		icon string
+		msg  string
+		hint string
+	}
+	var advisories []advisory
+
+	// CPU
+	switch {
+	case cpuPct >= 90:
+		advisories = append(advisories, advisory{
+			icon: ui.Red.Render("!"),
+			msg:  fmt.Sprintf("CPU is at %d%% — server is under heavy load", cpuPct),
+			hint: "Avoid deploying new services. Run `neo logs <app>` to find the culprit.",
+		})
+	case cpuPct >= 75:
+		advisories = append(advisories, advisory{
+			icon: ui.Red.Render("!"),
+			msg:  fmt.Sprintf("CPU is at %d%%", cpuPct),
+			hint: "Consider deferring new deployments until load drops.",
+		})
+	case cpuPct >= 50:
+		advisories = append(advisories, advisory{
+			icon: ui.Yellow.Render("!"),
+			msg:  fmt.Sprintf("CPU is at %d%%", cpuPct),
+			hint: "Monitor for sustained high usage.",
+		})
+	}
+
+	// RAM
+	switch {
+	case memPct >= 90:
+		advisories = append(advisories, advisory{
+			icon: ui.Red.Render("!"),
+			msg:  fmt.Sprintf("RAM is at %d%% — risk of OOM crashes", memPct),
+			hint: "Do not deploy new services. Stop unused apps with `neo stop <app>`.",
+		})
+	case memPct >= 75:
+		advisories = append(advisories, advisory{
+			icon: ui.Red.Render("!"),
+			msg:  fmt.Sprintf("RAM is at %d%%", memPct),
+			hint: "Avoid deploying new services. Consider a larger server plan.",
+		})
+	case memPct >= 50:
+		advisories = append(advisories, advisory{
+			icon: ui.Yellow.Render("!"),
+			msg:  fmt.Sprintf("RAM is at %d%%", memPct),
+			hint: "Keep an eye on memory — new deployments may push it higher.",
+		})
+	}
+
+	// Disk
+	switch {
+	case diskPct >= 90:
+		advisories = append(advisories, advisory{
+			icon: ui.Red.Render("!"),
+			msg:  fmt.Sprintf("Disk is at %d%% — server may stop working soon", diskPct),
+			hint: "Run `neo run 'docker system prune -af'` immediately to free space.",
+		})
+	case diskPct >= 75:
+		advisories = append(advisories, advisory{
+			icon: ui.Red.Render("!"),
+			msg:  fmt.Sprintf("Disk is at %d%%", diskPct),
+			hint: "Prune unused Docker images: `neo run 'docker image prune -af'`",
+		})
+	case diskPct >= 50:
+		advisories = append(advisories, advisory{
+			icon: ui.Yellow.Render("!"),
+			msg:  fmt.Sprintf("Disk is at %d%%", diskPct),
+			hint: "Consider pruning old images: `neo run 'docker image prune -f'`",
+		})
+	}
+
+	if len(advisories) == 0 {
+		return
+	}
+
+	fmt.Println()
+	fmt.Printf("  %s\n", ui.Bold.Render("ADVISORIES"))
+	fmt.Printf("  %s\n", ui.Faint.Render("─────────────────────────────────────"))
+	for _, a := range advisories {
+		fmt.Printf("  %s %s\n", a.icon, a.msg)
+		fmt.Printf("    %s\n", ui.Faint.Render(a.hint))
+	}
 }
 
 func formatAppCounts(running, stopped int) string {

@@ -232,13 +232,22 @@ Remove env vars and auto-restart app.
 
 Bulk import from .env file and auto-restart.
 
-**Env var priority (highest wins):**
+**Deploy env var priority (highest wins):**
 1. CLI `--env KEY=VALUE`
 2. `--env-file`
 3. `.neo.yml` env section (environment-specific overrides top-level)
 4. `docker-compose.yml` (auto-detected)
 5. Server state (redeploy)
 6. Auto-generated (`APP_URL`)
+
+**Dev env var priority** (`neo dev`, highest wins):
+1. `dev.env` from `.neo.yml`
+2. `dev.env_file` from `.neo.yml`
+3. Top-level `env` from `.neo.yml`
+4. Top-level `env_file` from `.neo.yml`
+5. Auto-loaded `.env` from project root
+
+`${VAR}` interpolation is applied after merging (dev only). Resolves from the merged env map, then `os.Getenv`. Unresolved refs are left as-is.
 
 ---
 
@@ -357,14 +366,39 @@ Auto-detects linked database service and reads connection details from env.
 
 #### `neo dev [down]`
 
-Run app locally (wraps `docker compose`).
+Run app locally for development. Two modes:
+- **Compose mode** — if `docker-compose.yml` exists, wraps `docker compose up`
+- **Standalone mode** — builds from `Dockerfile`, runs with `docker run`
 
 | Flag | Short | Type | Description |
 |------|-------|------|-------------|
 | `--build` | | bool | Rebuild images |
 | `--detach` | `-d` | bool | Run in background |
 
-`down` subcommand stops containers. Loads env vars from `.neo.yml`, injects `neo` development environment.
+`down` subcommand stops containers.
+
+**Env loading** — auto-loads `.env` from project root (lowest priority), then `.neo.yml` env sources, then `dev:` section overrides. `${VAR}` interpolation resolves from the merged env or OS environment.
+
+**Dev env priority** (lowest → highest):
+1. Auto-loaded `.env` from project root
+2. Top-level `env_file:` from `.neo.yml`
+3. Top-level `env:` from `.neo.yml`
+4. `dev.env_file:` from `.neo.yml`
+5. `dev.env:` from `.neo.yml`
+
+**Volume mounting** (standalone mode only) — top-level `volumes:` are auto-mounted as bind mounts to `./{volume-name}` in the project directory. Use `dev.volumes` to override local paths or add dev-only mounts. Compose mode uses the compose file's own volume definitions.
+
+**Workers & sidecars** (standalone mode only) — if `.neo.yml` defines `workers:` or `sidecars:`, they are automatically started alongside the app:
+- All containers join a shared Docker network (`neo-dev-{appName}`)
+- Sidecars start first (services like Redis/DB), then workers, then the app
+- Workers share the app image and env vars; sidecars use their own image and env
+- `neo dev down` removes all containers and the network
+
+| Container | Naming | Image |
+|-----------|--------|-------|
+| App | `neo-dev-{app}` | `neo-dev-{app}:latest` |
+| Worker | `neo-dev-{app}-worker-{name}` | Same as app |
+| Sidecar | `neo-dev-{app}-sidecar-{name}` | Own image (built or pulled) |
 
 ---
 
@@ -516,11 +550,15 @@ health:
   start_period: 40s                  # string: grace period before checks start
 
 # ─── Persistent Volumes ───
+# Supports flat string, flat bind mount, and structured formats:
 volumes:                             # map[string]NeoVolume
-  data:
-    path: /app/data                  # string: container mount path
+  data: /app/data                    # flat string → named Docker volume
+  logs: /var/log/myapp:/var/log/app  # host:container → bind mount on server
   uploads:
-    path: /app/uploads
+    path: /app/uploads               # structured → named Docker volume
+  backups:
+    path: /app/backups               # structured with mount → bind mount on server
+    mount: /mnt/ssd/backups
 
 # ─── Workers (same image, different command) ───
 workers:                             # map[string]NeoWorker
@@ -550,6 +588,18 @@ sidecars:                            # map[string]NeoSidecar
       cmd: "redis-cli ping"
       interval: 10s
 
+# ─── Dev-Only Settings (used by `neo dev`, ignored during deploy) ───
+dev:                                 # *NeoDevConfig
+  env_file: .env                     # string: dev-only env file
+  port: 8000                         # int: local port override
+  env:                               # map[string]string: dev-only env vars
+    APP_ENV: local
+    APP_DEBUG: "true"
+    APP_KEY: "${APP_KEY}"            # ${VAR} interpolated from env/OS
+  volumes:                           # map[string]string: volume overrides
+    data: ./local-data               # short form: override local path for top-level volume
+    cache: ./tmp/cache:/tmp/cache    # full form: dev-only bind mount (local:container)
+
 # ─── Deploy Hooks ───
 hooks:
   pre_build: ./scripts/prepare.sh    # HookCommands: string or []string
@@ -573,8 +623,7 @@ environments:                        # map[string]NeoEnvironment
       certificate: ./certs/staging.pem
       private_key: ./certs/staging.key
     volumes:                         # map[string]NeoVolume: merged (env overrides same keys)
-      data:
-        path: /data-staging
+      data: /data-staging            # flat or structured format supported
     workers:                         # map[string]NeoWorker: FULL REPLACE if any defined
       queue:
         command: "python worker --queue staging"
@@ -595,7 +644,7 @@ environments:                        # map[string]NeoEnvironment
       NODE_ENV: production
 ```
 
-### Merging Rules
+### Merging Rules (Environments)
 
 | Field | Merge Strategy |
 |-------|---------------|
@@ -605,6 +654,10 @@ environments:                        # map[string]NeoEnvironment
 | `sidecars` | Full replace — if environment defines any, replaces all top-level |
 | `hooks` | Full replace — if environment defines hooks, replaces top-level |
 | All other fields | Simple override — environment value wins if set |
+
+### Dev Section
+
+The `dev:` section is used exclusively by `neo dev` and completely ignored during `neo deploy`. It does not merge with environment configs — it is a separate namespace for local development settings.
 
 ### Environment Suffix Logic
 
@@ -1026,24 +1079,34 @@ Templates are fetched from remote `templates.json` at install time with embedded
 
 ## Naming Conventions
 
-### Container Names
+### Container Names (Deploy)
 
 | Type | Pattern | Example |
 |------|---------|---------|
 | App | `app-{name}` | `app-ghost` |
+| Worker | `app-{app}-worker-{worker}` | `app-ghost-worker-queue` |
 | Bundled service | `svc-{app}-{service}` | `svc-ghost-mysql` |
 | Shared service | `svc-{name}` | `svc-mysql` |
-| Worker | `app-{app}-worker-{worker}` | `app-ghost-worker-queue` |
 | Caddy | `neo-caddy` | `neo-caddy` |
+
+### Container Names (Dev — `neo dev`)
+
+| Type | Pattern | Example |
+|------|---------|---------|
+| App | `neo-dev-{app}` | `neo-dev-my-app` |
+| Worker | `neo-dev-{app}-worker-{name}` | `neo-dev-my-app-worker-queue` |
+| Sidecar | `neo-dev-{app}-sidecar-{name}` | `neo-dev-my-app-sidecar-redis` |
 
 ### Docker Resources
 
 | Resource | Pattern | Example |
 |----------|---------|---------|
-| Network | `neo` | `neo` |
+| Deploy network | `neo` | `neo` |
+| Dev network | `neo-dev-{app}` | `neo-dev-my-app` |
 | App volume | `{app}-{purpose}` | `ghost-content` |
 | Shared service volume | `{svc}-data` | `mysql-data` |
-| Image tag | `neo-{app}:{timestamp}` | `neo-ghost:20260328-143000` |
+| Deploy image tag | `neo-{app}:{timestamp}` | `neo-ghost:20260328-143000` |
+| Dev image tag | `neo-dev-{app}:latest` | `neo-dev-my-app:latest` |
 
 ### File Paths (Server)
 

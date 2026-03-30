@@ -6,6 +6,8 @@ import (
 	"html"
 	"strings"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/vxero/neo/internal/ssh"
 )
 
@@ -26,6 +28,19 @@ func NewCaddy(exec *ssh.Executor) *Caddy {
 	return &Caddy{exec: exec}
 }
 
+// BasicAuthConfig configures HTTP basic authentication for a Caddy route.
+// Caddy handles auth entirely at the proxy layer — the app container is unaffected.
+type BasicAuthConfig struct {
+	Username    string   // plaintext username
+	Password    string   // plaintext password; bcrypt-hashed before sending to Caddy
+	BypassPaths []string // URL paths excluded from auth (e.g. "/api/*", "/webhooks/*")
+}
+
+// RouteOptions carries optional configuration for AddRoute / UpdateRoute calls.
+type RouteOptions struct {
+	BasicAuth *BasicAuthConfig
+}
+
 // caddyRoute represents a Caddy reverse proxy route.
 type caddyRoute struct {
 	ID     string        `json:"@id"`
@@ -44,6 +59,66 @@ type caddyHandle struct {
 
 type caddyUpstream struct {
 	Dial string `json:"dial"`
+}
+
+// buildRouteJSON builds the Caddy JSON for a route, with optional basic auth.
+// When auth is nil the route is a plain reverse_proxy.
+// When auth is provided the route uses a subroute with:
+//   - bypass paths (if any) routed directly without auth
+//   - everything else guarded by http_basic authentication
+func buildRouteJSON(appID string, domains []string, upstream string, auth *BasicAuthConfig) ([]byte, error) {
+	reverseProxy := map[string]interface{}{
+		"handler":   "reverse_proxy",
+		"upstreams": []map[string]string{{"dial": upstream}},
+	}
+
+	var handles []interface{}
+
+	if auth != nil {
+		hashBytes, err := bcrypt.GenerateFromPassword([]byte(auth.Password), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, fmt.Errorf("bcrypt password: %w", err)
+		}
+		authHandler := map[string]interface{}{
+			"handler": "authentication",
+			"providers": map[string]interface{}{
+				"http_basic": map[string]interface{}{
+					"accounts": []map[string]string{
+						{"username": auth.Username, "password": string(hashBytes)},
+					},
+				},
+			},
+		}
+
+		var subroutes []interface{}
+		if len(auth.BypassPaths) > 0 {
+			// Bypass route: matching paths skip auth entirely
+			subroutes = append(subroutes, map[string]interface{}{
+				"match":  []map[string]interface{}{{"path": auth.BypassPaths}},
+				"handle": []interface{}{reverseProxy},
+			})
+		}
+		// Catch-all route: requires basic auth
+		subroutes = append(subroutes, map[string]interface{}{
+			"handle": []interface{}{authHandler, reverseProxy},
+		})
+
+		handles = []interface{}{
+			map[string]interface{}{
+				"handler": "subroute",
+				"routes":  subroutes,
+			},
+		}
+	} else {
+		handles = []interface{}{reverseProxy}
+	}
+
+	route := map[string]interface{}{
+		"@id":    appID,
+		"match":  []map[string]interface{}{{"host": domains}},
+		"handle": handles,
+	}
+	return json.Marshal(route)
 }
 
 // StartContainer starts the Caddy container on the remote server.
@@ -97,7 +172,8 @@ func (c *Caddy) Version() (string, error) {
 
 // AddRoute adds a reverse proxy HTTPS route for an app.
 // domains may contain one or more hostnames — Caddy issues a cert for each automatically.
-func (c *Caddy) AddRoute(appID string, domains []string, upstream string) error {
+// Pass a RouteOptions with BasicAuth set to enable HTTP basic authentication.
+func (c *Caddy) AddRoute(appID string, domains []string, upstream string, opts ...RouteOptions) error {
 	if len(domains) == 0 {
 		return fmt.Errorf("at least one domain is required")
 	}
@@ -108,15 +184,14 @@ func (c *Caddy) AddRoute(appID string, domains []string, upstream string) error 
 	)
 	c.exec.RunQuiet(ensure)
 
-	route := caddyRoute{
-		ID:     appID,
-		Match:  []caddyMatch{{Host: domains}},
-		Handle: []caddyHandle{{Handler: "reverse_proxy", Upstreams: []caddyUpstream{{Dial: upstream}}}},
+	var auth *BasicAuthConfig
+	if len(opts) > 0 {
+		auth = opts[0].BasicAuth
 	}
 
-	data, err := json.Marshal(route)
+	data, err := buildRouteJSON(appID, domains, upstream, auth)
 	if err != nil {
-		return fmt.Errorf("marshal route: %w", err)
+		return fmt.Errorf("build route: %w", err)
 	}
 
 	cmd := fmt.Sprintf(
@@ -133,32 +208,32 @@ func (c *Caddy) RemoveRoute(appID string) error {
 }
 
 // UpdateRoute replaces an existing route's domains and upstream (HTTPS).
-func (c *Caddy) UpdateRoute(appID string, domains []string, upstream string) error {
+func (c *Caddy) UpdateRoute(appID string, domains []string, upstream string, opts ...RouteOptions) error {
 	c.RemoveRoute(appID) // ignore error if doesn't exist
 	c.removeFromAutoHTTPSSkip(domains)
-	return c.AddRoute(appID, domains, upstream)
+	return c.AddRoute(appID, domains, upstream, opts...)
 }
 
 // AddRouteHTTP adds an HTTP-only reverse proxy route (no auto-SSL).
 // Routes are added to srv0 with automatic_https.skip to prevent cert
 // provisioning and HTTP→HTTPS redirects for these domains.
-func (c *Caddy) AddRouteHTTP(appID string, domains []string, upstream string) error {
+func (c *Caddy) AddRouteHTTP(appID string, domains []string, upstream string, opts ...RouteOptions) error {
 	if len(domains) == 0 {
 		return fmt.Errorf("at least one domain is required")
 	}
 	if err := c.addToAutoHTTPSSkip(domains); err != nil {
 		return fmt.Errorf("disable auto-https: %w", err)
 	}
-	return c.AddRoute(appID, domains, upstream)
+	return c.AddRoute(appID, domains, upstream, opts...)
 }
 
 // UpdateRouteHTTP replaces an existing route with an HTTP-only route.
-func (c *Caddy) UpdateRouteHTTP(appID string, domains []string, upstream string) error {
+func (c *Caddy) UpdateRouteHTTP(appID string, domains []string, upstream string, opts ...RouteOptions) error {
 	c.RemoveRoute(appID)
 	if err := c.addToAutoHTTPSSkip(domains); err != nil {
 		return fmt.Errorf("disable auto-https: %w", err)
 	}
-	return c.AddRoute(appID, domains, upstream)
+	return c.AddRoute(appID, domains, upstream, opts...)
 }
 
 // addToAutoHTTPSSkip adds domains to srv0's automatic_https.skip list so Caddy

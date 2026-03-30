@@ -27,27 +27,27 @@ type serviceType struct {
 var serviceTypes = []serviceType{
 	{
 		Name:    "mysql",
-		Image:   "mysql:8.0",
+		Image:   "mysql:8.4",
 		Port:    3306,
 		RootEnv: "MYSQL_ROOT_PASSWORD",
 		Volumes: map[string]string{"svc-mysql": "/var/lib/mysql"},
 	},
 	{
 		Name:    "postgres",
-		Image:   "postgres:16-alpine",
+		Image:   "postgres:17-alpine",
 		Port:    5432,
 		RootEnv: "POSTGRES_PASSWORD",
 		Volumes: map[string]string{"svc-postgres": "/var/lib/postgresql/data"},
 	},
 	{
 		Name:    "redis",
-		Image:   "redis:7-alpine",
+		Image:   "redis:7.2-alpine",
 		Port:    6379,
 		Volumes: map[string]string{"svc-redis": "/data"},
 	},
 	{
 		Name:    "mariadb",
-		Image:   "mariadb:11",
+		Image:   "mariadb:11.4",
 		Port:    3306,
 		RootEnv: "MARIADB_ROOT_PASSWORD",
 		Volumes: map[string]string{"svc-mariadb": "/var/lib/mysql"},
@@ -58,14 +58,13 @@ func newServiceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "service",
 		Short: "Manage shared services (databases, caches)",
-		Long:  "Create and manage shared services that can be linked to multiple apps.",
+		Long:  "Create and manage shared services that multiple apps can connect to.",
 	}
 
 	cmd.AddCommand(
 		newServiceCreateCmd(),
 		newServiceListCmd(),
-		newServiceLinkCmd(),
-		newServiceUnlinkCmd(),
+		newServiceInfoCmd(),
 		newServiceStartCmd(),
 		newServiceStopCmd(),
 		newServiceRestartCmd(),
@@ -106,26 +105,13 @@ func newServiceListCmd() *cobra.Command {
 	}
 }
 
-func newServiceLinkCmd() *cobra.Command {
+func newServiceInfoCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "link <service> <app>",
-		Short: "Link a shared service to an app",
-		Long:  "Creates a database and user for the app, injects connection env vars.",
-		Args:  cobra.ExactArgs(2),
+		Use:   "info <service>",
+		Short: "Show connection details for a shared service",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServiceLink(args[0], args[1])
-		},
-	}
-}
-
-func newServiceUnlinkCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "unlink <service> <app>",
-		Short: "Unlink a shared service from an app",
-		Long:  "Removes injected env vars from the app. Database and data are preserved.",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServiceUnlink(args[0], args[1])
+			return runServiceInfo(args[0])
 		},
 	}
 }
@@ -261,7 +247,7 @@ func runServiceCreate(typeName, svcName string) error {
 	spin.Stop()
 	ui.Success(fmt.Sprintf("Pulled %s", svcType.Image))
 
-	// Generate env vars (root password, etc.)
+	// Generate root password
 	svcEnv := make(map[string]string)
 	if svcType.RootEnv != "" {
 		rootPass, err := app.GenerateValue("hex:32")
@@ -274,7 +260,6 @@ func runServiceCreate(typeName, svcName string) error {
 	// Build volumes
 	var volumes []string
 	for _, containerPath := range svcType.Volumes {
-		// Use service name in volume name for uniqueness
 		actualVolName := svcName + "-data"
 		volumes = append(volumes, fmt.Sprintf("%s:%s", actualVolName, containerPath))
 	}
@@ -292,30 +277,98 @@ func runServiceCreate(typeName, svcName string) error {
 		return fmt.Errorf("start %s: %w", containerName, err)
 	}
 
-	// Save state
-	st.Services[svcName] = state.SharedService{
-		Name:       svcName,
-		Image:      svcType.Image,
-		Status:     "running",
-		Env:        svcEnv,
-		Volumes:    svcType.Volumes,
-		Port:       svcType.Port,
-		LinkedApps: make(map[string]state.Link),
-		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
+	// Save state (before DB creation so info is persisted even if DB step fails)
+	svcState := state.SharedService{
+		Name:        svcName,
+		Image:       svcType.Image,
+		Status:      "running",
+		Env:         svcEnv,
+		Volumes:     svcType.Volumes,
+		Port:        svcType.Port,
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
+	st.Services[svcName] = svcState
 	state.Save(exec, st)
 
+	// Create a default database so the service is immediately usable
+	defaultDB := createDefaultDatabase(docker, containerName, svcType.Name, svcName, svcEnv)
+
 	card := ui.NewCard()
-	card.Add(ui.Green.Render("✓") + " Shared " + svcType.Name + " service created")
+	card.Add(ui.Green.Render("✓") + " Shared " + svcType.Name + " ready")
 	card.Blank()
 	card.AddKV("Container", containerName)
 	card.AddKV("Image", svcType.Image)
 	card.Blank()
-	card.Add("Link to an app:")
-	card.Add(fmt.Sprintf("  %s", ui.Bold.Render("neo service link "+svcName+" <app>")))
+	printConnInfoLines(card, st.Services[svcName], defaultDB)
 	card.Render()
 
 	return nil
+}
+
+// createDefaultDatabase waits for the service to accept connections, then creates
+// a default database named after the service. Returns the database name (or "").
+func createDefaultDatabase(docker *remote.Docker, containerName, svcTypeName, svcName string, env map[string]string) string {
+	dbName := strings.ReplaceAll(sanitizeName(svcName), "-", "_") + "_db"
+
+	spin := ui.NewSpinner("Waiting for " + svcTypeName + " to be ready...")
+	spin.Start()
+
+	var ready bool
+	for i := 0; i < 30; i++ {
+		time.Sleep(2 * time.Second)
+		var pingCmd string
+		switch svcTypeName {
+		case "mysql", "mariadb":
+			rootPass := env["MYSQL_ROOT_PASSWORD"]
+			if rootPass == "" {
+				rootPass = env["MARIADB_ROOT_PASSWORD"]
+			}
+			pingCmd = fmt.Sprintf(`mysql -uroot -p'%s' -e "SELECT 1" 2>/dev/null`, safeSQLValue(rootPass))
+		case "postgres":
+			pingCmd = `psql -U postgres -c "SELECT 1" -q 2>/dev/null`
+		default:
+			ready = true // redis etc — no DB to create
+		}
+		if pingCmd == "" {
+			break
+		}
+		if _, err := docker.Exec(containerName, pingCmd); err == nil {
+			ready = true
+			break
+		}
+	}
+	spin.Stop()
+
+	if !ready {
+		ui.Info(svcTypeName + " not ready after 60s — skipping default database creation")
+		return ""
+	}
+
+	switch svcTypeName {
+	case "mysql", "mariadb":
+		rootPass := env["MYSQL_ROOT_PASSWORD"]
+		if rootPass == "" {
+			rootPass = env["MARIADB_ROOT_PASSWORD"]
+		}
+		createDB := fmt.Sprintf(`mysql -uroot -p'%s' -e "CREATE DATABASE IF NOT EXISTS %s;" 2>/dev/null`, safeSQLValue(rootPass), dbName)
+		if _, err := docker.Exec(containerName, createDB); err != nil {
+			ui.Info("Could not create default database — create it manually with: CREATE DATABASE " + dbName)
+			return ""
+		}
+		ui.Success(fmt.Sprintf("Default database %q created", dbName))
+		return dbName
+
+	case "postgres":
+		createDB := fmt.Sprintf(`psql -U postgres -c "CREATE DATABASE %s;" 2>/dev/null`, dbName)
+		if _, err := docker.Exec(containerName, createDB); err != nil {
+			ui.Info("Could not create default database — create it manually with: CREATE DATABASE " + dbName)
+			return ""
+		}
+		ui.Success(fmt.Sprintf("Default database %q created", dbName))
+		return dbName
+	}
+
+	return ""
 }
 
 // runServiceList lists all shared services.
@@ -343,28 +396,23 @@ func runServiceList() error {
 		return nil
 	}
 
-	fmt.Println("  " + fmt.Sprintf("%-18s %-25s %-12s %s", "NAME", "IMAGE", "STATUS", "LINKED APPS"))
+	fmt.Println("  " + fmt.Sprintf("%-18s %-25s %-12s %s", "NAME", "IMAGE", "STATUS", "HOST:PORT"))
 	fmt.Println("  " + ui.Faint.Render("──────────────────────────────────────────────────────────────────────────"))
 
 	for _, svc := range st.Services {
 		bullet := ui.StatusBullet(svc.Status)
-		linked := "—"
-		if len(svc.LinkedApps) > 0 {
-			names := make([]string, 0, len(svc.LinkedApps))
-			for appName := range svc.LinkedApps {
-				names = append(names, appName)
-			}
-			linked = strings.Join(names, ", ")
-		}
-		fmt.Printf("  %s %-17s %-25s %-12s %s\n", bullet, svc.Name, ui.Faint.Render(svc.Image), svc.Status, linked)
+		hostPort := fmt.Sprintf("%s:%d", config.SvcContainerShared(svc.Name), svc.Port)
+		fmt.Printf("  %s %-17s %-25s %-12s %s\n", bullet, svc.Name, ui.Faint.Render(svc.Image), svc.Status, ui.Faint.Render(hostPort))
 	}
 
+	fmt.Println()
+	fmt.Printf("  %s\n", ui.Faint.Render("Run 'neo service info <name>' to see credentials"))
 	fmt.Println()
 	return nil
 }
 
-// runServiceLink links a shared service to an app by creating a database+user and injecting env vars.
-func runServiceLink(svcName, appName string) error {
+// runServiceInfo shows connection details for a shared service.
+func runServiceInfo(svcName string) error {
 	_, _, exec, err := mustResolveAndConnect()
 	if err != nil {
 		return err
@@ -378,222 +426,58 @@ func runServiceLink(svcName, appName string) error {
 
 	svc, ok := st.Services[svcName]
 	if !ok {
-		ui.Error(fmt.Sprintf("Shared service %q not found", svcName))
+		ui.Error(fmt.Sprintf("Service %q not found", svcName))
 		return nil
-	}
-
-	appState, ok := st.Apps[appName]
-	if !ok {
-		ui.Error(fmt.Sprintf("App %q not found", appName))
-		return nil
-	}
-
-	if _, already := svc.LinkedApps[appName]; already {
-		ui.Error(fmt.Sprintf("%s is already linked to %s", svcName, appName))
-		return nil
-	}
-
-	docker := remote.NewDocker(exec)
-	containerName := config.SvcContainerShared(svcName)
-
-	// Determine the service type from the image
-	svcTypeName := detectServiceType(svc.Image)
-
-	link := state.Link{
-		EnvVars: make(map[string]string),
-	}
-
-	switch svcTypeName {
-	case "mysql", "mariadb":
-		dbName := strings.ReplaceAll(sanitizeName(appName), "-", "_") + "_db"
-		dbUser := strings.ReplaceAll(sanitizeName(appName), "-", "_")
-		dbPass, _ := app.GenerateValue("hex:32")
-
-		// Validate identifiers are safe for SQL
-		if _, err := safeSQLIdentifier(dbName); err != nil {
-			return fmt.Errorf("invalid database name: %w", err)
-		}
-		if _, err := safeSQLIdentifier(dbUser); err != nil {
-			return fmt.Errorf("invalid user name: %w", err)
-		}
-
-		rootPass := svc.Env[serviceRootEnvKey(svcTypeName)]
-
-		// Wait a moment for the service to be ready, then create database + user
-		spin := ui.NewSpinner(fmt.Sprintf("Creating database %s...", dbName))
-		spin.Start()
-
-		// Create database
-		createDB := fmt.Sprintf(`mysql -uroot -p'%s' -e "CREATE DATABASE IF NOT EXISTS %s;"`, safeSQLValue(rootPass), dbName)
-		if _, err := docker.Exec(containerName, createDB); err != nil {
-			spin.Stop()
-			return fmt.Errorf("create database: %w", err)
-		}
-
-		// Create user
-		createUser := fmt.Sprintf(`mysql -uroot -p'%s' -e "CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; GRANT ALL PRIVILEGES ON %s.* TO '%s'@'%%'; FLUSH PRIVILEGES;"`,
-			safeSQLValue(rootPass), dbUser, safeSQLValue(dbPass), dbName, dbUser)
-		if _, err := docker.Exec(containerName, createUser); err != nil {
-			spin.Stop()
-			return fmt.Errorf("create user: %w", err)
-		}
-		spin.Stop()
-
-		link.Database = dbName
-		link.User = dbUser
-		link.EnvVars["DATABASE_URL"] = fmt.Sprintf("mysql://%s:%s@%s:3306/%s", dbUser, dbPass, containerName, dbName)
-		link.EnvVars["DB_HOST"] = containerName
-		link.EnvVars["DB_PORT"] = "3306"
-		link.EnvVars["DB_DATABASE"] = dbName
-		link.EnvVars["DB_USERNAME"] = dbUser
-		link.EnvVars["DB_PASSWORD"] = dbPass
-
-	case "postgres":
-		dbName := strings.ReplaceAll(sanitizeName(appName), "-", "_") + "_db"
-		dbUser := strings.ReplaceAll(sanitizeName(appName), "-", "_")
-		dbPass, _ := app.GenerateValue("hex:32")
-
-		// Validate identifiers are safe for SQL
-		if _, err := safeSQLIdentifier(dbName); err != nil {
-			return fmt.Errorf("invalid database name: %w", err)
-		}
-		if _, err := safeSQLIdentifier(dbUser); err != nil {
-			return fmt.Errorf("invalid user name: %w", err)
-		}
-
-		spin := ui.NewSpinner(fmt.Sprintf("Creating database %s...", dbName))
-		spin.Start()
-
-		// Create user + database
-		createUser := fmt.Sprintf(`psql -U postgres -c "CREATE USER %s WITH PASSWORD '%s';" 2>/dev/null; true`, dbUser, safeSQLValue(dbPass))
-		if _, err := docker.Exec(containerName, createUser); err != nil {
-			spin.Stop()
-			return fmt.Errorf("create user: %w", err)
-		}
-
-		createDB := fmt.Sprintf(`psql -U postgres -c "CREATE DATABASE %s OWNER %s;" 2>/dev/null; true`, dbName, dbUser)
-		if _, err := docker.Exec(containerName, createDB); err != nil {
-			spin.Stop()
-			return fmt.Errorf("create database: %w", err)
-		}
-		spin.Stop()
-
-		link.Database = dbName
-		link.User = dbUser
-		link.EnvVars["DATABASE_URL"] = fmt.Sprintf("postgres://%s:%s@%s:5432/%s", dbUser, dbPass, containerName, dbName)
-		link.EnvVars["DB_HOST"] = containerName
-		link.EnvVars["DB_PORT"] = "5432"
-		link.EnvVars["DB_DATABASE"] = dbName
-		link.EnvVars["DB_USERNAME"] = dbUser
-		link.EnvVars["DB_PASSWORD"] = dbPass
-
-	case "redis":
-		// Redis uses DB numbers, assign the next available
-		dbNum := len(svc.LinkedApps)
-		link.EnvVars["REDIS_URL"] = fmt.Sprintf("redis://%s:6379/%d", containerName, dbNum)
-		link.EnvVars["REDIS_HOST"] = containerName
-		link.EnvVars["REDIS_PORT"] = "6379"
-		link.EnvVars["REDIS_DB"] = fmt.Sprintf("%d", dbNum)
-
-	default:
-		ui.Error(fmt.Sprintf("Don't know how to link service type %q. Set env vars manually with neo env set.", svcTypeName))
-		return nil
-	}
-
-	// Inject env vars into the app
-	if appState.Env == nil {
-		appState.Env = make(map[string]string)
-	}
-	for k, v := range link.EnvVars {
-		appState.Env[k] = v
-	}
-
-	// Update state
-	svc.LinkedApps[appName] = link
-	st.Services[svcName] = svc
-	st.Apps[appName] = appState
-	state.Save(exec, st)
-
-	// Restart app to pick up new env vars
-	if appState.Status == "running" {
-		appContainer := config.AppContainer(appName)
-		spin := ui.NewSpinner(fmt.Sprintf("Restarting %s...", appName))
-		spin.Start()
-		docker.Restart(appContainer)
-		// Also restart workers
-		for wName := range appState.Workers {
-			docker.Restart(fmt.Sprintf("app-%s-worker-%s", appName, wName))
-		}
-		spin.Stop()
 	}
 
 	card := ui.NewCard()
-	card.Add(ui.Green.Render("✓") + fmt.Sprintf(" Linked %s → %s", svcName, appName))
+	card.Add(ui.Bold.Render(svc.Name) + "  " + ui.Faint.Render(svc.Image))
+	card.Add(fmt.Sprintf("Status: %s %s", ui.StatusBullet(svc.Status), svc.Status))
 	card.Blank()
-	if link.Database != "" {
-		card.AddKV("Database", link.Database)
-		card.AddKV("User", link.User)
-	}
-	card.Add("Injected env vars:")
-	for k := range link.EnvVars {
-		card.Add("  " + k)
-	}
+	printConnInfoLines(card, svc, "")
 	card.Render()
 
 	return nil
 }
 
-// runServiceUnlink removes the link between a shared service and an app.
-func runServiceUnlink(svcName, appName string) error {
-	_, _, exec, err := mustResolveAndConnect()
-	if err != nil {
-		return err
-	}
-	defer exec.Close()
+// printConnInfoLines adds connection detail lines to a card based on service type.
+// defaultDB is the auto-created database name (empty string if none).
+func printConnInfoLines(card *ui.Card, svc state.SharedService, defaultDB string) {
+	containerName := config.SvcContainerShared(svc.Name)
+	svcType := detectServiceType(svc.Image)
 
-	st, err := state.Load(exec)
-	if err != nil {
-		return fmt.Errorf("load state: %w", err)
-	}
+	card.Add("Connection details (within Docker network):")
+	card.AddKV("  Host", containerName)
+	card.AddKV("  Port", fmt.Sprintf("%d", svc.Port))
 
-	svc, ok := st.Services[svcName]
-	if !ok {
-		ui.Error(fmt.Sprintf("Shared service %q not found", svcName))
-		return nil
+	dbPlaceholder := "<your_db>"
+	if defaultDB != "" {
+		dbPlaceholder = defaultDB
 	}
 
-	link, linked := svc.LinkedApps[appName]
-	if !linked {
-		ui.Error(fmt.Sprintf("%s is not linked to %s", svcName, appName))
-		return nil
-	}
-
-	appState, appOk := st.Apps[appName]
-
-	// Remove injected env vars from the app
-	if appOk {
-		for k := range link.EnvVars {
-			delete(appState.Env, k)
+	switch svcType {
+	case "mysql", "mariadb":
+		rootPass := svc.Env["MYSQL_ROOT_PASSWORD"]
+		if rootPass == "" {
+			rootPass = svc.Env["MARIADB_ROOT_PASSWORD"]
 		}
-		st.Apps[appName] = appState
-	}
-
-	// Remove link from service
-	delete(svc.LinkedApps, appName)
-	st.Services[svcName] = svc
-	state.Save(exec, st)
-
-	// Restart app if running
-	if appOk && appState.Status == "running" {
-		docker := remote.NewDocker(exec)
-		docker.Restart(config.AppContainer(appName))
-		for wName := range appState.Workers {
-			docker.Restart(fmt.Sprintf("app-%s-worker-%s", appName, wName))
+		card.AddKV("  User", "root")
+		card.AddKV("  Password", rootPass)
+		if defaultDB != "" {
+			card.AddKV("  Database", defaultDB)
 		}
+		card.AddKV("  URL", fmt.Sprintf("mysql://root:%s@%s:3306/%s", rootPass, containerName, dbPlaceholder))
+	case "postgres":
+		rootPass := svc.Env["POSTGRES_PASSWORD"]
+		card.AddKV("  User", "postgres")
+		card.AddKV("  Password", rootPass)
+		if defaultDB != "" {
+			card.AddKV("  Database", defaultDB)
+		}
+		card.AddKV("  URL", fmt.Sprintf("postgres://postgres:%s@%s:5432/%s", rootPass, containerName, dbPlaceholder))
+	case "redis":
+		card.AddKV("  URL", fmt.Sprintf("redis://%s:6379", containerName))
 	}
-
-	ui.Success(fmt.Sprintf("Unlinked %s from %s. Database and data preserved.", svcName, appName))
-	return nil
 }
 
 // runServiceManage starts/stops/restarts a shared service.
@@ -627,25 +511,6 @@ func runServiceManage(svcName, action string) error {
 		actionErr = docker.Start(containerName)
 		svc.Status = "running"
 	case "stop":
-		if len(svc.LinkedApps) > 0 {
-			spin.Stop()
-			names := make([]string, 0, len(svc.LinkedApps))
-			for appName := range svc.LinkedApps {
-				names = append(names, appName)
-			}
-			var confirm bool
-			huh.NewConfirm().
-				Title(fmt.Sprintf("%s is linked to %s. Stop anyway?", svcName, strings.Join(names, ", "))).
-				Affirmative("Yes, stop").
-				Negative("Cancel").
-				Value(&confirm).
-				Run() //nolint:errcheck
-			if !confirm {
-				return nil
-			}
-			spin = ui.NewSpinner(fmt.Sprintf("Stopping %s...", svcName))
-			spin.Start()
-		}
 		actionErr = docker.Stop(containerName)
 		svc.Status = "stopped"
 	case "restart":
@@ -680,19 +545,8 @@ func runServiceRemove(svcName string) error {
 		return err
 	}
 
-	svc, ok := st.Services[svcName]
-	if !ok {
+	if _, ok := st.Services[svcName]; !ok {
 		ui.Error(fmt.Sprintf("Shared service %q not found", svcName))
-		return nil
-	}
-
-	if len(svc.LinkedApps) > 0 {
-		names := make([]string, 0, len(svc.LinkedApps))
-		for appName := range svc.LinkedApps {
-			names = append(names, appName)
-		}
-		ui.Error(fmt.Sprintf("Cannot remove %s — still linked to: %s", svcName, strings.Join(names, ", ")))
-		ui.Info("Unlink all apps first: neo service unlink " + svcName + " <app>")
 		return nil
 	}
 
@@ -744,25 +598,25 @@ func runServiceLogs(svcName string, tail int, follow bool) error {
 	return docker.Logs(config.SvcContainerShared(svcName), tail, follow, os.Stdout)
 }
 
-// safeSQLIdentifier validates and returns a safe SQL identifier (alphanumeric and underscores only).
-// Returns an error if the name contains unsafe characters.
-func safeSQLIdentifier(name string) (string, error) {
-	for _, c := range name {
-		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
-			return "", fmt.Errorf("invalid SQL identifier character %q in %q", string(c), name)
-		}
-	}
-	if name == "" {
-		return "", fmt.Errorf("empty SQL identifier")
-	}
-	return name, nil
-}
-
 // safeSQLValue escapes a value for use in single-quoted SQL strings.
 func safeSQLValue(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "'", "\\'")
 	return s
+}
+
+// serviceRootEnvKey returns the root password env var name for a service type.
+func serviceRootEnvKey(svcType string) string {
+	switch svcType {
+	case "mysql":
+		return "MYSQL_ROOT_PASSWORD"
+	case "mariadb":
+		return "MARIADB_ROOT_PASSWORD"
+	case "postgres":
+		return "POSTGRES_PASSWORD"
+	default:
+		return ""
+	}
 }
 
 // detectServiceType determines the service type from a Docker image name.
@@ -781,18 +635,3 @@ func detectServiceType(image string) string {
 		return "unknown"
 	}
 }
-
-// serviceRootEnvKey returns the root password env var for a service type.
-func serviceRootEnvKey(svcType string) string {
-	switch svcType {
-	case "mysql":
-		return "MYSQL_ROOT_PASSWORD"
-	case "mariadb":
-		return "MARIADB_ROOT_PASSWORD"
-	case "postgres":
-		return "POSTGRES_PASSWORD"
-	default:
-		return ""
-	}
-}
-

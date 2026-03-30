@@ -4,8 +4,9 @@ package license
 type Feature string
 
 const (
-	FeatureMultiServer Feature = "multi_server"
-	FeatureBackup      Feature = "backup"
+	FeatureMultiServer     Feature = "multi_server"
+	FeatureBackup          Feature = "backup"
+	FeatureParallelUploads Feature = "parallel_uploads"
 )
 
 // Plan represents a subscription tier.
@@ -26,8 +27,9 @@ type gate struct {
 
 // gates is the single source of truth for what Neo+ unlocks.
 var gates = map[Feature]gate{
-	FeatureMultiServer: {"Servers", 1, -1},   // Free: 1 server, Plus: unlimited
-	FeatureBackup:      {"Backups", 0, -1},   // Free: blocked, Plus: unlimited
+	FeatureMultiServer:     {"Servers", 1, -1},           // Free: 1 server, Plus: unlimited
+	FeatureBackup:          {"Backups", 0, -1},           // Free: blocked, Plus: unlimited
+	FeatureParallelUploads: {"Parallel uploads", 2, 5},   // Free: 2 streams, Plus: 5 streams
 }
 
 // Allowed returns true if the feature is permitted given the current plan and usage count.
@@ -71,5 +73,5 @@ func FeatureDescription(f Feature) string {
 
 // AllFeatures returns all gated features for display purposes.
 func AllFeatures() []Feature {
-	return []Feature{FeatureMultiServer, FeatureBackup}
+	return []Feature{FeatureMultiServer, FeatureBackup, FeatureParallelUploads}
 }

@@ -234,14 +234,6 @@ func runRemove(appName string, force bool) error {
 
 	spin.Stop()
 
-	// Clean up shared service links
-	for svcName, svc := range st.Services {
-		if _, linked := svc.LinkedApps[appName]; linked {
-			delete(svc.LinkedApps, appName)
-			st.Services[svcName] = svc
-		}
-	}
-
 	// Update state
 	delete(st.Apps, appName)
 	state.Save(exec, st)
@@ -292,14 +284,7 @@ func runUpdate(appName string) error {
 	docker.Remove(containerName)
 
 	// Rebuild volumes list
-	var volumes []string
-	for name, vol := range app.Volumes {
-		if vol.Mount != nil {
-			volumes = append(volumes, fmt.Sprintf("%s:%s", *vol.Mount, vol.ContainerPath))
-		} else {
-			volumes = append(volumes, fmt.Sprintf("%s:%s", name, vol.ContainerPath))
-		}
-	}
+	volumes := volumesFromState(app.Volumes)
 
 	// Start new container with same config
 	updateOpts := remote.RunOpts{
@@ -446,14 +431,7 @@ func runWorkerRedeploy(appName, workerName string) error {
 	docker := remote.NewDocker(exec)
 
 	// Rebuild volumes list from app config
-	var volumes []string
-	for name, vol := range app.Volumes {
-		if vol.Mount != nil {
-			volumes = append(volumes, fmt.Sprintf("%s:%s", *vol.Mount, vol.ContainerPath))
-		} else {
-			volumes = append(volumes, fmt.Sprintf("%s:%s", name, vol.ContainerPath))
-		}
-	}
+	volumes := volumesFromState(app.Volumes)
 
 	spin := ui.NewSpinner(fmt.Sprintf("Redeploying worker %s...", workerName))
 	spin.Start()

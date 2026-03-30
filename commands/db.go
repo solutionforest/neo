@@ -50,6 +50,64 @@ Pass 'shell' as a second argument to open a raw mysql/psql shell instead:
 
 // ─── entry points ─────────────────────────────────────────────────────────────
 
+// runServiceDBTUI opens the DB browser for a shared service directly (no app needed).
+func runServiceDBTUI(svcName string) error {
+	_, _, sshExec, err := mustResolveAndConnect()
+	if err != nil {
+		return err
+	}
+	defer sshExec.Close()
+
+	st, err := state.Load(sshExec)
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+
+	db, err := resolveServiceDB(st, svcName)
+	if err != nil {
+		return err
+	}
+
+	p := tea.NewProgram(newDbBrowser(db, sshExec), tea.WithAltScreen())
+	_, runErr := p.Run()
+	return runErr
+}
+
+// resolveServiceDB builds a dbConn for a shared service using its root credentials.
+func resolveServiceDB(st *state.State, svcName string) (*dbConn, error) {
+	svc, ok := st.Services[svcName]
+	if !ok {
+		return nil, fmt.Errorf("service %q not found", svcName)
+	}
+	svcType := detectServiceType(svc.Image)
+	container := config.SvcContainerShared(svcName)
+
+	switch svcType {
+	case "mysql", "mariadb":
+		rootPass := svc.Env["MYSQL_ROOT_PASSWORD"]
+		if rootPass == "" {
+			rootPass = svc.Env["MARIADB_ROOT_PASSWORD"]
+		}
+		return &dbConn{
+			Type:      svcType,
+			Container: container,
+			User:      "root",
+			Password:  rootPass,
+			Database:  "", // shows all databases
+		}, nil
+	case "postgres":
+		return &dbConn{
+			Type:      "postgres",
+			Container: container,
+			User:      "postgres",
+			Password:  svc.Env["POSTGRES_PASSWORD"],
+			Database:  "postgres",
+		}, nil
+	default:
+		return nil, fmt.Errorf("service %q (%s) is not a browsable database", svcName, svc.Image)
+	}
+}
+
 func runDbTUI(appName string) error {
 	_, _, sshExec, err := mustResolveAndConnect()
 	if err != nil {
@@ -67,7 +125,7 @@ func runDbTUI(appName string) error {
 		return err
 	}
 	if db.Container == "" {
-		return fmt.Errorf("database container not found\nThe TUI requires a neo-managed service — use 'neo service link' to attach one")
+		return fmt.Errorf("database container not found — set DB_HOST/DB_USERNAME/DB_PASSWORD/DB_DATABASE env vars on the app")
 	}
 
 	p := tea.NewProgram(newDbBrowser(db, sshExec), tea.WithAltScreen())
@@ -140,23 +198,7 @@ func resolveAppDB(st *state.State, appName string) (*dbConn, error) {
 		return nil, fmt.Errorf("app %q not found", appName)
 	}
 
-	// 1. Shared service links (most common — created via `neo service link`)
-	for svcName, svc := range st.Services {
-		if link, linked := svc.LinkedApps[appName]; linked {
-			dbType := detectServiceType(svc.Image)
-			if dbType == "mysql" || dbType == "mariadb" || dbType == "postgres" {
-				return &dbConn{
-					Type:      dbType,
-					Container: config.SvcContainerShared(svcName),
-					User:      link.User,
-					Password:  link.EnvVars["DB_PASSWORD"],
-					Database:  link.Database,
-				}, nil
-			}
-		}
-	}
-
-	// 2. Bundled services (legacy, e.g. ghost-mysql)
+	// 1. Bundled services (e.g. ghost-mysql installed via template)
 	for svcName, svc := range app.Services {
 		dbType := detectServiceType(svc.Image)
 		if dbType == "mysql" || dbType == "mariadb" || dbType == "postgres" {
@@ -187,7 +229,7 @@ func resolveAppDB(st *state.State, appName string) (*dbConn, error) {
 		}, nil
 	}
 
-	return nil, fmt.Errorf("no database found for app %q — run 'neo service link' to connect one", appName)
+	return nil, fmt.Errorf("no database found for app %q — set DB_HOST/DB_USERNAME/DB_PASSWORD/DB_DATABASE env vars", appName)
 }
 
 // ─── SQL helpers ──────────────────────────────────────────────────────────────

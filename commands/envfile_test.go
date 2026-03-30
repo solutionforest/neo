@@ -184,6 +184,77 @@ func TestUnquote(t *testing.T) {
 	}
 }
 
+func TestInterpolateEnvValues(t *testing.T) {
+	env := map[string]string{
+		"APP_KEY":    "secret123",
+		"APP_URL":    "https://example.com",
+		"FULL_URL":   "${APP_URL}/api",
+		"NESTED_KEY": "${APP_KEY}",
+		"NO_REF":     "plain-value",
+		"UNRESOLVED": "${MISSING_VAR}",
+		"MULTI":      "${APP_KEY}:${APP_URL}",
+	}
+
+	result := interpolateEnvValues(env)
+
+	tests := []struct {
+		key  string
+		want string
+	}{
+		{"APP_KEY", "secret123"},
+		{"FULL_URL", "https://example.com/api"},
+		{"NESTED_KEY", "secret123"},
+		{"NO_REF", "plain-value"},
+		{"UNRESOLVED", "${MISSING_VAR}"},
+		{"MULTI", "secret123:https://example.com"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			if result[tt.key] != tt.want {
+				t.Errorf("interpolateEnvValues[%q] = %q, want %q", tt.key, result[tt.key], tt.want)
+			}
+		})
+	}
+}
+
+func TestInterpolateStringFromOS(t *testing.T) {
+	os.Setenv("NEO_TEST_INTERP_VAR", "from-os")
+	defer os.Unsetenv("NEO_TEST_INTERP_VAR")
+
+	env := map[string]string{}
+	result := interpolateString("val=${NEO_TEST_INTERP_VAR}", env)
+	if result != "val=from-os" {
+		t.Errorf("got %q, want %q", result, "val=from-os")
+	}
+}
+
+func TestInterpolateStringEnvMapTakesPrecedence(t *testing.T) {
+	os.Setenv("NEO_TEST_INTERP_VAR2", "from-os")
+	defer os.Unsetenv("NEO_TEST_INTERP_VAR2")
+
+	env := map[string]string{"NEO_TEST_INTERP_VAR2": "from-map"}
+	result := interpolateString("${NEO_TEST_INTERP_VAR2}", env)
+	if result != "from-map" {
+		t.Errorf("got %q, want %q", result, "from-map")
+	}
+}
+
+func TestInterpolateStringNoPattern(t *testing.T) {
+	result := interpolateString("no-refs-here", nil)
+	if result != "no-refs-here" {
+		t.Errorf("got %q, want %q", result, "no-refs-here")
+	}
+}
+
+func TestInterpolateStringPartialPattern(t *testing.T) {
+	// Incomplete ${... without closing brace
+	result := interpolateString("prefix${UNCLOSED", nil)
+	if result != "prefix${UNCLOSED" {
+		t.Errorf("got %q, want %q", result, "prefix${UNCLOSED")
+	}
+}
+
 func TestLooksLikeSecret(t *testing.T) {
 	tests := []struct {
 		key  string
