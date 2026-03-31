@@ -1019,6 +1019,9 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		}
 	}
 
+	// Prune old images in the background (best-effort, never blocks or fails the deploy)
+	go docker.PruneImages(fmt.Sprintf("neo-%s", appName), imageTag)
+
 	// Success card
 	card := ui.NewCard()
 	card.Add(ui.Green.Render("✓") + " " + appName + " is live!")
@@ -1998,6 +2001,9 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile,
 			ui.Error(fmt.Sprintf("[%s] post_deploy hook failed: %s", envName, err))
 		}
 	}
+
+	// Prune old images in the background
+	go docker.PruneImages(fmt.Sprintf("neo-%s", appName), imageTag)
 
 	url := ""
 	if domain != "" {

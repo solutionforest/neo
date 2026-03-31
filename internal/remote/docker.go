@@ -215,6 +215,35 @@ func (d *Docker) VolumeSize(name string) (string, error) {
 	))
 }
 
+// PruneImages removes dangling images and old versioned images for the given
+// app prefix (e.g. "neo-myapp"), keeping only the current image tag.
+// Errors are silently ignored — pruning is best-effort and must not block deploys.
+func (d *Docker) PruneImages(appPrefix, keepTag string) {
+	// 1. Remove dangling images (untagged layers left over from builds/loads)
+	d.exec.RunQuiet("docker image prune -f")
+
+	// 2. Remove old versioned images for this app, keeping the current one
+	// List all image IDs+tags for this app prefix, then delete anything that isn't keepTag
+	out, err := d.exec.Run(fmt.Sprintf(
+		"docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | grep %s",
+		ssh.ShellQuote("^"+appPrefix+":"),
+	))
+	if err != nil || out == "" {
+		return
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		parts := strings.Fields(line)
+		if len(parts) != 2 {
+			continue
+		}
+		tag, id := parts[0], parts[1]
+		if tag == keepTag {
+			continue // keep current image
+		}
+		d.exec.RunQuiet(fmt.Sprintf("docker rmi %s 2>/dev/null || true", ssh.ShellQuote(id)))
+	}
+}
+
 // RemoveVolume removes a Docker volume.
 func (d *Docker) RemoveVolume(name string) error {
 	return d.exec.RunQuiet(fmt.Sprintf("docker volume rm %s", ssh.ShellQuote(name)))
