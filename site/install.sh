@@ -25,6 +25,14 @@ ARCH="$(uname -m)"
 case "$ARCH" in
     x86_64|amd64) ARCH="amd64" ;;
     arm64|aarch64) ARCH="arm64" ;;
+    i686|i386)
+        # 32-bit Git Bash on 64-bit Windows reports i686; check real arch
+        if [ "$OS" = "windows" ] && [ "$PROCESSOR_ARCHITECTURE" = "AMD64" ]; then
+            ARCH="amd64"
+        else
+            echo "Error: 32-bit systems are not supported."; exit 1
+        fi
+        ;;
     *) echo "Error: unsupported architecture: $ARCH"; exit 1 ;;
 esac
 
