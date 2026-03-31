@@ -268,6 +268,13 @@ func dbDescribeQuery(dbType, tableName string) string {
 	return "SHOW COLUMNS FROM " + tableName
 }
 
+func dbBrowseQuery(dbType, tableName string) string {
+	if dbType == "postgres" {
+		return fmt.Sprintf(`SELECT * FROM "%s" LIMIT 100`, tableName)
+	}
+	return fmt.Sprintf("SELECT * FROM `%s` LIMIT 100", tableName)
+}
+
 // execRemoteQuery runs SQL via docker exec on the DB container and returns headers + rows.
 func execRemoteQuery(sshExec *neossh.Executor, db *dbConn, sql string) ([]string, []table.Row, error) {
 	var cmd string
@@ -513,19 +520,20 @@ type dbQueryDoneMsg struct {
 }
 
 type dbBrowserModel struct {
-	db          *dbConn
-	sshExec     *neossh.Executor
-	state       dbViewState
-	tbl         table.Model
-	input       textinput.Model
-	spin        spinner.Model
-	lastQuery   string
-	isTableView bool   // true when showing table list (enables 'd' to describe)
-	statusLine  string // shown in query bar when not editing
-	errMsg      string
-	width       int
-	height      int
-	ready       bool
+	db           *dbConn
+	sshExec      *neossh.Executor
+	state        dbViewState
+	tbl          table.Model
+	input        textinput.Model
+	spin         spinner.Model
+	lastQuery    string
+	isTableView  bool   // true when showing table list
+	currentTable string // selected table name (for d/enter from table list)
+	statusLine   string // shown in query bar when not editing
+	errMsg       string
+	width        int
+	height       int
+	ready        bool
 }
 
 // Lipgloss styles used in the TUI.
@@ -643,25 +651,55 @@ func (m dbBrowserModel) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.input.Focus()
 
 	case "t":
+		// Go back to table list from anywhere
 		sql := dbTablesQuery(m.db.Type)
 		m.lastQuery = sql
 		m.isTableView = true
+		m.currentTable = ""
 		m.statusLine = "tables"
 		m.state = dbStateLoading
 		return m, tea.Batch(m.spin.Tick, m.doQuery(sql))
 
-	case "d", "enter":
+	case "enter":
+		// Browse table data
+		tableName := ""
 		if m.isTableView {
 			row := m.tbl.SelectedRow()
 			if len(row) > 0 {
-				tableName := row[0]
-				sql := dbDescribeQuery(m.db.Type, tableName)
-				m.lastQuery = sql
-				m.isTableView = false
-				m.statusLine = "DESCRIBE " + tableName
-				m.state = dbStateLoading
-				return m, tea.Batch(m.spin.Tick, m.doQuery(sql))
+				tableName = row[0]
 			}
+		} else if m.currentTable != "" {
+			tableName = m.currentTable
+		}
+		if tableName != "" {
+			sql := dbBrowseQuery(m.db.Type, tableName)
+			m.lastQuery = sql
+			m.isTableView = false
+			m.currentTable = tableName
+			m.statusLine = tableName + "  (LIMIT 100)"
+			m.state = dbStateLoading
+			return m, tea.Batch(m.spin.Tick, m.doQuery(sql))
+		}
+
+	case "d":
+		// Describe table structure
+		tableName := ""
+		if m.isTableView {
+			row := m.tbl.SelectedRow()
+			if len(row) > 0 {
+				tableName = row[0]
+			}
+		} else if m.currentTable != "" {
+			tableName = m.currentTable
+		}
+		if tableName != "" {
+			sql := dbDescribeQuery(m.db.Type, tableName)
+			m.lastQuery = sql
+			m.isTableView = false
+			m.currentTable = tableName
+			m.statusLine = "DESCRIBE " + tableName
+			m.state = dbStateLoading
+			return m, tea.Batch(m.spin.Tick, m.doQuery(sql))
 		}
 	}
 
@@ -748,6 +786,9 @@ func (m dbBrowserModel) View() string {
 	sb.WriteString("\n")
 	if m.state == dbStateQuerying {
 		sb.WriteString("  " + dbStyleFaint.Render("enter: run query  ·  esc: cancel"))
+	} else if m.isTableView {
+		hint := "↑↓ scroll  ·  enter browse  ·  d describe  ·  / query  ·  q quit"
+		sb.WriteString("  " + dbStyleFaint.Render(hint))
 	} else {
 		hint := "↑↓ scroll  ·  t tables  ·  d describe  ·  / query  ·  q quit"
 		sb.WriteString("  " + dbStyleFaint.Render(hint))
