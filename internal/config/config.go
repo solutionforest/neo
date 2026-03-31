@@ -11,12 +11,15 @@ import (
 // Override at build time via: -ldflags "-X github.com/vxero/neo/internal/config.DefaultAPIBaseURL=..."
 var DefaultAPIBaseURL = "https://neo.vxero.dev/api"
 
+// DefaultInstallURL is the web route for the curl | sh install script (no /api prefix).
+// Override at build time via: -ldflags "-X github.com/vxero/neo/internal/config.DefaultInstallURL=..."
+var DefaultInstallURL = "https://neo.vxero.dev/neo"
+
 // Derived URL vars — initialized from DefaultAPIBaseURL at startup, so they
 // automatically pick up any ldflags-stamped value.
 var (
 	DefaultVersionURL      = DefaultAPIBaseURL + "/neo/version.json" // GET /api/neo/version.json
 	DefaultDownloadBaseURL = DefaultAPIBaseURL + "/download"         // GET /api/download/{os}/{arch}
-	DefaultInstallURL      = DefaultAPIBaseURL + "/neo"              // GET /api/neo  (curl | sh)
 )
 
 // Remaining defaults — not URL-based, kept as constants.

@@ -5,13 +5,15 @@ GO_IMAGE ?= golang:1.24-alpine
 
 # Staging endpoints — injected at build time for staging binaries
 STAGING_LICENSE_URL  := https://neo-staging.vxero.dev/api/license
-STAGING_API_BASE_URL := https://get-staging.vxero.dev/neo
+STAGING_API_BASE_URL := https://neo-staging.vxero.dev/api
+STAGING_INSTALL_URL  := https://neo-staging.vxero.dev/neo
 
 # Auto-detect staging: if VERSION contains "-staging", bake in the staging URLs.
 ifneq (,$(findstring -staging,$(VERSION)))
 LDFLAGS := -s -w -X main.version=$(VERSION) \
 	-X github.com/vxero/neo/internal/license.DefaultLicenseAPIURL=$(STAGING_LICENSE_URL) \
-	-X github.com/vxero/neo/internal/config.DefaultAPIBaseURL=$(STAGING_API_BASE_URL)
+	-X github.com/vxero/neo/internal/config.DefaultAPIBaseURL=$(STAGING_API_BASE_URL) \
+	-X github.com/vxero/neo/internal/config.DefaultInstallURL=$(STAGING_INSTALL_URL)
 else
 LDFLAGS := -s -w -X main.version=$(VERSION)
 endif

@@ -22,6 +22,7 @@ var (
 	// Staging endpoints — injected when version contains "-staging"
 	stagingLicenseURL  = envOr("NEO_STAGING_LICENSE_URL", "https://neo-staging.vxero.dev/api/license")
 	stagingAPIBaseURL  = envOr("NEO_STAGING_API_BASE_URL", "https://neo-staging.vxero.dev/api")
+	stagingInstallURL  = envOr("NEO_STAGING_INSTALL_URL", "https://neo-staging.vxero.dev/neo")
 
 	mu       sync.Mutex
 	building bool
@@ -120,8 +121,9 @@ func runBuild(version string) buildResponse {
 	if strings.Contains(version, "-staging") {
 		ldflags += fmt.Sprintf(
 			" -X github.com/vxero/neo/internal/license.DefaultLicenseAPIURL=%s"+
-				" -X github.com/vxero/neo/internal/config.DefaultAPIBaseURL=%s",
-			stagingLicenseURL, stagingAPIBaseURL,
+				" -X github.com/vxero/neo/internal/config.DefaultAPIBaseURL=%s"+
+				" -X github.com/vxero/neo/internal/config.DefaultInstallURL=%s",
+			stagingLicenseURL, stagingAPIBaseURL, stagingInstallURL,
 		)
 	}
 	var logs strings.Builder
