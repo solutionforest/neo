@@ -10,6 +10,7 @@ import (
 	"github.com/vxero/neo/internal/app"
 	"github.com/vxero/neo/internal/config"
 	"github.com/vxero/neo/internal/remote"
+	neossh "github.com/vxero/neo/internal/ssh"
 	"github.com/vxero/neo/internal/state"
 	"github.com/vxero/neo/internal/ui"
 )
@@ -278,11 +279,12 @@ func runInstall(appName string) error {
 			dbPass, _ := app.GenerateValue("hex:32")
 			rootPass := shared.Env[serviceRootEnvKey(svcType)]
 
-			createDB := fmt.Sprintf(`mysql -uroot -p'%s' -e "CREATE DATABASE IF NOT EXISTS %s;"`, safeSQLValue(rootPass), dbName)
+			safeDBName := neossh.SafeSQLIdentifierMySQL(dbName)
+			createDB := fmt.Sprintf(`mysql -uroot -p'%s' -e "CREATE DATABASE IF NOT EXISTS %s;"`, safeSQLValue(rootPass), safeDBName)
 			docker.Exec(containerName, createDB)
 
 			createUser := fmt.Sprintf(`mysql -uroot -p'%s' -e "CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; GRANT ALL PRIVILEGES ON %s.* TO '%s'@'%%'; FLUSH PRIVILEGES;"`,
-				safeSQLValue(rootPass), dbUser, safeSQLValue(dbPass), dbName, dbUser)
+				safeSQLValue(rootPass), safeSQLValue(dbUser), safeSQLValue(dbPass), safeDBName, safeSQLValue(dbUser))
 			docker.Exec(containerName, createUser)
 
 			stateApp.Env["database__connection__host"] = containerName
@@ -295,10 +297,12 @@ func runInstall(appName string) error {
 			dbUser := strings.ReplaceAll(sanitizeName(manifest.Name), "-", "_")
 			dbPass, _ := app.GenerateValue("hex:32")
 
-			createUser := fmt.Sprintf(`psql -U postgres -c "CREATE USER %s WITH PASSWORD '%s';" 2>/dev/null; true`, dbUser, safeSQLValue(dbPass))
+			safeDBUser := neossh.SafeSQLIdentifierPG(dbUser)
+			safeDBName := neossh.SafeSQLIdentifierPG(dbName)
+			createUser := fmt.Sprintf(`psql -U postgres -c "CREATE USER %s WITH PASSWORD '%s';" 2>/dev/null; true`, safeDBUser, safeSQLValue(dbPass))
 			docker.Exec(containerName, createUser)
 
-			createDB := fmt.Sprintf(`psql -U postgres -c "CREATE DATABASE %s OWNER %s;" 2>/dev/null; true`, dbName, dbUser)
+			createDB := fmt.Sprintf(`psql -U postgres -c "CREATE DATABASE %s OWNER %s;" 2>/dev/null; true`, safeDBName, safeDBUser)
 			docker.Exec(containerName, createDB)
 
 			stateApp.Env["DATABASE_URL"] = fmt.Sprintf("postgres://%s:%s@%s:5432/%s", dbUser, dbPass, containerName, dbName)
@@ -441,7 +445,7 @@ func waitForHealth(docker *remote.Docker, container, path string, retries int) b
 	}
 	for i := 0; i < retries; i++ {
 		time.Sleep(3 * time.Second)
-		out, err := docker.Exec(container, fmt.Sprintf("wget -qO- http://localhost%s || true", path))
+		out, err := docker.Exec(container, fmt.Sprintf("wget -qO- http://localhost%s || true", neossh.ShellQuote(path)))
 		if err == nil && out != "" {
 			return true
 		}

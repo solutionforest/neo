@@ -195,8 +195,8 @@ func (c *Caddy) AddRoute(appID string, domains []string, upstream string, opts .
 	}
 
 	cmd := fmt.Sprintf(
-		`curl -sf -X POST %s/config/apps/http/servers/srv0/routes -H "Content-Type: application/json" -d '%s'`,
-		CaddyAdminURL, string(data),
+		`curl -sf -X POST %s/config/apps/http/servers/srv0/routes -H "Content-Type: application/json" -d %s`,
+		CaddyAdminURL, ssh.ShellQuote(string(data)),
 	)
 	return c.exec.RunQuiet(cmd)
 }
@@ -267,8 +267,8 @@ func (c *Caddy) addToAutoHTTPSSkip(domains []string) error {
 		CaddyAdminURL, CaddyAdminURL,
 	))
 	cmd := fmt.Sprintf(
-		`curl -sf -X PUT %s/config/apps/http/servers/srv0/automatic_https/skip -H "Content-Type: application/json" -d '%s'`,
-		CaddyAdminURL, string(data),
+		`curl -sf -X PUT %s/config/apps/http/servers/srv0/automatic_https/skip -H "Content-Type: application/json" -d %s`,
+		CaddyAdminURL, ssh.ShellQuote(string(data)),
 	)
 	return c.exec.RunQuiet(cmd)
 }
@@ -306,8 +306,8 @@ func (c *Caddy) removeFromAutoHTTPSSkip(domains []string) {
 
 	data, _ := json.Marshal(newSkip)
 	c.exec.RunQuiet(fmt.Sprintf(
-		`curl -sf -X PUT %s/config/apps/http/servers/srv0/automatic_https/skip -H "Content-Type: application/json" -d '%s'`,
-		CaddyAdminURL, string(data),
+		`curl -sf -X PUT %s/config/apps/http/servers/srv0/automatic_https/skip -H "Content-Type: application/json" -d %s`,
+		CaddyAdminURL, ssh.ShellQuote(string(data)),
 	))
 }
 
@@ -319,8 +319,8 @@ func (c *Caddy) PatchUpstream(appID string, dial string) error {
 		return err
 	}
 	cmd := fmt.Sprintf(
-		`curl -sf -X PATCH %s/id/%s/handle/0/upstreams/0/dial -H "Content-Type: application/json" -d '%s'`,
-		CaddyAdminURL, appID, string(dialJSON),
+		`curl -sf -X PATCH %s/id/%s/handle/0/upstreams/0/dial -H "Content-Type: application/json" -d %s`,
+		CaddyAdminURL, ssh.ShellQuote(appID), ssh.ShellQuote(string(dialJSON)),
 	)
 	return c.exec.RunQuiet(cmd)
 }
