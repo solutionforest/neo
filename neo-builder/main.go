@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -35,10 +37,11 @@ type buildRequest struct {
 }
 
 type buildResponse struct {
-	Status  string `json:"status"`
-	Version string `json:"version,omitempty"`
-	Log     string `json:"log,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Status    string            `json:"status"`
+	Version   string            `json:"version,omitempty"`
+	Log       string            `json:"log,omitempty"`
+	Error     string            `json:"error,omitempty"`
+	Checksums map[string]string `json:"checksums,omitempty"` // "darwin-arm64" → "sha256:..."
 }
 
 type platform struct {
@@ -152,6 +155,7 @@ func runBuild(version string) buildResponse {
 	}
 
 	start := time.Now()
+	checksums := make(map[string]string)
 
 	for _, p := range platforms {
 		binary := filepath.Join(versionDir, p.Name)
@@ -176,6 +180,19 @@ func runBuild(version string) buildResponse {
 			}
 		}
 
+		// Compute SHA256 for this binary
+		data, err := os.ReadFile(binary)
+		if err != nil {
+			return buildResponse{
+				Status:  "failed",
+				Version: version,
+				Log:     logs.String(),
+				Error:   fmt.Sprintf("failed to read binary for checksum %s-%s: %v", p.OS, p.Arch, err),
+			}
+		}
+		sum := sha256.Sum256(data)
+		checksums[fmt.Sprintf("%s-%s", p.OS, p.Arch)] = "sha256:" + hex.EncodeToString(sum[:])
+
 		logs.WriteString("OK\n\n")
 	}
 
@@ -183,9 +200,10 @@ func runBuild(version string) buildResponse {
 	logs.WriteString(fmt.Sprintf("All platforms built in %s\n", duration))
 
 	return buildResponse{
-		Status:  "completed",
-		Version: version,
-		Log:     logs.String(),
+		Status:    "completed",
+		Version:   version,
+		Log:       logs.String(),
+		Checksums: checksums,
 	}
 }
 
