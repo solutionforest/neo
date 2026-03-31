@@ -7,16 +7,16 @@ import (
 	"path/filepath"
 )
 
-// DefaultAPIBaseURL is the production download/version base URL.
+// DefaultAPIBaseURL is the production API base URL served by neo-cms.
 // Override at build time via: -ldflags "-X github.com/vxero/neo/internal/config.DefaultAPIBaseURL=..."
-var DefaultAPIBaseURL = "https://get.vxero.dev/neo"
+var DefaultAPIBaseURL = "https://neo.vxero.dev/api"
 
 // Derived URL vars — initialized from DefaultAPIBaseURL at startup, so they
 // automatically pick up any ldflags-stamped value.
 var (
-	DefaultVersionURL      = DefaultAPIBaseURL + "/version.json"
-	DefaultDownloadBaseURL = DefaultAPIBaseURL + "/download.php"
-	DefaultInstallURL      = DefaultAPIBaseURL
+	DefaultVersionURL      = DefaultAPIBaseURL + "/neo/version.json" // GET /api/neo/version.json
+	DefaultDownloadBaseURL = DefaultAPIBaseURL + "/download"         // GET /api/download/{os}/{arch}
+	DefaultInstallURL      = DefaultAPIBaseURL + "/neo"              // GET /api/neo  (curl | sh)
 )
 
 // Remaining defaults — not URL-based, kept as constants.

@@ -92,7 +92,7 @@ func runUpgrade() error {
 	// Determine download URL
 	goos := runtime.GOOS
 	goarch := runtime.GOARCH
-	downloadURL := fmt.Sprintf("%s?os=%s&arch=%s", config.DownloadBaseURL(), goos, goarch)
+	downloadURL := fmt.Sprintf("%s/%s/%s", config.DownloadBaseURL(), goos, goarch)
 
 	// Find current binary path
 	execPath, err := os.Executable()

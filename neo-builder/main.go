@@ -21,7 +21,7 @@ var (
 
 	// Staging endpoints — injected when version contains "-staging"
 	stagingLicenseURL  = envOr("NEO_STAGING_LICENSE_URL", "https://neo-staging.vxero.dev/api/license")
-	stagingAPIBaseURL  = envOr("NEO_STAGING_API_BASE_URL", "https://get-staging.vxero.dev/neo")
+	stagingAPIBaseURL  = envOr("NEO_STAGING_API_BASE_URL", "https://neo-staging.vxero.dev/api")
 
 	mu       sync.Mutex
 	building bool
