@@ -56,6 +56,7 @@ var platforms = []platform{
 	{"linux", "amd64", "neo-linux-amd64"},
 	{"linux", "arm64", "neo-linux-arm64"},
 	{"windows", "amd64", "neo-windows-amd64.exe"},
+	{"windows", "arm64", "neo-windows-arm64.exe"},
 }
 
 func main() {
