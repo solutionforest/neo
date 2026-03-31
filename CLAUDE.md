@@ -4,11 +4,11 @@ This is `vxero-neo` (command: `neo`) — a Go CLI for managing remote servers ov
 
 ## Build Requirements
 
-**Docker is the default build path.** We do not rely on the host Go toolchain for normal builds.
+**Docker is the only build path.** We do not rely on the host Go toolchain. **Never run `go build`, `go vet`, or `go run` directly** — always use `make build` which builds inside Docker.
 
 ```bash
 cd neo
-make build       # Dockerized build → bin/neo
+make build       # Dockerized build → bin/neo (ALWAYS use this)
 make build-all   # Dockerized cross-compile → dist/
 make image-build # Runtime image → vxero/neo:latest
 ```

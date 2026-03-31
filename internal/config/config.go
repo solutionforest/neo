@@ -7,14 +7,20 @@ import (
 	"path/filepath"
 )
 
-// Defaults — all configurable URLs and limits in one place.
-// Change these when switching from get.vxero.dev to neo-cms.
-const (
-	DefaultAPIBaseURL      = "https://get.vxero.dev/neo"
+// DefaultAPIBaseURL is the production download/version base URL.
+// Override at build time via: -ldflags "-X github.com/vxero/neo/internal/config.DefaultAPIBaseURL=..."
+var DefaultAPIBaseURL = "https://get.vxero.dev/neo"
+
+// Derived URL vars — initialized from DefaultAPIBaseURL at startup, so they
+// automatically pick up any ldflags-stamped value.
+var (
 	DefaultVersionURL      = DefaultAPIBaseURL + "/version.json"
 	DefaultDownloadBaseURL = DefaultAPIBaseURL + "/download.php"
-	DefaultInstallURL      = "https://get.vxero.dev/neo"
+	DefaultInstallURL      = DefaultAPIBaseURL
+)
 
+// Remaining defaults — not URL-based, kept as constants.
+const (
 	DefaultAgentInstallURL  = "https://get.vxero.dev/agent"
 	DefaultDockerInstallURL = "https://get.docker.com"
 

@@ -14,7 +14,8 @@ import (
 )
 
 // DefaultLicenseAPIURL is the production license validation endpoint.
-const DefaultLicenseAPIURL = "https://neo.vxero.dev/api/license"
+// Override at build time via: -ldflags "-X github.com/vxero/neo/internal/license.DefaultLicenseAPIURL=..."
+var DefaultLicenseAPIURL = "https://neo.vxero.dev/api/license"
 
 // OfflineGraceDays is how many days the CLI trusts a cached validation.
 const OfflineGraceDays = 7
