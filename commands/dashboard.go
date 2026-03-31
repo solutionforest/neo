@@ -1209,6 +1209,10 @@ func tuiServiceActions(svcName string, st *state.State) (bool, error) {
 		{"Connection Info", "info"},
 	}
 
+	if svc.Status == "running" {
+		opts = append(opts, ui.SelectOption{"Open Tunnel  " + ui.Faint.Render("(TablePlus / DataGrip)"), "tunnel"})
+	}
+
 	if isDB && svc.Status == "running" {
 		opts = append(opts, ui.SelectOption{"Browse Database", "db"})
 	}
@@ -1239,6 +1243,8 @@ func tuiServiceActions(svcName string, st *state.State) (bool, error) {
 	case "info":
 		tuiShowServiceInfo(svc)
 		return false, nil
+	case "tunnel":
+		return false, runTunnel(svcName, 0)
 	case "db":
 		return false, runServiceDBTUI(svcName)
 	case "start", "stop", "restart":
