@@ -598,6 +598,9 @@ func (m dbBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errMsg = msg.err.Error()
 		} else {
 			m.errMsg = ""
+			// Clear rows first — SetColumns calls UpdateViewport which renders existing
+			// rows; if column count changed, stale rows cause an index-out-of-range panic.
+			m.tbl.SetRows([]table.Row{})
 			if len(msg.headers) > 0 {
 				cols := buildColumns(msg.headers, msg.rows, m.width)
 				m.tbl.SetColumns(cols)
