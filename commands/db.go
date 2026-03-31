@@ -88,20 +88,37 @@ func resolveServiceDB(st *state.State, svcName string) (*dbConn, error) {
 		if rootPass == "" {
 			rootPass = svc.Env["MARIADB_ROOT_PASSWORD"]
 		}
+		// Prefer app user if available (has host=% and access to the default DB)
+		user, pass := "root", rootPass
+		if appUser := svc.Env["MYSQL_USER"]; appUser != "" {
+			user = appUser
+			pass = svc.Env["MYSQL_PASSWORD"]
+		} else if appUser := svc.Env["MARIADB_USER"]; appUser != "" {
+			user = appUser
+			pass = svc.Env["MARIADB_PASSWORD"]
+		}
+		db := svc.DefaultDB
+		if db == "" {
+			db = "information_schema"
+		}
 		return &dbConn{
 			Type:      svcType,
 			Container: container,
-			User:      "root",
-			Password:  rootPass,
-			Database:  "", // shows all databases
+			User:      user,
+			Password:  pass,
+			Database:  db,
 		}, nil
 	case "postgres":
+		db := svc.DefaultDB
+		if db == "" {
+			db = "postgres"
+		}
 		return &dbConn{
 			Type:      "postgres",
 			Container: container,
 			User:      "postgres",
 			Password:  svc.Env["POSTGRES_PASSWORD"],
-			Database:  "postgres",
+			Database:  db,
 		}, nil
 	default:
 		return nil, fmt.Errorf("service %q (%s) is not a browsable database", svcName, svc.Image)
