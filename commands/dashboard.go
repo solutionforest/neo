@@ -1244,7 +1244,7 @@ func tuiServiceActions(svcName string, st *state.State) (bool, error) {
 	case "start", "stop", "restart":
 		return false, runServiceManage(svcName, action)
 	case "remove":
-		return false, runServiceRemove(svcName)
+		return false, runServiceRemove(svcName, false)
 	}
 
 	return false, nil

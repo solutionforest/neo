@@ -566,7 +566,7 @@ func runServiceRemove(svcName string, deleteVolume bool) error {
 	spin.Start()
 	docker.Remove(containerName)
 	if deleteVolume {
-		docker.VolumeRemove(volumeName)
+		docker.RemoveVolume(volumeName)
 	}
 	spin.Stop()
 
