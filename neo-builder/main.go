@@ -15,9 +15,13 @@ import (
 )
 
 var (
-	sourceDir = envOr("NEO_SOURCE_DIR", "/src/neo")
-	outputDir = envOr("NEO_OUTPUT_DIR", "/output")
+	sourceDir  = envOr("NEO_SOURCE_DIR", "/src/neo")
+	outputDir  = envOr("NEO_OUTPUT_DIR", "/output")
 	listenAddr = envOr("NEO_LISTEN_ADDR", ":9100")
+
+	// Staging endpoints — injected when version contains "-staging"
+	stagingLicenseURL  = envOr("NEO_STAGING_LICENSE_URL", "https://neo-staging.vxero.dev/api/license")
+	stagingAPIBaseURL  = envOr("NEO_STAGING_API_BASE_URL", "https://get-staging.vxero.dev/neo")
 
 	mu       sync.Mutex
 	building bool
@@ -113,6 +117,13 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
 
 func runBuild(version string) buildResponse {
 	ldflags := fmt.Sprintf("-s -w -X main.version=%s", version)
+	if strings.Contains(version, "-staging") {
+		ldflags += fmt.Sprintf(
+			" -X github.com/vxero/neo/internal/license.DefaultLicenseAPIURL=%s"+
+				" -X github.com/vxero/neo/internal/config.DefaultAPIBaseURL=%s",
+			stagingLicenseURL, stagingAPIBaseURL,
+		)
+	}
 	var logs strings.Builder
 
 	// Create versioned output directory
