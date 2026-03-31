@@ -18,5 +18,8 @@ if ! docker info >/dev/null 2>&1; then
     echo "WARNING: Docker daemon failed to start. DinD requires --privileged."
 fi
 
+# Ensure sshd privilege separation directory exists (/run is a tmpfs)
+mkdir -p /run/sshd
+
 # Start sshd in foreground
 exec /usr/sbin/sshd -D -e

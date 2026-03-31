@@ -5,8 +5,9 @@ ARG BASE_IMAGE=fedora:41
 FROM ${BASE_IMAGE}
 
 # Core packages that a real VPS would have
-RUN dnf install -y \
+RUN dnf install -y --allowerasing \
     openssh-server \
+    openssh-clients \
     curl \
     sudo \
     iproute \

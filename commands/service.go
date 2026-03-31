@@ -163,14 +163,17 @@ func newServiceRestartCmd() *cobra.Command {
 }
 
 func newServiceRemoveCmd() *cobra.Command {
-	return &cobra.Command{
+	var deleteVolume bool
+	cmd := &cobra.Command{
 		Use:   "remove <service>",
-		Short: "Remove a shared service (keeps data volumes)",
+		Short: "Remove a shared service",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServiceRemove(args[0])
+			return runServiceRemove(args[0], deleteVolume)
 		},
 	}
+	cmd.Flags().BoolVar(&deleteVolume, "delete-data", false, "also delete the data volume (irreversible)")
+	return cmd
 }
 
 func newServiceLogsCmd() *cobra.Command {
@@ -522,7 +525,7 @@ func runServiceManage(svcName, action string) error {
 }
 
 // runServiceRemove removes a shared service container.
-func runServiceRemove(svcName string) error {
+func runServiceRemove(svcName string, deleteVolume bool) error {
 	_, _, exec, err := mustResolveAndConnect()
 	if err != nil {
 		return err
@@ -539,9 +542,15 @@ func runServiceRemove(svcName string) error {
 		return nil
 	}
 
+	volumeName := svcName + "-data"
+	confirmTitle := fmt.Sprintf("Remove shared service %s? Data volumes will be kept.", svcName)
+	if deleteVolume {
+		confirmTitle = fmt.Sprintf("Remove shared service %s and permanently delete volume %s?", svcName, volumeName)
+	}
+
 	var confirm bool
 	huh.NewConfirm().
-		Title(fmt.Sprintf("Remove shared service %s? Data volumes will be kept.", svcName)).
+		Title(confirmTitle).
 		Affirmative("Yes, remove").
 		Negative("Cancel").
 		Value(&confirm).
@@ -556,12 +565,19 @@ func runServiceRemove(svcName string) error {
 	spin := ui.NewSpinner(fmt.Sprintf("Removing %s...", svcName))
 	spin.Start()
 	docker.Remove(containerName)
+	if deleteVolume {
+		docker.VolumeRemove(volumeName)
+	}
 	spin.Stop()
 
 	delete(st.Services, svcName)
 	state.Save(exec, st)
 
-	ui.Success(fmt.Sprintf("%s removed. Data volumes preserved on server.", svcName))
+	if deleteVolume {
+		ui.Success(fmt.Sprintf("%s removed. Volume %s deleted.", svcName, volumeName))
+	} else {
+		ui.Success(fmt.Sprintf("%s removed. Data volume %s preserved on server.", svcName, volumeName))
+	}
 	return nil
 }
 

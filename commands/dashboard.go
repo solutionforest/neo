@@ -583,12 +583,14 @@ func tuiAppActions(appName string, st *state.State, exec *neossh.Executor) (bool
 
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("  %s  %s\n", ui.Bold.Render(a.Name), ui.Faint.Render(a.Image)))
-		if a.Domain != "" {
+		if domains := a.AllDomains(); len(domains) > 0 {
 			scheme := "https"
 			if a.HTTPOnly {
 				scheme = "http"
 			}
-			sb.WriteString(fmt.Sprintf("  %s\n", ui.Cyan.Render(scheme+"://"+a.Domain)))
+			for _, d := range domains {
+				sb.WriteString(fmt.Sprintf("  %s\n", ui.Cyan.Render(scheme+"://"+d)))
+			}
 		}
 		sb.WriteString(fmt.Sprintf("  Status: %s %s", ui.StatusBullet(a.Status), a.Status))
 		for name := range a.Services {
@@ -624,7 +626,14 @@ func tuiAppActions(appName string, st *state.State, exec *neossh.Executor) (bool
 			opts = append(opts, ui.SelectOption{"Start", "start"})
 		}
 
-		opts = append(opts, ui.SelectOption{"Change Domain", "domain"})
+		domainCount := len(a.AllDomains())
+		domainHint := ui.Faint.Render("none")
+		if domainCount == 1 {
+			domainHint = ui.Faint.Render(a.Domain)
+		} else if domainCount > 1 {
+			domainHint = ui.Faint.Render(fmt.Sprintf("%d domains", domainCount))
+		}
+		opts = append(opts, ui.SelectOption{fmt.Sprintf("%-22s%s", "Manage Domains", domainHint), "domain"})
 		if a.Domain != "" {
 			if a.HTTPOnly {
 				opts = append(opts, ui.SelectOption{"Enable HTTPS", "https-on"})
@@ -675,7 +684,7 @@ func tuiAppActions(appName string, st *state.State, exec *neossh.Executor) (bool
 				return false, err
 			}
 		case "domain":
-			if err := tuiChangeDomain(appName); err != nil {
+			if err := tuiManageDomains(appName); err != nil {
 				return false, err
 			}
 		case "https-on":
@@ -876,24 +885,91 @@ func runSidecarLogs(appName, sidecarName string) error {
 	return docker.Logs(containerName, 50, false, os.Stdout)
 }
 
-// tuiChangeDomain prompts for a new domain and applies it.
-func tuiChangeDomain(appName string) error {
-	var domain string
-	huh.NewInput().
-		Title("New domain for " + appName + " (e.g. app.example.com)").
-		Value(&domain).
-		Run() //nolint:errcheck
+// tuiManageDomains shows a sub-menu for managing all domains on an app.
+func tuiManageDomains(appName string) error {
+	for {
+		_, st, err := mustResolveAndLoadState()
+		if err != nil {
+			return err
+		}
+		a := st.Apps[appName]
+		domains := a.AllDomains()
 
-	if domain == "" {
-		return nil
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("  Domains for %s\n", ui.Bold.Render(appName)))
+		if len(domains) == 0 {
+			sb.WriteString("  " + ui.Faint.Render("No domain configured") + "\n")
+		} else {
+			scheme := "https"
+			if a.HTTPOnly {
+				scheme = "http"
+			}
+			for _, d := range domains {
+				sb.WriteString(fmt.Sprintf("  %s  %s\n", ui.Cyan.Render("→"), scheme+"://"+d))
+			}
+		}
+
+		opts := []ui.SelectOption{
+			{"Set domain (replace all)", "set"},
+			{"Add domain", "add"},
+		}
+		if len(domains) > 0 {
+			opts = append(opts, ui.SelectOption{"Remove a domain", "remove"})
+		}
+		opts = append(opts, ui.SelectOption{"Back", "back"})
+
+		action := ui.Select(sb.String(), opts)
+		switch action {
+		case "", "back":
+			return nil
+		case "set":
+			var domain string
+			huh.NewInput().
+				Title("New domain for "+appName+" (replaces all existing)").
+				Placeholder("app.example.com").
+				Value(&domain).
+				Run() //nolint:errcheck
+			if domain == "" {
+				continue
+			}
+			if err := runDomain(appName, domain, false); err != nil {
+				ui.Error(err.Error())
+				continue
+			}
+			printDNSInstructions(domain)
+		case "add":
+			var domain string
+			huh.NewInput().
+				Title("Additional domain for "+appName).
+				Placeholder("other.example.com").
+				Value(&domain).
+				Run() //nolint:errcheck
+			if domain == "" {
+				continue
+			}
+			if err := runDomain(appName, domain, true); err != nil {
+				ui.Error(err.Error())
+				continue
+			}
+			printDNSInstructions(domain)
+		case "remove":
+			if len(domains) == 0 {
+				continue
+			}
+			removeOpts := make([]ui.SelectOption, 0, len(domains)+1)
+			for _, d := range domains {
+				removeOpts = append(removeOpts, ui.SelectOption{d, d})
+			}
+			removeOpts = append(removeOpts, ui.SelectOption{"Cancel", ""})
+			picked := ui.Select("Remove which domain?", removeOpts)
+			if picked == "" {
+				continue
+			}
+			if err := runDomainRemove(appName, picked); err != nil {
+				ui.Error(err.Error())
+			}
+		}
 	}
-
-	if err := runDomain(appName, domain, false); err != nil {
-		return err
-	}
-
-	printDNSInstructions(domain)
-	return nil
 }
 
 // printDNSInstructions shows DNS setup guidance after a domain is set.

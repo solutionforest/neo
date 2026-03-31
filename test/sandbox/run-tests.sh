@@ -127,7 +127,7 @@ ssh-keygen -t ed25519 -f "$KEY_DIR/id_ed25519" -N "" -q
 for container in $CONTAINERS; do
     docker exec "$container" bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
     docker cp "$KEY_DIR/id_ed25519.pub" "$container:/root/.ssh/authorized_keys"
-    docker exec "$container" chmod 600 /root/.ssh/authorized_keys
+    docker exec "$container" bash -c "chown root:root /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys"
 done
 
 # Verify SSH connectivity on each container
