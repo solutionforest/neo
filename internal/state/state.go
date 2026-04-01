@@ -49,6 +49,7 @@ type HealthCheck struct {
 	Timeout     string `json:"timeout,omitempty"`
 	Retries     int    `json:"retries,omitempty"`
 	StartPeriod string `json:"start_period,omitempty"`
+	Path        string `json:"path,omitempty"` // HTTP path for post-deploy check; persisted across redeploys
 }
 
 // AppWorker represents a background worker container for an app.

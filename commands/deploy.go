@@ -589,6 +589,39 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	}
 	ui.Success("Health check passed")
 
+	// HTTP health check — opt-in, only runs when health.path is configured.
+	// port==0 or no health.path → skipped (no behavior change for existing deployments).
+	// Runs BEFORE Caddy traffic switch: if unhealthy, old container keeps serving (true zero-downtime rollback).
+	if port > 0 {
+		var stateHealth *state.HealthCheck
+		if isRedeploy {
+			stateHealth = existing.Health
+		}
+		var neoHealth *NeoHealth
+		if neoConfig != nil {
+			neoHealth = neoConfig.Health
+		}
+		hOpts := httpHealthOpts(neoHealth, stateHealth)
+		if hOpts.Path != "" {
+			spin = ui.NewSpinner(fmt.Sprintf("Waiting for HTTP health (%s)...", hOpts.Path))
+			spin.Start()
+			httpErr := docker.HTTPHealthCheck(nextName, port, hOpts)
+			spin.Stop()
+			if httpErr != nil {
+				docker.Remove(nextName)
+				if isRedeploy {
+					ui.Error(fmt.Sprintf("HTTP health check failed — rolled back: %s", httpErr))
+					ui.Info(fmt.Sprintf("Old version still running. Debug with: neo logs %s", appName))
+				} else {
+					ui.Error(fmt.Sprintf("HTTP health check failed: %s", httpErr))
+					ui.Info("Fix the issue and re-deploy.")
+				}
+				return nil
+			}
+			ui.Success(fmt.Sprintf("HTTP health OK (%s)", hOpts.Path))
+		}
+	}
+
 	// Determine HTTP mode: redeploy inherits existing setting; first deploy defaults to HTTP-only
 	httpOnly := true
 	if isRedeploy {
@@ -1315,7 +1348,7 @@ func neoBasicAuthToRouteOpts(cfg *NeoConfig) []remote.RouteOptions {
 
 // neoHealthToState converts a NeoHealth config to a state HealthCheck.
 func neoHealthToState(h *NeoHealth) *state.HealthCheck {
-	if h == nil || h.Cmd == "" {
+	if h == nil || (h.Cmd == "" && h.Path == "") {
 		return nil
 	}
 	return &state.HealthCheck{
@@ -1324,7 +1357,34 @@ func neoHealthToState(h *NeoHealth) *state.HealthCheck {
 		Timeout:     h.Timeout,
 		Retries:     h.Retries,
 		StartPeriod: h.StartPeriod,
+		Path:        h.Path,
 	}
+}
+
+// httpHealthOpts builds HTTPHealthOpts from config. Returns opts with empty Path when
+// no health path is configured — callers must check opts.Path != "" before running.
+// Falls back to stateHealth when neoHealth is nil (redeploy without .neo.yml).
+func httpHealthOpts(neoHealth *NeoHealth, stateHealth *state.HealthCheck) remote.HTTPHealthOpts {
+	var path, interval, timeout, startPeriod string
+	var retries int
+	if neoHealth != nil {
+		path, interval, timeout, startPeriod, retries =
+			neoHealth.Path, neoHealth.Interval, neoHealth.Timeout, neoHealth.StartPeriod, neoHealth.Retries
+	} else if stateHealth != nil {
+		path, interval, timeout, startPeriod, retries =
+			stateHealth.Path, stateHealth.Interval, stateHealth.Timeout, stateHealth.StartPeriod, stateHealth.Retries
+	}
+	opts := remote.HTTPHealthOpts{Path: path, Retries: retries}
+	if d, err := time.ParseDuration(interval); err == nil {
+		opts.Interval = d
+	}
+	if d, err := time.ParseDuration(timeout); err == nil {
+		opts.Timeout = d
+	}
+	if d, err := time.ParseDuration(startPeriod); err == nil {
+		opts.StartPeriod = d
+	}
+	return opts
 }
 
 // applyHealth sets RunOpts health check fields from a state HealthCheck.

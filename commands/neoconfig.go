@@ -17,6 +17,7 @@ type NeoHealth struct {
 	Timeout     string `yaml:"timeout,omitempty"`      // e.g. "10s"
 	Retries     int    `yaml:"retries,omitempty"`      // e.g. 3
 	StartPeriod string `yaml:"start_period,omitempty"` // e.g. "40s"
+	Path        string `yaml:"path,omitempty"`         // HTTP path for post-deploy check; empty = disabled
 }
 
 // NeoWorker represents a background worker container in .neo.yml.

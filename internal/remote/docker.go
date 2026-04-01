@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/vxero/neo/internal/config"
 	"github.com/vxero/neo/internal/ssh"
@@ -189,6 +190,71 @@ func (d *Docker) IsPortOpen(name string, port int) bool {
 		"timeout 2 bash -c '</dev/tcp/%s/%d' 2>/dev/null",
 		strings.TrimSpace(ip), port,
 	)) == nil
+}
+
+// HTTPHealthOpts configures the HTTP health check with Docker-compatible semantics.
+type HTTPHealthOpts struct {
+	Path        string        // HTTP path — must be non-empty to run the check
+	Interval    time.Duration // poll interval (default 10s)
+	Timeout     time.Duration // per-request curl timeout (default 5s)
+	Retries     int           // consecutive failures before unhealthy (default 3)
+	StartPeriod time.Duration // grace period where failures are ignored (default 0)
+}
+
+// HTTPHealthCheck polls containerName:port/path until it returns 2xx or becomes unhealthy.
+// Mirrors Docker healthcheck semantics: failures during start_period are ignored;
+// after start_period, Retries consecutive non-2xx responses trigger failure.
+// Returns nil on first 2xx. Returns error after Retries consecutive failures post-start_period.
+// Bounded execution: worst case = start_period + (retries × interval).
+func (d *Docker) HTTPHealthCheck(containerName string, port int, opts HTTPHealthOpts) error {
+	if opts.Interval <= 0 {
+		opts.Interval = 10 * time.Second
+	}
+	if opts.Timeout <= 0 {
+		opts.Timeout = 5 * time.Second
+	}
+	if opts.Retries <= 0 {
+		opts.Retries = 3
+	}
+
+	ip, err := d.exec.Run(fmt.Sprintf(
+		"docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' %s 2>/dev/null",
+		ssh.ShellQuote(containerName),
+	))
+	if err != nil || strings.TrimSpace(ip) == "" {
+		return fmt.Errorf("cannot resolve container IP for %s", containerName)
+	}
+
+	url := fmt.Sprintf("http://%s:%d%s", strings.TrimSpace(ip), port, opts.Path)
+	curlCmd := fmt.Sprintf(
+		"curl -s --max-time %d -o /dev/null -w '%%{http_code}' %s 2>/dev/null",
+		int(opts.Timeout.Seconds()), ssh.ShellQuote(url),
+	)
+
+	startDeadline := time.Now().Add(opts.StartPeriod)
+	consecutive := 0
+	var lastCode string
+
+	for {
+		out, _ := d.exec.Run(curlCmd)
+		code := strings.TrimSpace(out)
+
+		if len(code) == 3 && code[0] == '2' {
+			return nil // healthy
+		}
+		lastCode = code
+
+		if !time.Now().Before(startDeadline) { // past start_period
+			consecutive++
+			if consecutive >= opts.Retries {
+				if lastCode == "" || lastCode == "000" {
+					return fmt.Errorf("no HTTP response after %d checks", opts.Retries)
+				}
+				return fmt.Errorf("HTTP %s for %d consecutive checks", lastCode, opts.Retries)
+			}
+		}
+		time.Sleep(opts.Interval)
+	}
 }
 
 // ContainerStatus returns the container status string.
