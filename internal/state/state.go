@@ -88,6 +88,7 @@ type App struct {
 	Sidecars     map[string]AppSidecar `json:"sidecars,omitempty"`
 	Restart      string                `json:"restart,omitempty"`
 	Health       *HealthCheck          `json:"health,omitempty"`
+	Scale        int                   `json:"scale,omitempty"` // number of replicas; 0 or 1 means single-container mode
 	InstalledAt  string                `json:"installed_at"`
 }
 

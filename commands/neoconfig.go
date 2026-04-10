@@ -176,6 +176,7 @@ type NeoEnvironment struct {
 	Restart   string               `yaml:"restart,omitempty"`   // Docker restart policy override
 	Health    *NeoHealth           `yaml:"health,omitempty"`    // Docker health check override
 	Hooks     *NeoHooks            `yaml:"hooks,omitempty"`     // deploy lifecycle hooks (override top-level)
+	Scale     int                  `yaml:"scale,omitempty"`     // number of app replicas (overrides top-level)
 }
 
 // NeoConfig represents a .neo.yml project configuration file.
@@ -199,6 +200,7 @@ type NeoConfig struct {
 	Sidecars       map[string]NeoSidecar     `yaml:"sidecars,omitempty"`
 	Volumes        map[string]NeoVolume      `yaml:"volumes,omitempty"`
 	Dev            *NeoDevConfig             `yaml:"dev,omitempty"` // dev-only settings for `neo dev`
+	Scale          int                       `yaml:"scale,omitempty"` // number of app replicas (default: 1)
 }
 
 // PrimaryDomain returns the first configured domain: domains[0] > domain > "".

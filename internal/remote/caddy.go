@@ -66,10 +66,17 @@ type caddyUpstream struct {
 // When auth is provided the route uses a subroute with:
 //   - bypass paths (if any) routed directly without auth
 //   - everything else guarded by http_basic authentication
-func buildRouteJSON(appID string, domains []string, upstream string, auth *BasicAuthConfig) ([]byte, error) {
+//
+// upstreams may contain one or more dial addresses (e.g. "app-name:8080").
+// Multiple upstreams are load-balanced round-robin by Caddy automatically.
+func buildRouteJSON(appID string, domains []string, upstreams []string, auth *BasicAuthConfig) ([]byte, error) {
+	dialList := make([]map[string]string, len(upstreams))
+	for i, u := range upstreams {
+		dialList[i] = map[string]string{"dial": u}
+	}
 	reverseProxy := map[string]interface{}{
 		"handler":   "reverse_proxy",
-		"upstreams": []map[string]string{{"dial": upstream}},
+		"upstreams": dialList,
 	}
 
 	var handles []interface{}
@@ -189,7 +196,7 @@ func (c *Caddy) AddRoute(appID string, domains []string, upstream string, opts .
 		auth = opts[0].BasicAuth
 	}
 
-	data, err := buildRouteJSON(appID, domains, upstream, auth)
+	data, err := buildRouteJSON(appID, domains, []string{upstream}, auth)
 	if err != nil {
 		return fmt.Errorf("build route: %w", err)
 	}
@@ -323,6 +330,83 @@ func (c *Caddy) PatchUpstream(appID string, dial string) error {
 		CaddyAdminURL, ssh.ShellQuote(appID), ssh.ShellQuote(string(dialJSON)),
 	)
 	return c.exec.RunQuiet(cmd)
+}
+
+// PatchUpstreams atomically replaces the entire upstreams list for an existing route.
+// Used for scaled (multi-replica) apps to switch all upstream addresses at once.
+// Falls back to UpdateRouteMulti if the PATCH fails (e.g. route has auth subroute structure).
+func (c *Caddy) PatchUpstreams(appID string, dials []string, domains []string, httpOnly bool, opts ...RouteOptions) error {
+	ups := make([]map[string]string, len(dials))
+	for i, d := range dials {
+		ups[i] = map[string]string{"dial": d}
+	}
+	data, err := json.Marshal(ups)
+	if err != nil {
+		return err
+	}
+	cmd := fmt.Sprintf(
+		`curl -sf -X PUT %s/id/%s/handle/0/upstreams -H "Content-Type: application/json" -d %s`,
+		CaddyAdminURL, ssh.ShellQuote(appID), ssh.ShellQuote(string(data)),
+	)
+	if err := c.exec.RunQuiet(cmd); err != nil {
+		// Fallback: full route replacement (e.g. route has basic_auth subroute structure)
+		if httpOnly {
+			return c.UpdateRouteMultiHTTP(appID, domains, dials, opts...)
+		}
+		return c.UpdateRouteMulti(appID, domains, dials, opts...)
+	}
+	return nil
+}
+
+// AddRouteMulti adds an HTTPS reverse proxy route with multiple upstreams (load-balanced).
+func (c *Caddy) AddRouteMulti(appID string, domains []string, upstreams []string, opts ...RouteOptions) error {
+	if len(domains) == 0 {
+		return fmt.Errorf("at least one domain is required")
+	}
+	c.exec.RunQuiet(fmt.Sprintf(
+		`curl -sf %s/config/apps/http/servers/srv0 >/dev/null 2>&1 || curl -sf -X PUT %s/config/apps/http/servers/srv0 -H 'Content-Type: application/json' -d '{"listen":[":443",":80"],"routes":[]}'`,
+		CaddyAdminURL, CaddyAdminURL,
+	))
+	var auth *BasicAuthConfig
+	if len(opts) > 0 {
+		auth = opts[0].BasicAuth
+	}
+	data, err := buildRouteJSON(appID, domains, upstreams, auth)
+	if err != nil {
+		return fmt.Errorf("build route: %w", err)
+	}
+	cmd := fmt.Sprintf(
+		`curl -sf -X POST %s/config/apps/http/servers/srv0/routes -H "Content-Type: application/json" -d %s`,
+		CaddyAdminURL, ssh.ShellQuote(string(data)),
+	)
+	return c.exec.RunQuiet(cmd)
+}
+
+// AddRouteMultiHTTP adds an HTTP-only reverse proxy route with multiple upstreams.
+func (c *Caddy) AddRouteMultiHTTP(appID string, domains []string, upstreams []string, opts ...RouteOptions) error {
+	if len(domains) == 0 {
+		return fmt.Errorf("at least one domain is required")
+	}
+	if err := c.addToAutoHTTPSSkip(domains); err != nil {
+		return fmt.Errorf("disable auto-https: %w", err)
+	}
+	return c.AddRouteMulti(appID, domains, upstreams, opts...)
+}
+
+// UpdateRouteMulti replaces an existing route with a multi-upstream HTTPS route.
+func (c *Caddy) UpdateRouteMulti(appID string, domains []string, upstreams []string, opts ...RouteOptions) error {
+	c.RemoveRoute(appID)
+	c.removeFromAutoHTTPSSkip(domains)
+	return c.AddRouteMulti(appID, domains, upstreams, opts...)
+}
+
+// UpdateRouteMultiHTTP replaces an existing route with a multi-upstream HTTP-only route.
+func (c *Caddy) UpdateRouteMultiHTTP(appID string, domains []string, upstreams []string, opts ...RouteOptions) error {
+	c.RemoveRoute(appID)
+	if err := c.addToAutoHTTPSSkip(domains); err != nil {
+		return fmt.Errorf("disable auto-https: %w", err)
+	}
+	return c.AddRouteMulti(appID, domains, upstreams, opts...)
 }
 
 // LoadCertificate loads a custom TLS certificate and key into Caddy.

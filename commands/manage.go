@@ -99,6 +99,16 @@ func runManage(appName, action string) error {
 		sidecarContainers = append(sidecarContainers, config.SvcContainer(appName, scName))
 	}
 
+	// Collect replica containers (scale > 1) or the single main container (scale <= 1)
+	var appContainers []string
+	if app.Scale > 1 {
+		for i := 0; i < app.Scale; i++ {
+			appContainers = append(appContainers, config.ReplicaContainer(appName, i))
+		}
+	} else {
+		appContainers = []string{containerName}
+	}
+
 	spin := ui.NewSpinner(fmt.Sprintf("%sing %s...", action, appName))
 	spin.Start()
 
@@ -111,7 +121,11 @@ func runManage(appName, action string) error {
 		for _, sc := range sidecarContainers {
 			docker.Start(sc)
 		}
-		actionErr = docker.Start(containerName)
+		for _, ac := range appContainers {
+			if err := docker.Start(ac); err != nil && actionErr == nil {
+				actionErr = err
+			}
+		}
 		for _, wc := range workerContainers {
 			docker.Start(wc)
 		}
@@ -128,7 +142,11 @@ func runManage(appName, action string) error {
 		for _, wc := range workerContainers {
 			docker.Stop(wc)
 		}
-		actionErr = docker.Stop(containerName)
+		for _, ac := range appContainers {
+			if err := docker.Stop(ac); err != nil && actionErr == nil {
+				actionErr = err
+			}
+		}
 		for _, sc := range sidecarContainers {
 			docker.Stop(sc)
 		}
@@ -151,7 +169,11 @@ func runManage(appName, action string) error {
 		for _, sc := range sidecarContainers {
 			docker.Restart(sc)
 		}
-		actionErr = docker.Restart(containerName)
+		for _, ac := range appContainers {
+			if err := docker.Restart(ac); err != nil && actionErr == nil {
+				actionErr = err
+			}
+		}
 		for _, wc := range workerContainers {
 			docker.Restart(wc)
 		}
@@ -215,9 +237,15 @@ func runRemove(appName string, force bool) error {
 		docker.Remove(config.WorkerContainer(appName, wName))
 	}
 
-	// Stop and remove app container
+	// Stop and remove app container(s)
 	containerName := config.AppContainer(appName)
-	docker.Remove(containerName)
+	if app.Scale > 1 {
+		for i := 0; i < app.Scale; i++ {
+			docker.Remove(config.ReplicaContainer(appName, i))
+		}
+	} else {
+		docker.Remove(containerName)
+	}
 
 	// Remove sidecar containers
 	for scName := range app.Sidecars {

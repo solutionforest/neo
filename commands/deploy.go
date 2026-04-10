@@ -203,6 +203,10 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			if env.BasicAuth != nil {
 				neoConfig.BasicAuth = env.BasicAuth
 			}
+			// Environment scale overrides top-level
+			if env.Scale > 0 {
+				neoConfig.Scale = env.Scale
+			}
 		}
 	}
 
@@ -549,85 +553,21 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		appHealth = neoHealthToState(neoConfig.Health)
 	}
 
-	// Blue-green deployment: start new container alongside old one
-	nextName := containerName + "-next"
+	// spin is declared here so it remains in scope for the workers/sidecars sections below.
+	var spin *ui.Spinner
 
-	// Clean up any leftover -next container from a failed previous deploy
-	docker.Remove(nextName)
-
-	// Start new container with staging name
-	spin := ui.NewSpinner("Starting new container...")
-	spin.Start()
-	appOpts := remote.RunOpts{
-		Name:    nextName,
-		Image:   imageTag,
-		Network: config.DockerNetwork,
-		Restart: restartPolicy(appRestart),
-		Volumes: volumes,
-		Env:     env,
-	}
-	applyHealth(&appOpts, appHealth)
-	_, err = docker.Run(appOpts)
-	spin.Stop()
-	if err != nil {
-		return fmt.Errorf("start container: %w", err)
-	}
-	ui.Success("New container started")
-
-	// Health check the new container — verify TCP connectivity, not just running state
-	spin = ui.NewSpinner("Waiting for app to be ready...")
-	spin.Start()
-	healthy := waitForHealthy(docker, nextName, port, 120*time.Second)
-	spin.Stop()
-
-	if !healthy {
-		// Rollback: remove the failed new container, keep old one running
-		docker.Remove(nextName)
-		ui.Error("New container failed health check — rolled back")
-		ui.Info(fmt.Sprintf("Old version still running. Debug with: neo logs %s", appName))
-		return nil
-	}
-	ui.Success("Health check passed")
-
-	// HTTP health check — opt-in, only runs when health.path is configured.
-	// port==0 or no health.path → skipped (no behavior change for existing deployments).
-	// Runs BEFORE Caddy traffic switch: if unhealthy, old container keeps serving (true zero-downtime rollback).
-	if port > 0 {
-		var stateHealth *state.HealthCheck
-		if isRedeploy {
-			stateHealth = existing.Health
-		}
-		var neoHealth *NeoHealth
-		if neoConfig != nil {
-			neoHealth = neoConfig.Health
-		}
-		hOpts := httpHealthOpts(neoHealth, stateHealth)
-		if hOpts.Path != "" {
-			spin = ui.NewSpinner(fmt.Sprintf("Waiting for HTTP health (%s)...", hOpts.Path))
-			spin.Start()
-			httpErr := docker.HTTPHealthCheck(nextName, port, hOpts)
-			spin.Stop()
-			if httpErr != nil {
-				docker.Remove(nextName)
-				if isRedeploy {
-					ui.Error(fmt.Sprintf("HTTP health check failed — rolled back: %s", httpErr))
-					ui.Info(fmt.Sprintf("Old version still running. Debug with: neo logs %s", appName))
-				} else {
-					ui.Error(fmt.Sprintf("HTTP health check failed: %s", httpErr))
-					ui.Info("Fix the issue and re-deploy.")
-				}
-				return nil
-			}
-			ui.Success(fmt.Sprintf("HTTP health OK (%s)", hOpts.Path))
-		}
+	// Resolve desired replica count from .neo.yml (default: 1 = single-container mode)
+	scale := 1
+	if neoConfig != nil && neoConfig.Scale > 1 {
+		scale = neoConfig.Scale
 	}
 
-	// Determine HTTP mode: redeploy inherits existing setting; first deploy defaults to HTTP-only
+	// Determine HTTP mode (independent of health check result; used by both scale paths
+	// and by the state save below).
 	httpOnly := true
 	if isRedeploy {
 		httpOnly = existing.HTTPOnly
 	}
-	// .neo.yml https: true/false explicitly set always wins over stored state
 	if neoConfig != nil && neoConfig.HTTPS != nil {
 		httpOnly = !*neoConfig.HTTPS
 	}
@@ -639,8 +579,6 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		}
 		seen := map[string]bool{domain: true}
 		result := []string{domain}
-
-		// Extra domains from .neo.yml domains: list
 		if neoConfig != nil {
 			for _, d := range neoConfig.ExtraConfigDomains() {
 				if !seen[d] {
@@ -649,7 +587,6 @@ func runDeploy(projectPath string, flags deployFlags) error {
 				}
 			}
 		}
-		// Extra domains manually added via `neo domain --add` (preserved on redeploy)
 		if isRedeploy {
 			for _, d := range existing.ExtraDomains {
 				if !seen[d] {
@@ -661,6 +598,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		return result
 	}()
 
+	// addCaddyRoute replaces (or creates) the single-upstream Caddy route for this app.
 	addCaddyRoute := func(cName string, domains []string, p int) {
 		if len(domains) == 0 {
 			return
@@ -674,88 +612,305 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		}
 	}
 
-	if isRedeploy {
-		authOpts := neoBasicAuthToRouteOpts(neoConfig)
-		hasAuth := len(authOpts) > 0 && authOpts[0].BasicAuth != nil
+	if scale > 1 {
+		// ── Multi-replica (scaled) deploy ─────────────────────────────────────────
+		replicaNames := make([]string, scale)
+		nextNames := make([]string, scale)
+		for i := 0; i < scale; i++ {
+			replicaNames[i] = config.ReplicaContainer(appName, i)
+			nextNames[i] = replicaNames[i] + "-next"
+		}
 
-		// Zero-downtime swap:
-		// 1. Point Caddy at the new (next) container.
-		// If basic_auth is configured we must do a full UpdateRoute so the route
-		// structure (subroute + authentication handler) is rebuilt — PatchUpstream
-		// only changes the dial address and cannot add or remove auth.
-		if len(deployDomains) > 0 {
-			dial := fmt.Sprintf("%s:%d", nextName, port)
-			if hasAuth {
-				if httpOnly {
-					caddy.UpdateRouteHTTP(containerName, deployDomains, dial, authOpts...)
-				} else {
-					caddy.UpdateRoute(containerName, deployDomains, dial, authOpts...)
+		// Clean up any leftover -next containers from a previous failed deploy
+		for _, n := range nextNames {
+			docker.Remove(n)
+		}
+
+		// Start all replicas as staging (-next) containers
+		var startedNext []string
+		for i := range replicaNames {
+			nextN := nextNames[i]
+			spin := ui.NewSpinner(fmt.Sprintf("Starting replica %d/%d...", i+1, scale))
+			spin.Start()
+			rOpts := remote.RunOpts{
+				Name:    nextN,
+				Image:   imageTag,
+				Network: config.DockerNetwork,
+				Restart: restartPolicy(appRestart),
+				Volumes: volumes,
+				Env:     env,
+			}
+			applyHealth(&rOpts, appHealth)
+			_, rErr := docker.Run(rOpts)
+			spin.Stop()
+			if rErr != nil {
+				ui.Error(fmt.Sprintf("Replica %d failed to start: %s — rolling back", i+1, rErr))
+				for _, n := range startedNext {
+					docker.Remove(n)
 				}
-			} else if err := caddy.PatchUpstream(containerName, dial); err != nil {
-				// Fallback: route may not exist yet (e.g. app deployed before this version)
-				if httpOnly {
-					caddy.UpdateRouteHTTP(containerName, deployDomains, dial, authOpts...)
-				} else {
-					caddy.UpdateRoute(containerName, deployDomains, dial, authOpts...)
+				return fmt.Errorf("start replica %d: %w", i, rErr)
+			}
+			startedNext = append(startedNext, nextN)
+		}
+
+		// Health-check all replicas
+		for i, nextN := range nextNames {
+			spin := ui.NewSpinner(fmt.Sprintf("Waiting for replica %d/%d to be ready...", i+1, scale))
+			spin.Start()
+			ok := waitForHealthy(docker, nextN, port, 120*time.Second)
+			spin.Stop()
+			if !ok {
+				ui.Error(fmt.Sprintf("Replica %d failed health check — rolling back all", i+1))
+				for _, n := range nextNames {
+					docker.Remove(n)
 				}
+				if isRedeploy {
+					ui.Info(fmt.Sprintf("Previous version still running. Debug with: neo logs %s", appName))
+				}
+				return nil
+			}
+		}
+		ui.Success(fmt.Sprintf("All %d replicas healthy", scale))
+
+		authOpts := neoBasicAuthToRouteOpts(neoConfig)
+
+		// For redeploy: switch Caddy to -next replicas before removing old containers
+		nextUpstreams := make([]string, scale)
+		for i, n := range nextNames {
+			nextUpstreams[i] = fmt.Sprintf("%s:%d", n, port)
+		}
+		if isRedeploy && len(deployDomains) > 0 {
+			if httpOnly {
+				caddy.UpdateRouteMultiHTTP(containerName, deployDomains, nextUpstreams, authOpts...)
+			} else {
+				caddy.UpdateRouteMulti(containerName, deployDomains, nextUpstreams, authOpts...)
 			}
 		}
 
-		// 2. Stop and remove old container (no longer receiving traffic)
-		spin = ui.NewSpinner("Removing old container...")
-		spin.Start()
-		docker.Remove(containerName)
-		spin.Stop()
-
-		// 3. Rename new container to canonical name
-		docker.Rename(nextName, containerName)
-
-		// 4. Atomically patch Caddy back to canonical container name
-		if len(deployDomains) > 0 {
-			dial := fmt.Sprintf("%s:%d", containerName, port)
-			if hasAuth {
-				addCaddyRoute(containerName, deployDomains, port)
-			} else if err := caddy.PatchUpstream(containerName, dial); err != nil {
-				addCaddyRoute(containerName, deployDomains, port)
+		// Remove old containers (single-container or previous replica set)
+		if isRedeploy {
+			spin := ui.NewSpinner("Removing old containers...")
+			spin.Start()
+			oldScale := existing.Scale
+			if oldScale <= 1 {
+				docker.Remove(containerName)
+			} else {
+				for i := 0; i < oldScale; i++ {
+					docker.Remove(config.ReplicaContainer(appName, i))
+				}
 			}
-			ui.Success(fmt.Sprintf("Traffic switched to new version (%s)", domain))
+			spin.Stop()
+		}
+
+		// Rename -next to canonical replica names
+		for i := range replicaNames {
+			docker.Rename(nextNames[i], replicaNames[i])
+		}
+
+		// Point Caddy at canonical replica names
+		canonicalUpstreams := make([]string, scale)
+		for i, r := range replicaNames {
+			canonicalUpstreams[i] = fmt.Sprintf("%s:%d", r, port)
+		}
+		if len(deployDomains) > 0 {
+			if isRedeploy {
+				caddy.PatchUpstreams(containerName, canonicalUpstreams, deployDomains, httpOnly, authOpts...)
+			} else {
+				// First deploy: add the Caddy route
+				if neoConfig != nil && neoConfig.SSL != nil && neoConfig.SSL.Certificate != "" && neoConfig.SSL.PrivateKey != "" {
+					certPath := neoConfig.SSL.Certificate
+					keyPath := neoConfig.SSL.PrivateKey
+					if !filepath.IsAbs(certPath) {
+						certPath = filepath.Join(absPath, certPath)
+					}
+					if !filepath.IsAbs(keyPath) {
+						keyPath = filepath.Join(absPath, keyPath)
+					}
+					if err := runDomainCustomCert(appName, domain, certPath, keyPath); err != nil {
+						ui.Error(fmt.Sprintf("Custom SSL setup failed: %s — falling back to HTTP", err))
+						caddy.AddRouteMultiHTTP(containerName, deployDomains, canonicalUpstreams, authOpts...)
+					}
+					httpOnly = false
+				} else if neoConfig != nil && neoConfig.HTTPS != nil && *neoConfig.HTTPS {
+					if err := caddy.AddRouteMulti(containerName, deployDomains, canonicalUpstreams, authOpts...); err != nil {
+						ui.Error(fmt.Sprintf("Failed to add Caddy HTTPS route: %s", err))
+					}
+					httpOnly = false
+				} else {
+					if err := caddy.AddRouteMultiHTTP(containerName, deployDomains, canonicalUpstreams, authOpts...); err != nil {
+						ui.Error(fmt.Sprintf("Failed to add Caddy route: %s", err))
+					}
+				}
+			}
+			if isRedeploy {
+				ui.Success(fmt.Sprintf("Traffic balanced across %d replicas (%s)", scale, domain))
+			} else {
+				ui.Success(fmt.Sprintf("%d replicas serving (%s)", scale, domain))
+			}
 		} else {
-			ui.Success("Swapped to new version (zero downtime)")
+			if isRedeploy {
+				ui.Success(fmt.Sprintf("Swapped to %d replicas (zero downtime)", scale))
+			} else {
+				ui.Success(fmt.Sprintf("%d replicas started", scale))
+			}
 		}
 	} else {
-		// First deploy
-		docker.Rename(nextName, containerName)
+		// ── Single-container blue-green deploy (original behavior) ─────────────────
+		nextName := containerName + "-next"
 
-		if domain != "" {
-			upstream := fmt.Sprintf("%s:%d", containerName, port)
-			domains := []string{domain}
+		// Clean up any leftover -next container from a failed previous deploy
+		docker.Remove(nextName)
+
+		// Start new container with staging name
+		spin = ui.NewSpinner("Starting new container...")
+		spin.Start()
+		appOpts := remote.RunOpts{
+			Name:    nextName,
+			Image:   imageTag,
+			Network: config.DockerNetwork,
+			Restart: restartPolicy(appRestart),
+			Volumes: volumes,
+			Env:     env,
+		}
+		applyHealth(&appOpts, appHealth)
+		_, err = docker.Run(appOpts)
+		spin.Stop()
+		if err != nil {
+			return fmt.Errorf("start container: %w", err)
+		}
+		ui.Success("New container started")
+
+		// Health check the new container — verify TCP connectivity, not just running state
+		spin = ui.NewSpinner("Waiting for app to be ready...")
+		spin.Start()
+		healthy := waitForHealthy(docker, nextName, port, 120*time.Second)
+		spin.Stop()
+
+		if !healthy {
+			// Rollback: remove the failed new container, keep old one running
+			docker.Remove(nextName)
+			ui.Error("New container failed health check — rolled back")
+			ui.Info(fmt.Sprintf("Old version still running. Debug with: neo logs %s", appName))
+			return nil
+		}
+		ui.Success("Health check passed")
+
+		// HTTP health check — opt-in, only runs when health.path is configured.
+		// port==0 or no health.path → skipped (no behavior change for existing deployments).
+		// Runs BEFORE Caddy traffic switch: if unhealthy, old container keeps serving (true zero-downtime rollback).
+		if port > 0 {
+			var stateHealth *state.HealthCheck
+			if isRedeploy {
+				stateHealth = existing.Health
+			}
+			var neoHealth *NeoHealth
+			if neoConfig != nil {
+				neoHealth = neoConfig.Health
+			}
+			hOpts := httpHealthOpts(neoHealth, stateHealth)
+			if hOpts.Path != "" {
+				spin = ui.NewSpinner(fmt.Sprintf("Waiting for HTTP health (%s)...", hOpts.Path))
+				spin.Start()
+				httpErr := docker.HTTPHealthCheck(nextName, port, hOpts)
+				spin.Stop()
+				if httpErr != nil {
+					docker.Remove(nextName)
+					if isRedeploy {
+						ui.Error(fmt.Sprintf("HTTP health check failed — rolled back: %s", httpErr))
+						ui.Info(fmt.Sprintf("Old version still running. Debug with: neo logs %s", appName))
+					} else {
+						ui.Error(fmt.Sprintf("HTTP health check failed: %s", httpErr))
+						ui.Info("Fix the issue and re-deploy.")
+					}
+					return nil
+				}
+				ui.Success(fmt.Sprintf("HTTP health OK (%s)", hOpts.Path))
+			}
+		}
+
+		if isRedeploy {
 			authOpts := neoBasicAuthToRouteOpts(neoConfig)
+			hasAuth := len(authOpts) > 0 && authOpts[0].BasicAuth != nil
 
-			// Check for custom SSL certificate from .neo.yml
-			if neoConfig != nil && neoConfig.SSL != nil && neoConfig.SSL.Certificate != "" && neoConfig.SSL.PrivateKey != "" {
-				certPath := neoConfig.SSL.Certificate
-				keyPath := neoConfig.SSL.PrivateKey
-				if !filepath.IsAbs(certPath) {
-					certPath = filepath.Join(absPath, certPath)
+			// Zero-downtime swap:
+			// 1. Point Caddy at the new (next) container.
+			// If basic_auth is configured we must do a full UpdateRoute so the route
+			// structure (subroute + authentication handler) is rebuilt — PatchUpstream
+			// only changes the dial address and cannot add or remove auth.
+			if len(deployDomains) > 0 {
+				dial := fmt.Sprintf("%s:%d", nextName, port)
+				if hasAuth {
+					if httpOnly {
+						caddy.UpdateRouteHTTP(containerName, deployDomains, dial, authOpts...)
+					} else {
+						caddy.UpdateRoute(containerName, deployDomains, dial, authOpts...)
+					}
+				} else if err := caddy.PatchUpstream(containerName, dial); err != nil {
+					// Fallback: route may not exist yet (e.g. app deployed before this version)
+					if httpOnly {
+						caddy.UpdateRouteHTTP(containerName, deployDomains, dial, authOpts...)
+					} else {
+						caddy.UpdateRoute(containerName, deployDomains, dial, authOpts...)
+					}
 				}
-				if !filepath.IsAbs(keyPath) {
-					keyPath = filepath.Join(absPath, keyPath)
+			}
+
+			// 2. Stop and remove old container (no longer receiving traffic)
+			spin = ui.NewSpinner("Removing old container...")
+			spin.Start()
+			docker.Remove(containerName)
+			spin.Stop()
+
+			// 3. Rename new container to canonical name
+			docker.Rename(nextName, containerName)
+
+			// 4. Atomically patch Caddy back to canonical container name
+			if len(deployDomains) > 0 {
+				dial := fmt.Sprintf("%s:%d", containerName, port)
+				if hasAuth {
+					addCaddyRoute(containerName, deployDomains, port)
+				} else if err := caddy.PatchUpstream(containerName, dial); err != nil {
+					addCaddyRoute(containerName, deployDomains, port)
 				}
-				if err := runDomainCustomCert(appName, domain, certPath, keyPath); err != nil {
-					ui.Error(fmt.Sprintf("Custom SSL setup failed: %s — falling back to HTTP", err))
-					caddy.AddRouteHTTP(containerName, domains, upstream, authOpts...)
-				}
-				httpOnly = false
-			} else if neoConfig != nil && neoConfig.HTTPS != nil && *neoConfig.HTTPS {
-				// HTTPS enabled via .neo.yml https: true
-				if err := caddy.AddRoute(containerName, domains, upstream, authOpts...); err != nil {
-					ui.Error(fmt.Sprintf("Failed to add Caddy HTTPS route: %s", err))
-				}
-				httpOnly = false
+				ui.Success(fmt.Sprintf("Traffic switched to new version (%s)", domain))
 			} else {
-				// HTTP-only by default (user can enable HTTPS via neo domain --temp or neo domain <app> <domain>)
-				if err := caddy.AddRouteHTTP(containerName, domains, upstream, authOpts...); err != nil {
-					ui.Error(fmt.Sprintf("Failed to add Caddy route: %s", err))
+				ui.Success("Swapped to new version (zero downtime)")
+			}
+		} else {
+			// First deploy
+			docker.Rename(nextName, containerName)
+
+			if domain != "" {
+				upstream := fmt.Sprintf("%s:%d", containerName, port)
+				domains := []string{domain}
+				authOpts := neoBasicAuthToRouteOpts(neoConfig)
+
+				// Check for custom SSL certificate from .neo.yml
+				if neoConfig != nil && neoConfig.SSL != nil && neoConfig.SSL.Certificate != "" && neoConfig.SSL.PrivateKey != "" {
+					certPath := neoConfig.SSL.Certificate
+					keyPath := neoConfig.SSL.PrivateKey
+					if !filepath.IsAbs(certPath) {
+						certPath = filepath.Join(absPath, certPath)
+					}
+					if !filepath.IsAbs(keyPath) {
+						keyPath = filepath.Join(absPath, keyPath)
+					}
+					if err := runDomainCustomCert(appName, domain, certPath, keyPath); err != nil {
+						ui.Error(fmt.Sprintf("Custom SSL setup failed: %s — falling back to HTTP", err))
+						caddy.AddRouteHTTP(containerName, domains, upstream, authOpts...)
+					}
+					httpOnly = false
+				} else if neoConfig != nil && neoConfig.HTTPS != nil && *neoConfig.HTTPS {
+					// HTTPS enabled via .neo.yml https: true
+					if err := caddy.AddRoute(containerName, domains, upstream, authOpts...); err != nil {
+						ui.Error(fmt.Sprintf("Failed to add Caddy HTTPS route: %s", err))
+					}
+					httpOnly = false
+				} else {
+					// HTTP-only by default (user can enable HTTPS via neo domain --temp or neo domain <app> <domain>)
+					if err := caddy.AddRouteHTTP(containerName, domains, upstream, authOpts...); err != nil {
+						ui.Error(fmt.Sprintf("Failed to add Caddy route: %s", err))
+					}
 				}
 			}
 		}
@@ -1034,6 +1189,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		Sidecars:     sidecarStates,
 		Restart:      appRestart,
 		Health:       appHealth,
+		Scale:        scale,
 		InstalledAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 	if isRedeploy {

@@ -75,6 +75,12 @@ func WorkerContainer(appName, workerName string) string {
 	return AppContainerPrefix + appName + "-worker-" + workerName
 }
 
+// ReplicaContainer returns the Docker container name for a scaled app replica.
+// Replicas are named app-{name}-0, app-{name}-1, etc.
+func ReplicaContainer(appName string, index int) string {
+	return fmt.Sprintf("%s%s-%d", AppContainerPrefix, appName, index)
+}
+
 // SvcContainerShared returns the Docker container name for a shared service.
 func SvcContainerShared(svcName string) string {
 	return SvcContainerPrefix + svcName
