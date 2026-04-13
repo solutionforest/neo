@@ -138,25 +138,35 @@ func (a *App) RemoveDomain(domain string) {
 	a.ExtraDomains = filtered
 }
 
+// DomainRedirect represents a server-level HTTP redirect managed by Caddy.
+// No app or container is required — Caddy handles the redirect natively.
+type DomainRedirect struct {
+	From string `json:"from"` // source domain (e.g. "vxero.dev")
+	To   string `json:"to"`   // destination URL (e.g. "https://vxero.com")
+	Code int    `json:"code"` // 301 permanent or 302 temporary
+}
+
 // State is the remote server state stored at /etc/neo/state.json.
 type State struct {
-	Initialized bool                     `json:"initialized"`
-	ServerIP    string                   `json:"server_ip"`
-	ServerArch  string                   `json:"server_arch,omitempty"`
-	StealthMode       bool                     `json:"stealth_mode,omitempty"`
-	FirewallInstalled bool                     `json:"firewall_installed,omitempty"`
-	Apps              map[string]App           `json:"apps"`
-	Services    map[string]SharedService `json:"services,omitempty"`
-	Connected   bool                     `json:"connected"`
-	VxeroURL    string                   `json:"vxero_url,omitempty"`
-	VxeroToken  string                   `json:"vxero_token,omitempty"`
+	Initialized       bool                       `json:"initialized"`
+	ServerIP          string                     `json:"server_ip"`
+	ServerArch        string                     `json:"server_arch,omitempty"`
+	StealthMode       bool                       `json:"stealth_mode,omitempty"`
+	FirewallInstalled bool                       `json:"firewall_installed,omitempty"`
+	Apps              map[string]App             `json:"apps"`
+	Services          map[string]SharedService   `json:"services,omitempty"`
+	Redirects         map[string]DomainRedirect  `json:"redirects,omitempty"`
+	Connected         bool                       `json:"connected"`
+	VxeroURL          string                     `json:"vxero_url,omitempty"`
+	VxeroToken        string                     `json:"vxero_token,omitempty"`
 }
 
 // NewState returns an empty state.
 func NewState() *State {
 	return &State{
-		Apps:     make(map[string]App),
-		Services: make(map[string]SharedService),
+		Apps:      make(map[string]App),
+		Services:  make(map[string]SharedService),
+		Redirects: make(map[string]DomainRedirect),
 	}
 }
 

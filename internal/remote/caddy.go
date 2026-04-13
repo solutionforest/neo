@@ -214,6 +214,65 @@ func (c *Caddy) RemoveRoute(appID string) error {
 	return c.exec.RunQuiet(cmd)
 }
 
+// redirectRouteID returns the Caddy route ID for a domain redirect.
+func redirectRouteID(fromDomain string) string {
+	return "redirect-" + fromDomain
+}
+
+// AddRedirect creates a Caddy route that issues an HTTP redirect from fromDomain to toURL.
+// code should be 301 (permanent) or 302 (temporary).
+// The request path is preserved: fromDomain/blog → toURL/blog.
+// Auto-SSL is provisioned for fromDomain by Caddy automatically.
+func (c *Caddy) AddRedirect(fromDomain, toURL string, code int) error {
+	// Ensure srv0 exists
+	ensure := fmt.Sprintf(
+		`curl -sf %s/config/apps/http/servers/srv0 >/dev/null 2>&1 || curl -sf -X PUT %s/config/apps/http/servers/srv0 -H 'Content-Type: application/json' -d '{"listen":[":443",":80"],"routes":[]}'`,
+		CaddyAdminURL, CaddyAdminURL,
+	)
+	c.exec.RunQuiet(ensure)
+
+	route := map[string]interface{}{
+		"@id":      redirectRouteID(fromDomain),
+		"match":    []map[string]interface{}{{"host": []string{fromDomain}}},
+		"handle": []interface{}{
+			map[string]interface{}{
+				"handler": "subroute",
+				"routes": []interface{}{
+					map[string]interface{}{
+						"handle": []interface{}{
+							map[string]interface{}{
+								"handler":     "static_response",
+								"status_code": code,
+								"headers": map[string]interface{}{
+									"Location": []string{toURL + "{http.request.uri}"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		"terminal": true,
+	}
+
+	data, err := json.Marshal(route)
+	if err != nil {
+		return fmt.Errorf("build redirect route: %w", err)
+	}
+
+	cmd := fmt.Sprintf(
+		`curl -sf -X POST %s/config/apps/http/servers/srv0/routes -H "Content-Type: application/json" -d %s`,
+		CaddyAdminURL, ssh.ShellQuote(string(data)),
+	)
+	return c.exec.RunQuiet(cmd)
+}
+
+// RemoveRedirect removes a redirect route for the given source domain.
+func (c *Caddy) RemoveRedirect(fromDomain string) error {
+	cmd := fmt.Sprintf("curl -sf -X DELETE %s/id/%s", CaddyAdminURL, ssh.ShellQuote(redirectRouteID(fromDomain)))
+	return c.exec.RunQuiet(cmd)
+}
+
 // UpdateRoute replaces an existing route's domains and upstream (HTTPS).
 func (c *Caddy) UpdateRoute(appID string, domains []string, upstream string, opts ...RouteOptions) error {
 	c.RemoveRoute(appID) // ignore error if doesn't exist

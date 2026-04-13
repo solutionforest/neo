@@ -4,6 +4,21 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.9.0 — 2026-04-13
+
+### New Features
+
+- **Domain redirects** — Redirect any domain to another URL without deploying an app, sidecar, or service. Powered by Caddy's native redirect handler — auto-SSL is provisioned for the source domain automatically. Request paths are preserved (`vxero.dev/blog` → `vxero.com/blog`).
+
+  ```bash
+  neo redirect add vxero.dev vxero.com          # 301 permanent (default)
+  neo redirect add old.api.com new.api.com --temporary  # 302 temporary
+  neo redirect list                              # show all redirects
+  neo redirect remove vxero.dev                 # remove a redirect
+  ```
+
+---
+
 ## v0.8.0 — 2026-04-13
 
 ### Improvements
