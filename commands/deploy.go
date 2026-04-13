@@ -107,9 +107,27 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	// Load .neo.yml for defaults (parsed early for name/port/domain)
 	neoConfig, _ := loadNeoConfig(absPath)
 
-	// Validate that every environment has an explicit server when multiple environments exist.
-	// Silent fallback to the top-level server is dangerous in multi-env configs.
-	if neoConfig != nil && len(neoConfig.Environments) > 1 {
+	// When environments: is defined, root-level server:/domains: are ignored.
+	// Warn the user so they know to move them into each environment.
+	if neoConfig != nil && len(neoConfig.Environments) > 0 {
+		if neoConfig.Server != "" {
+			fmt.Println()
+			ui.Error("root-level server: is ignored when environments: are defined")
+			ui.Info("Move server: into each environment block:")
+			fmt.Printf("\n    environments:\n      production:\n        server: %s\n\n", neoConfig.Server)
+		}
+		if neoConfig.PrimaryDomain() != "" {
+			ui.Error("root-level domain:/domains: is ignored when environments: are defined")
+			ui.Info("Move domains: into each environment block:")
+			fmt.Printf("\n    environments:\n      production:\n        domains:\n          - %s\n\n", neoConfig.PrimaryDomain())
+		}
+		if neoConfig.Server != "" || neoConfig.PrimaryDomain() != "" {
+			return fmt.Errorf("update .neo.yml to move server/domains into each environment")
+		}
+	}
+
+	// Validate that every environment has an explicit server.
+	if neoConfig != nil && len(neoConfig.Environments) > 0 {
 		var missing []string
 		for envName, envCfg := range neoConfig.Environments {
 			if len(envCfg.EffectiveServers()) == 0 {
@@ -118,11 +136,11 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		}
 		if len(missing) > 0 {
 			for _, envName := range missing {
-				ui.Error(fmt.Sprintf("environment %q has no server defined in .neo.yml", envName))
+				ui.Error(fmt.Sprintf("environment %q has no server: defined in .neo.yml", envName))
 				ui.Info(fmt.Sprintf("Add to the %q environment:", envName))
 				fmt.Printf("\n    environments:\n      %s:\n        server: your-server-name\n\n", envName)
 			}
-			return fmt.Errorf("all environments must specify a server when multiple environments are defined")
+			return fmt.Errorf("every environment must specify a server:")
 		}
 	}
 
@@ -1899,22 +1917,20 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 		err  error
 	}
 
-	// Validate all environments have an explicit server.
-	if len(neoConfig.Environments) > 1 {
-		var missing []string
-		for envName, envCfg := range neoConfig.Environments {
-			if len(envCfg.EffectiveServers()) == 0 {
-				missing = append(missing, envName)
-			}
+	// Validate all environments have an explicit server (runDeployAll is always multi-env).
+	var missing []string
+	for envName, envCfg := range neoConfig.Environments {
+		if len(envCfg.EffectiveServers()) == 0 {
+			missing = append(missing, envName)
 		}
-		if len(missing) > 0 {
-			for _, envName := range missing {
-				ui.Error(fmt.Sprintf("environment %q has no server defined in .neo.yml", envName))
-				ui.Info(fmt.Sprintf("Add to the %q environment:", envName))
-				fmt.Printf("\n    environments:\n      %s:\n        server: your-server-name\n\n", envName)
-			}
-			return fmt.Errorf("all environments must specify a server when multiple environments are defined")
+	}
+	if len(missing) > 0 {
+		for _, envName := range missing {
+			ui.Error(fmt.Sprintf("environment %q has no server: defined in .neo.yml", envName))
+			ui.Info(fmt.Sprintf("Add to the %q environment:", envName))
+			fmt.Printf("\n    environments:\n      %s:\n        server: your-server-name\n\n", envName)
 		}
+		return fmt.Errorf("every environment must specify a server:")
 	}
 
 	// Count total deploy targets (each server in a group is a separate target)
