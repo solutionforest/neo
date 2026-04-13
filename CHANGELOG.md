@@ -4,6 +4,22 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.8.0 — 2026-04-13
+
+### Improvements
+
+- **Automatic SSH key discovery** — `neo init` now scans all private key files in `~/.ssh/` (not just `id_ed25519` and `id_rsa`). Cloud provider keys at non-standard paths (e.g. `~/.ssh/do_rsa`, `~/.ssh/hetzner_key`) are tried automatically — no extra steps needed for most fresh VPS setups.
+
+- **Actionable "HOST KEY HAS CHANGED" error** — When neo detects a changed host key (common after server rebuilds or IP reuse), the error now includes the exact fix command:
+  ```
+  Fix: ssh-keygen -R <ip>
+  Then run neo init again
+  ```
+
+- **`--key` flag hint on auth failure** — If all SSH key attempts fail, `neo init` now shows a clear tip suggesting `neo init --key ~/.ssh/your_key root@<ip>` instead of a bare error message.
+
+---
+
 ## v0.7.0 — 2026-04-13
 
 ### Improvements
