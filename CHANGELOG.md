@@ -4,6 +4,46 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.7.0 — 2026-04-13
+
+### Improvements
+
+- **Environment config validation** — When `environments:` are defined, root-level `server:` and `domains:` are now blocked with a clear error and migration instructions. Previously they were silently ignored, which could cause deploys to go to the wrong server.
+
+- **Every environment must declare `server:`** — Neo errors early if any environment is missing a `server:`, regardless of how many environments are defined.
+
+- **`--all` now works correctly** — Moving `server:/domains:` into each environment means `neo deploy --all` deploys every environment (e.g. both `production` and `staging`) as intended.
+
+### Migration
+
+If your `.neo.yml` has `environments:` defined, move `server:` and `domains:` out of the root and into each environment:
+
+```yaml
+# Before
+server: my-server
+domains:
+  - app.example.com
+environments:
+  staging:
+    domains:
+      - staging.example.com
+
+# After
+environments:
+  production:
+    server: my-server
+    domains:
+      - app.example.com
+  staging:
+    server: my-server
+    domains:
+      - staging.example.com
+```
+
+Root-level `env:`, `workers:`, and `volumes:` remain shared across all environments.
+
+---
+
 ## v0.6.0 — 2026-04-13
 
 ### Improvements
