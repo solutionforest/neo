@@ -161,7 +161,8 @@ type NeoDevConfig struct {
 // NeoEnvironment represents a named deployment target in .neo.yml.
 type NeoEnvironment struct {
 	Name      string               `yaml:"name,omitempty"`      // override app/container name for this env
-	Server    string               `yaml:"server,omitempty"`
+	Server    string               `yaml:"server,omitempty"`    // single server (use servers: for a group)
+	Servers   []string             `yaml:"servers,omitempty"`   // server group — deploy to all in parallel
 	Domain    string               `yaml:"domain,omitempty"`    // single domain (backward compat)
 	Domains   []string             `yaml:"domains,omitempty"`   // multiple domains (takes precedence)
 	Port      int                  `yaml:"port,omitempty"`
@@ -201,6 +202,19 @@ type NeoConfig struct {
 	Volumes        map[string]NeoVolume      `yaml:"volumes,omitempty"`
 	Dev            *NeoDevConfig             `yaml:"dev,omitempty"` // dev-only settings for `neo dev`
 	Scale          int                       `yaml:"scale,omitempty"` // number of app replicas (default: 1)
+}
+
+// EffectiveServers returns the full list of servers for this environment.
+// If servers: (plural) is set it takes precedence; otherwise server: (singular) is wrapped in a slice.
+// Returns nil when neither is set (caller falls back to global current server).
+func (e *NeoEnvironment) EffectiveServers() []string {
+	if len(e.Servers) > 0 {
+		return e.Servers
+	}
+	if e.Server != "" {
+		return []string{e.Server}
+	}
+	return nil
 }
 
 // PrimaryDomain returns the first configured domain: domains[0] > domain > "".

@@ -1880,16 +1880,42 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 		err  error
 	}
 
-	results := make(chan envResult, len(neoConfig.Environments))
+	// Count total deploy targets (each server in a group is a separate target)
+	totalTargets := 0
+	for _, envCfg := range neoConfig.Environments {
+		servers := envCfg.EffectiveServers()
+		if len(servers) == 0 {
+			totalTargets++
+		} else {
+			totalTargets += len(servers)
+		}
+	}
+
+	results := make(chan envResult, totalTargets)
 	var wg sync.WaitGroup
 
 	for envName, envCfg := range neoConfig.Environments {
-		wg.Add(1)
-		go func(name string, cfg NeoEnvironment) {
-			defer wg.Done()
-			url, deployErr := deployEnvFromFile(name, cfg, imageTag, tmpFile, absPath, flags, neoConfig)
-			results <- envResult{name: name, url: url, err: deployErr}
-		}(envName, envCfg)
+		servers := envCfg.EffectiveServers()
+		if len(servers) <= 1 {
+			// Single server (or fallback to current) — original behaviour
+			wg.Add(1)
+			go func(name string, cfg NeoEnvironment) {
+				defer wg.Done()
+				url, deployErr := deployEnvFromFile(name, cfg, "", imageTag, tmpFile, absPath, flags, neoConfig)
+				results <- envResult{name: name, url: url, err: deployErr}
+			}(envName, envCfg)
+		} else {
+			// Server group — deploy to each server in parallel
+			for _, srvName := range servers {
+				wg.Add(1)
+				go func(envName, srvName string, cfg NeoEnvironment) {
+					defer wg.Done()
+					label := fmt.Sprintf("%s[%s]", envName, srvName)
+					url, deployErr := deployEnvFromFile(envName, cfg, srvName, imageTag, tmpFile, absPath, flags, neoConfig)
+					results <- envResult{name: label, url: url, err: deployErr}
+				}(envName, srvName, envCfg)
+			}
+		}
 	}
 
 	wg.Wait()
@@ -1919,7 +1945,10 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 // deployEnvFromFile handles the transfer + container lifecycle for a single environment
 // during a parallel --all deploy. It opens its own SSH connection to the env's server,
 // loads the pre-built image from tmpFile, and does a blue-green container swap.
-func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile, absPath string, flags deployFlags, neoConfig *NeoConfig) (string, error) {
+//
+// serverOverride — when non-empty, overrides the server from the environment config.
+// Used by runDeployAll when deploying to a server group (servers: [...]).
+func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, imageTag, tmpFile, absPath string, flags deployFlags, neoConfig *NeoConfig) (string, error) {
 	// Resolve app name for this environment
 	appName := flags.appName
 	if appName == "" {
@@ -1980,8 +2009,11 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, imageTag, tmpFile,
 		httpsFlag = envCfg.HTTPS
 	}
 
-	// Resolve target server
-	serverName := envCfg.Server
+	// Resolve target server: explicit override (server group) > env config > top-level config
+	serverName := serverOverride
+	if serverName == "" {
+		serverName = envCfg.Server
+	}
 	if serverName == "" {
 		serverName = neoConfig.Server
 	}

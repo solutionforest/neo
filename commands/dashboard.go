@@ -110,34 +110,8 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 	}
 }
 
-// tuiDeployProject prompts for a target server (if multiple configured), project directory, then deploys.
+// tuiDeployProject prompts for project directory, environment, and server, then deploys.
 func tuiDeployProject() error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-
-	// If multiple servers exist, let the user choose which to deploy to.
-	if len(cfg.Servers) > 1 {
-		opts := make([]ui.SelectOption, 0, len(cfg.Servers))
-		for _, srv := range cfg.Servers {
-			active := ""
-			if srv.Name == cfg.Current {
-				active = "  " + ui.Faint.Render("(active)")
-			}
-			label := fmt.Sprintf("%-18s%s%s", srv.Name, ui.Faint.Render(srv.Host), active)
-			opts = append(opts, ui.SelectOption{label, srv.Name})
-		}
-		target := ui.Select("Deploy to which server?", opts)
-		if target == "" {
-			return nil
-		}
-		// Override the server for this operation only.
-		oldServer := serverFlag
-		serverFlag = target
-		defer func() { serverFlag = oldServer }()
-	}
-
 	cwd, _ := os.Getwd()
 	projectPath := cwd
 
@@ -152,7 +126,133 @@ func tuiDeployProject() error {
 		projectPath = cwd
 	}
 
-	return runDeploy(projectPath, deployFlags{})
+	// Load .neo.yml to check for environments with server groups.
+	neoConfig, _ := loadNeoConfig(projectPath)
+
+	flags := deployFlags{}
+
+	if neoConfig != nil && len(neoConfig.Environments) > 0 {
+		// Let user pick an environment (or deploy all).
+		opts := []ui.SelectOption{{"All environments", "__all__"}}
+		for k := range neoConfig.Environments {
+			opts = append(opts, ui.SelectOption{k, k})
+		}
+		envChoice := ui.Select("Deploy which environment?", opts)
+		if envChoice == "" {
+			return nil
+		}
+
+		if envChoice == "__all__" {
+			flags.all = true
+			return runDeploy(projectPath, flags)
+		}
+
+		flags.target = envChoice
+		envCfg := neoConfig.Environments[envChoice]
+		servers := envCfg.EffectiveServers()
+
+		if len(servers) > 1 {
+			// Server group — let user pick one or all.
+			opts := []ui.SelectOption{{"All servers in group", "__all__"}}
+			for _, s := range servers {
+				opts = append(opts, ui.SelectOption{s, s})
+			}
+			srvChoice := ui.Select(fmt.Sprintf("Deploy %s to which server?", envChoice), opts)
+			if srvChoice == "" {
+				return nil
+			}
+			if srvChoice != "__all__" {
+				// Single server within the group — override serverFlag for this deploy only.
+				oldServer := serverFlag
+				serverFlag = srvChoice
+				defer func() { serverFlag = oldServer }()
+			}
+			// __all__ → serverFlag stays empty, runDeploy will use the full servers: list via runDeployAll
+		} else if len(servers) == 1 {
+			// Single server env — set serverFlag as before.
+			oldServer := serverFlag
+			serverFlag = servers[0]
+			defer func() { serverFlag = oldServer }()
+		}
+	} else {
+		// No environments — fall back to server picker (original behaviour).
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		if len(cfg.Servers) > 1 {
+			srvOpts := make([]ui.SelectOption, 0, len(cfg.Servers))
+			for _, srv := range cfg.Servers {
+				active := ""
+				if srv.Name == cfg.Current {
+					active = "  " + ui.Faint.Render("(active)")
+				}
+				label := fmt.Sprintf("%-18s%s%s", srv.Name, ui.Faint.Render(srv.Host), active)
+				srvOpts = append(srvOpts, ui.SelectOption{label, srv.Name})
+			}
+			target := ui.Select("Deploy to which server?", srvOpts)
+			if target == "" {
+				return nil
+			}
+			oldServer := serverFlag
+			serverFlag = target
+			defer func() { serverFlag = oldServer }()
+		}
+	}
+
+	return runDeploy(projectPath, flags)
+}
+
+// tuiDeployApp is called from the app actions menu. It handles server-group selection
+// when the project's .neo.yml defines a multi-server environment, then runs deploy.
+func tuiDeployApp(appName string, envOnly bool) error {
+	neoConfig, _ := loadNeoConfig(".")
+
+	flags := deployFlags{appName: appName, envOnly: envOnly}
+
+	if neoConfig != nil && len(neoConfig.Environments) > 0 {
+		// Prompt for environment.
+		opts := make([]ui.SelectOption, 0, len(neoConfig.Environments))
+		for k := range neoConfig.Environments {
+			opts = append(opts, ui.SelectOption{k, k})
+		}
+		var envChoice string
+		if len(opts) == 1 {
+			envChoice = opts[0].Value
+		} else {
+			envChoice = ui.Select("Deploy which environment?", opts)
+			if envChoice == "" {
+				return nil
+			}
+		}
+		flags.target = envChoice
+
+		envCfg := neoConfig.Environments[envChoice]
+		servers := envCfg.EffectiveServers()
+
+		if len(servers) > 1 {
+			// Server group — offer single-server filter or all.
+			srvOpts := []ui.SelectOption{{"All servers in group", "__all__"}}
+			for _, s := range servers {
+				srvOpts = append(srvOpts, ui.SelectOption{s, s})
+			}
+			srvChoice := ui.Select(fmt.Sprintf("Deploy %s to which server?", envChoice), srvOpts)
+			if srvChoice == "" {
+				return nil
+			}
+			if srvChoice != "__all__" {
+				oldServer := serverFlag
+				serverFlag = srvChoice
+				defer func() { serverFlag = oldServer }()
+			}
+		} else if len(servers) == 1 {
+			oldServer := serverFlag
+			serverFlag = servers[0]
+			defer func() { serverFlag = oldServer }()
+		}
+	}
+
+	return runDeploy(".", flags)
 }
 
 // cachedDashboardSummaries returns app and service summary strings from the local cache
@@ -696,11 +796,11 @@ func tuiAppActions(appName string, st *state.State, exec *neossh.Executor) (bool
 				return false, err
 			}
 		case "deploy":
-			if err := runDeploy(".", deployFlags{appName: appName}); err != nil {
+			if err := tuiDeployApp(appName, false); err != nil {
 				return false, err
 			}
 		case "env-only":
-			if err := runDeploy(".", deployFlags{appName: appName, envOnly: true}); err != nil {
+			if err := tuiDeployApp(appName, true); err != nil {
 				return false, err
 			}
 		case "update":
