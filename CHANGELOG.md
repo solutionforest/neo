@@ -4,6 +4,14 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.6.0 — 2026-04-13
+
+### Improvements
+
+- **Environment server validation** — When a `.neo.yml` defines multiple environments, every environment must now explicitly declare a `server:`. Neo errors early with a clear message instead of silently falling back to the top-level server, which could cause accidental deploys to the wrong target.
+
+---
+
 ## v0.5.0 — 2026-04-13
 
 ### New Features
