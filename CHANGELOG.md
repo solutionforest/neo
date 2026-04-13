@@ -4,6 +4,28 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.4.0 — 2026-04-13
+
+### New Features
+
+- **Server groups** — Deploy one environment to multiple servers in parallel using `servers: [server-a, server-b, server-c]` in `.neo.yml`. Supports web clusters, queue worker fleets, and mixed topologies from a single config file.
+
+  ```yaml
+  environments:
+    web:
+      servers: [velvet-134, web-sg2, web-sg3]
+    queue:
+      servers: [queue-sg1, queue-sg2, queue-sg3]
+    scheduler:
+      server: schedule-sg1
+  ```
+
+- **Per-server deploy targeting** — Deploy to a single server within a group using `neo deploy --env web --server velvet-134`, without affecting the other servers in the group.
+
+- **TUI server group support** — The interactive dashboard now prompts for environment and then "All servers in group" or a specific server when a server group is configured.
+
+---
+
 ## v0.3.0 — 2026-04-13
 
 ### New Features
