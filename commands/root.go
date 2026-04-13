@@ -69,6 +69,7 @@ func NewRootCmd(version string) *cobra.Command {
 		newSSHCmd(),
 		newStealthCmd(),
 		newFirewallCmd(),
+		newKeyCmd(),
 		newDbCmd(),
 		newTunnelCmd(),
 		newVersionCmd(),
