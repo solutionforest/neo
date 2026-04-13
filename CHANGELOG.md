@@ -4,6 +4,23 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.5.0 — 2026-04-13
+
+### New Features
+
+- **Team SSH key management** — Share server access with teammates in seconds, no GitHub or manual SSH required.
+
+  ```bash
+  neo key show              # generate + print your public key to share
+  neo key add "<pubkey>"    # authorize a teammate on the server
+  neo key list              # see all authorized keys (marks your own)
+  neo key remove <number>   # revoke access by number
+  ```
+
+  **Workflow:** Teammate runs `neo key show`, sends you the one-line key. You run `neo key add "<key>"`. They add `server: root@your-ip` to their `.neo.yml` and can deploy immediately with their own neo key. No key files to copy, no passwords to share.
+
+---
+
 ## v0.4.0 — 2026-04-13
 
 ### New Features
