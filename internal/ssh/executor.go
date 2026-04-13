@@ -290,6 +290,7 @@ func parseHost(h string) (string, string) {
 }
 
 // HasKeyAuth returns true if any key-based auth (agent or key files) is available.
+// Checks ssh-agent, neo's managed key, and all private key files in ~/.ssh/.
 func HasKeyAuth() bool {
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
 		if conn, err := net.Dial("unix", sock); err == nil {
@@ -298,14 +299,19 @@ func HasKeyAuth() bool {
 		}
 	}
 
-	home, _ := os.UserHomeDir()
-	keyFiles := []string{
-		filepath.Join(home, ".ssh", "id_ed25519"),
-		filepath.Join(home, ".ssh", "id_rsa"),
+	if _, err := os.Stat(NeoKeyPath()); err == nil {
+		return true
 	}
-	for _, kf := range keyFiles {
-		if _, err := os.Stat(kf); err == nil {
-			return true
+
+	home, _ := os.UserHomeDir()
+	sshDir := filepath.Join(home, ".ssh")
+	skip := map[string]bool{"known_hosts": true, "config": true, "authorized_keys": true}
+	if entries, err := os.ReadDir(sshDir); err == nil {
+		for _, entry := range entries {
+			name := entry.Name()
+			if !entry.IsDir() && !strings.HasSuffix(name, ".pub") && !skip[name] {
+				return true
+			}
 		}
 	}
 	return false
@@ -335,15 +341,28 @@ func (e *Executor) authMethods() []ssh.AuthMethod {
 		}
 	}
 
-	// Try common key files
+	// Try common key files, then scan all remaining keys in ~/.ssh/
+	// (catches cloud-provider keys at non-standard paths like ~/.ssh/do_rsa)
 	home, _ := os.UserHomeDir()
-	keyFiles := []string{
-		filepath.Join(home, ".ssh", "id_ed25519"),
-		filepath.Join(home, ".ssh", "id_rsa"),
-	}
-	for _, kf := range keyFiles {
-		if key, err := loadKey(kf); err == nil {
+	sshDir := filepath.Join(home, ".ssh")
+	standardKeys := map[string]bool{"id_ed25519": true, "id_rsa": true}
+	for _, name := range []string{"id_ed25519", "id_rsa"} {
+		if key, err := loadKey(filepath.Join(sshDir, name)); err == nil {
 			methods = append(methods, key)
+		}
+	}
+	skipNames := map[string]bool{
+		"known_hosts": true, "config": true, "authorized_keys": true,
+	}
+	if entries, err := os.ReadDir(sshDir); err == nil {
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() || strings.HasSuffix(name, ".pub") || standardKeys[name] || skipNames[name] {
+				continue
+			}
+			if key, err := loadKey(filepath.Join(sshDir, name)); err == nil {
+				methods = append(methods, key)
+			}
 		}
 	}
 
@@ -427,6 +446,10 @@ func hostKeyCallback(nonInteractive bool) ssh.HostKeyCallback {
 			return nil
 		}
 		// Host key has changed — always reject (potential MITM)
-		return fmt.Errorf("WARNING: HOST KEY HAS CHANGED for %s — this may indicate a man-in-the-middle attack. Connection refused. Remove the old key from ~/.ssh/known_hosts to connect", hostname)
+		host, _, splitErr := net.SplitHostPort(hostname)
+		if splitErr != nil {
+			host = hostname
+		}
+		return fmt.Errorf("WARNING: HOST KEY HAS CHANGED for %s\n\n  This can happen after a server rebuild or IP reuse.\n  Fix: ssh-keygen -R %s\n  Then run neo init again", hostname, host)
 	}
 }

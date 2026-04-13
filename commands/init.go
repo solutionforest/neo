@@ -81,8 +81,25 @@ func runInit(host, name string) error {
 	// Connect via SSH — no spinner here because host key verification may need user input
 	fmt.Print("  Connecting via SSH...\n")
 	if err := exec.Connect(); err != nil {
-		// Only offer password retry for genuine auth failures, not host key rejections
-		if ssh.HasKeyAuth() && !strings.Contains(err.Error(), "host key") && !strings.Contains(err.Error(), "connection aborted") {
+		errStr := err.Error()
+
+		// Host key mismatch (server rebuilt, IP reused) — show actionable fix
+		if strings.Contains(errStr, "HOST KEY HAS CHANGED") {
+			ip := extractIP(host)
+			if ip == "" {
+				ip = host
+			}
+			fmt.Println()
+			return fmt.Errorf("%w\n\n  Run the fix above, then try neo init again", err)
+		}
+
+		// User rejected the host fingerprint prompt — just stop
+		if strings.Contains(errStr, "connection aborted") {
+			return fmt.Errorf("SSH connection failed: %w", err)
+		}
+
+		// Auth failure — offer password retry, then hint about --key flag
+		if ssh.HasKeyAuth() {
 			fmt.Printf("\n  %s\n\n", err)
 			var password string
 			pErr := huh.NewInput().
@@ -94,15 +111,22 @@ func runInit(host, name string) error {
 				exec.Password = password
 				spin := ui.NewSpinner("Retrying with password...")
 				spin.Start()
-				if err := exec.Connect(); err != nil {
+				if retryErr := exec.Connect(); retryErr != nil {
 					spin.Stop()
-					return fmt.Errorf("SSH connection failed: %w", err)
+					fmt.Printf("\n  Tip: if your cloud key is at a non-standard path, use:\n")
+					fmt.Printf("       neo init --key ~/.ssh/your_key %s\n\n", host)
+					return fmt.Errorf("SSH connection failed: %w", retryErr)
 				}
 				spin.Stop()
 			} else {
+				fmt.Printf("\n  Tip: if your cloud key is at a non-standard path, use:\n")
+				fmt.Printf("       neo init --key ~/.ssh/your_key %s\n\n", host)
 				return fmt.Errorf("SSH connection failed: %w", err)
 			}
 		} else {
+			// No key auth at all — only password was tried
+			fmt.Printf("\n  Tip: specify your SSH key with:\n")
+			fmt.Printf("       neo init --key ~/.ssh/your_key %s\n\n", host)
 			return fmt.Errorf("SSH connection failed: %w", err)
 		}
 	}
@@ -160,6 +184,15 @@ func runInitWithKey(host, name, keyPath string) error {
 
 	fmt.Print("  Connecting via SSH...\n")
 	if err := exec.Connect(); err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "HOST KEY HAS CHANGED") {
+			ip := extractIP(host)
+			if ip == "" {
+				ip = host
+			}
+			fmt.Println()
+			return fmt.Errorf("%w\n\n  Run the fix above, then try neo init again", err)
+		}
 		return fmt.Errorf("SSH connection failed: %w", err)
 	}
 	defer exec.Close()
