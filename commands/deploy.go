@@ -107,6 +107,25 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	// Load .neo.yml for defaults (parsed early for name/port/domain)
 	neoConfig, _ := loadNeoConfig(absPath)
 
+	// Validate that every environment has an explicit server when multiple environments exist.
+	// Silent fallback to the top-level server is dangerous in multi-env configs.
+	if neoConfig != nil && len(neoConfig.Environments) > 1 {
+		var missing []string
+		for envName, envCfg := range neoConfig.Environments {
+			if len(envCfg.EffectiveServers()) == 0 {
+				missing = append(missing, envName)
+			}
+		}
+		if len(missing) > 0 {
+			for _, envName := range missing {
+				ui.Error(fmt.Sprintf("environment %q has no server defined in .neo.yml", envName))
+				ui.Info(fmt.Sprintf("Add to the %q environment:", envName))
+				fmt.Printf("\n    environments:\n      %s:\n        server: your-server-name\n\n", envName)
+			}
+			return fmt.Errorf("all environments must specify a server when multiple environments are defined")
+		}
+	}
+
 	// --all: build image once, then transfer to every environment in parallel
 	if flags.all {
 		if neoConfig == nil || len(neoConfig.Environments) == 0 {
@@ -1878,6 +1897,24 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 		name string
 		url  string
 		err  error
+	}
+
+	// Validate all environments have an explicit server.
+	if len(neoConfig.Environments) > 1 {
+		var missing []string
+		for envName, envCfg := range neoConfig.Environments {
+			if len(envCfg.EffectiveServers()) == 0 {
+				missing = append(missing, envName)
+			}
+		}
+		if len(missing) > 0 {
+			for _, envName := range missing {
+				ui.Error(fmt.Sprintf("environment %q has no server defined in .neo.yml", envName))
+				ui.Info(fmt.Sprintf("Add to the %q environment:", envName))
+				fmt.Printf("\n    environments:\n      %s:\n        server: your-server-name\n\n", envName)
+			}
+			return fmt.Errorf("all environments must specify a server when multiple environments are defined")
+		}
 	}
 
 	// Count total deploy targets (each server in a group is a separate target)
