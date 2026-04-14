@@ -63,6 +63,7 @@ func NewRootCmd(version string) *cobra.Command {
 		newVolumesCmd(),
 		newBackupCmd(),
 		newRestoreCmd(),
+		newPruneCmd(),
 		newSyncCmd(),
 		newConnectCmd(),
 		newPlusCmd(),
@@ -176,6 +177,7 @@ func printHelp() {
 				{"neo backup <app>", "Backup an app's data volumes"},
 				{"neo restore <app> <file>", "Restore an app from a backup"},
 				{"neo volumes", "List Docker volumes on the server"},
+				{"neo prune", "Remove old Docker images (keep last 2 per app)"},
 			},
 		},
 		{

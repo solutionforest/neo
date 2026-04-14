@@ -317,13 +317,77 @@ func (d *Docker) PruneImages(appPrefix, keepTag string) {
 	}
 	ordered = append(ordered, rest...)
 
-	// Keep the two most recent; remove everything older.
+	// Keep the two most recent; remove everything older (by tag, not ID —
+	// removing by ID fails when multiple tags share the same layer digest).
 	for i, e := range ordered {
 		if i < 2 {
 			continue // keep current + previous
 		}
-		d.exec.RunQuiet(fmt.Sprintf("docker rmi %s 2>/dev/null || true", ssh.ShellQuote(e.id)))
+		d.exec.RunQuiet(fmt.Sprintf("docker rmi %s 2>/dev/null || true", ssh.ShellQuote(e.tag)))
 	}
+}
+
+// ImageInfo holds metadata about a single Docker image tag.
+type ImageInfo struct {
+	Tag  string
+	ID   string
+	Size string
+}
+
+// ListNeoImages returns all neo-managed images grouped by repository (image
+// name without tag), ordered newest-first within each group.
+func (d *Docker) ListNeoImages() (map[string][]ImageInfo, error) {
+	out, err := d.exec.Run(
+		`docker images --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}' 2>/dev/null | grep '^neo-'`,
+	)
+	if err != nil || strings.TrimSpace(out) == "" {
+		return nil, nil
+	}
+
+	groups := make(map[string][]ImageInfo)
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		parts := strings.Fields(line)
+		if len(parts) < 3 {
+			continue
+		}
+		tag := parts[0]
+		colon := strings.LastIndex(tag, ":")
+		if colon < 0 {
+			continue
+		}
+		repo := tag[:colon]
+		groups[repo] = append(groups[repo], ImageInfo{Tag: tag, ID: parts[1], Size: parts[2]})
+	}
+	return groups, nil
+}
+
+// PruneAllImages removes old neo-managed images across all apps, keeping the
+// keepCount most recent tags per repository. Returns the list of removed tags.
+// Running container images are never removed (docker rmi silently skips them).
+func (d *Docker) PruneAllImages(keepCount int) ([]string, error) {
+	// Remove dangling images first.
+	d.exec.RunQuiet("docker image prune -f")
+
+	groups, err := d.ListNeoImages()
+	if err != nil || len(groups) == 0 {
+		return nil, err
+	}
+
+	var removed []string
+	for _, entries := range groups {
+		// entries are newest-first (docker images default ordering).
+		for i, e := range entries {
+			if i < keepCount {
+				continue
+			}
+			if runErr := d.exec.RunQuiet(fmt.Sprintf(
+				"docker rmi %s 2>/dev/null", ssh.ShellQuote(e.Tag),
+			)); runErr == nil {
+				removed = append(removed, e.Tag)
+			}
+		}
+	}
+	return removed, nil
 }
 
 // RemoveVolume removes a Docker volume.
