@@ -4,6 +4,43 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.11.0 — 2026-04-14
+
+### Improvements
+
+- **`--parallel` flag for `neo deploy --all`** — Caps the number of concurrent SSH connections and `docker load` operations when deploying to multiple environments. Defaults to `3`, which is safe for most servers. Lower it for underpowered targets (1 GB RAM / 1 vCPU):
+
+  ```bash
+  neo deploy --all                    # default: 3 concurrent deploys
+  neo deploy --all --parallel 1       # serial — safest for small servers
+  neo deploy --all --parallel 5       # max throughput for beefy servers
+  ```
+
+  Previously, `--all` opened one SSH connection per environment simultaneously with no cap, which could OOM small servers during the `docker load` decompression spike.
+
+---
+
+## v0.10.0 — 2026-04-14
+
+### New Features
+
+- **`neo prune`** — Remove old Docker images from the server to free up disk space. Shows a preview table of what will be kept vs removed per app, then asks for confirmation before deleting.
+
+  ```bash
+  neo prune              # keep 2 most recent images per app (default)
+  neo prune --keep 1     # keep only the current image
+  neo prune --dry-run    # preview without making changes
+  neo prune --force      # skip confirmation prompt
+  ```
+
+  Running containers are never affected — Docker skips images still in use and the summary reports how many were skipped.
+
+### Bug Fixes
+
+- **Image pruning after deploy** — Fixed a silent bug where `docker rmi` by image ID would fail when multiple tags share the same layer digest. Old images are now removed by tag, which correctly handles all cases.
+
+---
+
 ## v0.9.0 — 2026-04-13
 
 ### New Features

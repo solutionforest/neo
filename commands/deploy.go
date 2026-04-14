@@ -38,6 +38,7 @@ type deployFlags struct {
 	target     string
 	envOnly    bool // skip rebuild, just restart with updated env
 	all        bool // build once, deploy to all .neo.yml environments in parallel
+	parallel   int  // max concurrent deploys for --all (default 3)
 }
 
 func newDeployCmd() *cobra.Command {
@@ -68,6 +69,7 @@ func newDeployCmd() *cobra.Command {
 	cmd.Flags().StringVar(&flags.target, "to", "", "named environment from .neo.yml (e.g. staging, production)")
 	cmd.Flags().BoolVar(&flags.envOnly, "env-only", false, "restart with updated env/config only — skip rebuild and image transfer")
 	cmd.Flags().BoolVar(&flags.all, "all", false, "build once and deploy to all environments in .neo.yml simultaneously")
+	cmd.Flags().IntVar(&flags.parallel, "parallel", 3, "max concurrent deploys for --all (lower for small servers)")
 
 	return cmd
 }
@@ -1947,6 +1949,16 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 	results := make(chan envResult, totalTargets)
 	var wg sync.WaitGroup
 
+	// Semaphore to cap concurrent SSH connections + docker load operations.
+	// Each parallel deploy opens an SSH connection and decompresses the image,
+	// which spikes CPU and RAM — small servers (1GB/1vCPU) can't handle many at once.
+	// Default is 3; users can lower it with --parallel 1 for underpowered servers.
+	maxParallel := flags.parallel
+	if maxParallel < 1 {
+		maxParallel = 1
+	}
+	sem := make(chan struct{}, maxParallel)
+
 	for envName, envCfg := range neoConfig.Environments {
 		servers := envCfg.EffectiveServers()
 		if len(servers) <= 1 {
@@ -1954,6 +1966,8 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 			wg.Add(1)
 			go func(name string, cfg NeoEnvironment) {
 				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
 				url, deployErr := deployEnvFromFile(name, cfg, "", imageTag, tmpFile, absPath, flags, neoConfig)
 				results <- envResult{name: name, url: url, err: deployErr}
 			}(envName, envCfg)
@@ -1963,6 +1977,8 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 				wg.Add(1)
 				go func(envName, srvName string, cfg NeoEnvironment) {
 					defer wg.Done()
+					sem <- struct{}{}
+					defer func() { <-sem }()
 					label := fmt.Sprintf("%s[%s]", envName, srvName)
 					url, deployErr := deployEnvFromFile(envName, cfg, srvName, imageTag, tmpFile, absPath, flags, neoConfig)
 					results <- envResult{name: label, url: url, err: deployErr}
