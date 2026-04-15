@@ -4,6 +4,14 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.11.1 — 2026-04-15
+
+### Bug Fixes
+
+- **Extra domains not persisted to state after deploy** — When an app had multiple domains (e.g. `domains: [vxero.dev, vxero.com]`), only the primary domain was written to `/etc/neo/state.json`. Extra domains were omitted, which caused two problems: (1) `neo redirect add <extra-domain>` would bypass the conflict check and create a redirect that Caddy silently ignored because the app route matched first; (2) `neo domain` commands operated with an incomplete picture of what Caddy was actually serving. Extra domains from both the `.neo.yml` config and manually-added domains are now always written to state after every deploy.
+
+---
+
 ## v0.11.0 — 2026-04-14
 
 ### Improvements

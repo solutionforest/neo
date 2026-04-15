@@ -1234,7 +1234,10 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	if isRedeploy {
 		stateApp.Services = existing.Services
 		stateApp.InstalledAt = existing.InstalledAt
-		stateApp.ExtraDomains = existing.ExtraDomains // preserve additional domains across redeploys
+	}
+	// Save all extra domains (config + manually-added) so conflict checks stay accurate.
+	if len(deployDomains) > 1 {
+		stateApp.ExtraDomains = deployDomains[1:]
 	}
 	st.Apps[appName] = stateApp
 	state.Save(sshExec, st)
@@ -2305,7 +2308,10 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		stateApp.Workers = existing.Workers
 		stateApp.Sidecars = existing.Sidecars
 		stateApp.InstalledAt = existing.InstalledAt
-		stateApp.ExtraDomains = existing.ExtraDomains
+	}
+	// Save all extra domains (config + manually-added) so conflict checks stay accurate.
+	if len(deployDomains) > 1 {
+		stateApp.ExtraDomains = deployDomains[1:]
 	}
 	st.Apps[appName] = stateApp
 	state.Save(sshExec, st)
