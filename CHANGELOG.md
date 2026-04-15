@@ -4,6 +4,14 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.14.0 — 2026-04-15
+
+### Bug Fixes
+
+- **"Restart with New Env" now applies `basic_auth` changes** — `basic_auth` is enforced at the Caddy proxy layer, not inside the container. Previously, adding or changing `basic_auth` in `.neo.yml` and clicking "Restart with New Env" (or running `neo deploy --env-only`) had no effect — the old Caddy route was left untouched. The env-only path now updates the Caddy route after restarting the container, picking up any changes to `basic_auth`, `https`, and domains from `.neo.yml`.
+
+---
+
 ## v0.13.0 — 2026-04-15
 
 ### Improvements

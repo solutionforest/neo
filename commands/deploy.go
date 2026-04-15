@@ -523,6 +523,20 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			return nil
 		}
 
+		// Update Caddy route with fresh config from .neo.yml (e.g. basic_auth changes).
+		// basic_auth is applied at the Caddy proxy layer, not the container — so any
+		// .neo.yml changes to basic_auth/https/domains must be reflected here even
+		// though the image hasn't changed.
+		if domains := existing.AllDomains(); len(domains) > 0 {
+			upstream := fmt.Sprintf("%s:%d", containerName, existing.InternalPort)
+			authOpts := neoBasicAuthToRouteOpts(neoConfig)
+			if existing.HTTPOnly {
+				caddy.UpdateRouteHTTP(containerName, domains, upstream, authOpts...)
+			} else {
+				caddy.UpdateRoute(containerName, domains, upstream, authOpts...)
+			}
+		}
+
 		// Persist updated env in state
 		existing.Env = env
 		st.Apps[appName] = existing
