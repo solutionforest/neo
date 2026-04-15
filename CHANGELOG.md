@@ -4,6 +4,29 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.12.0 — 2026-04-15
+
+### Improvements
+
+- **Expired Neo+ license — stay open, just warn** — Previously, an expired Plus license silently downgraded the user to the free tier, blocking backups, multi-server access, and any other Plus-gated feature with no explanation. Now:
+
+  - **All Plus features remain active** after expiry — nothing is blocked.
+  - A warning banner is printed at the start of every command:
+    ```
+    ⚠  Your Neo+ license has expired
+       Expired: 2026-04-01
+       Updates are no longer included. Renew at neo.vxero.dev
+       or email support@vxero.dev for support.
+    ```
+  - `neo plus status` shows `Plus (expired)` with a clear renewal CTA.
+  - `neo plus` (interactive menu) routes expired users to a dedicated menu with Renew / Activate New Key / Deactivate options.
+
+### Bug Fixes
+
+- **License expiry detection was fragile** — `Check()` now correctly identifies an expired Plus license even when the API returns `valid: false`, by falling back to the cached `plan` and `expires` fields. Previously, any `valid: false` response was treated as "free tier", losing all context about which plan had expired.
+
+---
+
 ## v0.11.2 — 2026-04-15
 
 ### Bug Fixes
