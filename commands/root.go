@@ -432,6 +432,20 @@ func mustResolveAndLoadState() (*ssh.Executor, *state.State, error) {
 	return exec, st, nil
 }
 
+// printNeoPlusGate prints a consistent upgrade CTA when a gated feature is blocked.
+// feature is a short description like "Backups" or "Multiple servers".
+func printNeoPlusGate(feature string) {
+	fmt.Println()
+	ui.Error(feature + " require a Neo+ license")
+	fmt.Println()
+	fmt.Printf("  %s  %s\n", ui.Yellow.Render("★"), ui.Bold.Render("Upgrade to Neo+"))
+	fmt.Printf("       Unlimited servers, automated backups, and more.\n")
+	fmt.Printf("       %s\n", ui.Cyan.Render("neo.vxero.dev"))
+	fmt.Println()
+	fmt.Printf("  Already have a key?  %s\n", ui.Faint.Render("neo plus activate <key>"))
+	fmt.Println()
+}
+
 // printLicenseExpiredBanner prints a one-time warning when a Neo+ license has expired.
 // The user retains full access to all Plus features — this is advisory only.
 func printLicenseExpiredBanner(expires string) {

@@ -45,13 +45,7 @@ func runBackup(appName string) error {
 	}
 	plan := license.CurrentPlan(cfg.LicenseKey)
 	if !license.Allowed(license.FeatureBackup, plan, 0) {
-		fmt.Println()
-		ui.Error("Backups require a Neo+ license")
-		fmt.Println()
-		fmt.Printf("  Upgrade to %s to unlock backups:\n", ui.Bold.Render("Neo+"))
-		fmt.Printf("    %s\n", ui.Cyan.Render("https://neo.vxero.dev/"))
-		fmt.Printf("  Or activate a license: %s\n", ui.Faint.Render("neo plus activate <key>"))
-		fmt.Println()
+		printNeoPlusGate("Backups")
 		return fmt.Errorf("backups require Neo+")
 	}
 

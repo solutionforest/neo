@@ -4,6 +4,27 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.13.0 — 2026-04-15
+
+### Improvements
+
+- **Neo+ upgrade hints for free users** — Free-tier users now see clear, consistent prompts when they hit a feature gate or are exploring the dashboard.
+
+  - **No-server dashboard** — The first screen new users see now includes a `★ Upgrade to Neo+` hint with the URL and activate command.
+  - **Dashboard main menu** — The Neo+ menu entry shows `★ Upgrade to Neo+ · neo.vxero.dev` for free users instead of a faint "Free plan" label.
+  - **Feature gates** — `neo backup` and adding a second server now show a consistent upgrade card:
+    ```
+    ✗ Backups require a Neo+ license
+
+    ★  Upgrade to Neo+
+       Unlimited servers, automated backups, and more.
+       neo.vxero.dev
+
+    Already have a key?  neo plus activate <key>
+    ```
+
+---
+
 ## v0.12.0 — 2026-04-15
 
 ### Improvements

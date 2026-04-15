@@ -588,12 +588,6 @@ func checkServerLimit(cfg *config.Config) error {
 	if license.Allowed(license.FeatureMultiServer, plan, len(cfg.Servers)) {
 		return nil
 	}
-	fmt.Println()
-	ui.Error("Free plan is limited to 1 server")
-	fmt.Println()
-	fmt.Printf("  Upgrade to %s for unlimited servers:\n", ui.Bold.Render("Neo+"))
-	fmt.Printf("    %s\n", ui.Cyan.Render("https://neo.vxero.dev/"))
-	fmt.Printf("  Or activate a license: %s\n", ui.Faint.Render("neo plus activate <key>"))
-	fmt.Println()
+	printNeoPlusGate("Multiple servers")
 	return fmt.Errorf("server limit reached — upgrade to Neo+")
 }

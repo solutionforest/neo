@@ -39,6 +39,10 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Example:\n")
 		fmt.Printf("    %s\n", ui.Faint.Render("neo init root@159.65.100.42"))
 		fmt.Println()
+		status := license.Check(cfg.LicenseKey)
+		if !status.Valid && !status.Expired {
+			ui.PrintUpgradeHint()
+		}
 		return nil
 	}
 
@@ -283,10 +287,14 @@ func cachedDashboardSummaries(cfg *config.Config) (string, string) {
 // plusSummary returns a short status string for the Neo+ menu item.
 func plusSummary(cfg *config.Config) string {
 	status := license.Check(cfg.LicenseKey)
-	if status.Valid && status.Plan == license.PlanPlus {
+	switch {
+	case status.Valid && status.Plan == license.PlanPlus:
 		return ui.Green.Render("Plus · unlimited servers")
+	case status.Expired:
+		return ui.Yellow.Render("Plus · expired — renew at neo.vxero.dev")
+	default:
+		return ui.Yellow.Render("★ Upgrade to Neo+") + ui.Faint.Render(" · neo.vxero.dev")
 	}
-	return ui.Faint.Render("Free plan · 1 server")
 }
 
 // formatCacheAge returns a human-readable duration string for cache age display.
