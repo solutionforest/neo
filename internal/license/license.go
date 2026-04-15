@@ -23,9 +23,23 @@ const OfflineGraceDays = 7
 // Status represents the current license state.
 type Status struct {
 	Valid       bool   `json:"valid"`
-	Plan       string `json:"plan"`       // "free" or "plus"
-	Expires    string `json:"expires"`    // ISO date, empty if lifetime
+	Expired     bool   `json:"expired"`     // was Plus, now past expiry date
+	Plan        string `json:"plan"`        // "free" or "plus"
+	Expires     string `json:"expires"`     // ISO date, empty if lifetime
 	ValidatedAt string `json:"validated_at"`
+}
+
+// isExpiredDate reports whether an ISO date (YYYY-MM-DD or RFC3339) is in the past.
+func isExpiredDate(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, layout := range []string{"2006-01-02", time.RFC3339} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return time.Now().After(t)
+		}
+	}
+	return false
 }
 
 // cacheFile returns the license cache path.
@@ -157,10 +171,9 @@ func Check(licenseKey string) *Status {
 		return &Status{Valid: false, Plan: PlanFree}
 	}
 
-	// Try cached status first
+	// Try cached status first (valid or known-expired, within grace period).
 	if cached := loadCache(); cached != nil {
-		if cached.Valid {
-			// Check if cache is within offline grace period
+		if cached.Valid || cached.Expired {
 			if t, err := time.Parse(time.RFC3339, cached.ValidatedAt); err == nil {
 				if time.Since(t) < time.Duration(OfflineGraceDays)*24*time.Hour {
 					return cached
@@ -169,7 +182,7 @@ func Check(licenseKey string) *Status {
 		}
 	}
 
-	// Cache expired or missing — try online validation (with short timeout)
+	// Cache stale or missing — try online validation (with short timeout).
 	client := &http.Client{Timeout: 3 * time.Second}
 	apiURL := LicenseAPIURL() + "/validate"
 
@@ -179,9 +192,9 @@ func Check(licenseKey string) *Status {
 
 	resp, err := client.PostForm(apiURL, form)
 	if err != nil {
-		// Network error — check if we have any cached status (even expired)
-		if cached := loadCache(); cached != nil && cached.Valid {
-			return cached // stale but better than blocking
+		// Network error — return stale cache so we don't block the user.
+		if cached := loadCache(); cached != nil {
+			return cached
 		}
 		return &Status{Valid: false, Plan: PlanFree}
 	}
@@ -196,23 +209,54 @@ func Check(licenseKey string) *Status {
 		return &Status{Valid: false, Plan: PlanFree}
 	}
 
-	status := &Status{
-		Valid:       result.Valid,
-		Plan:        PlanFree,
-		ValidatedAt: time.Now().UTC().Format(time.RFC3339),
-	}
+	now := time.Now().UTC().Format(time.RFC3339)
+
 	if result.Valid {
-		status.Plan = result.Plan
-		status.Expires = result.Expires
+		status := &Status{
+			Valid:       true,
+			Plan:        result.Plan,
+			Expires:     result.Expires,
+			ValidatedAt: now,
+		}
+		saveCache(status)
+		return status
+	}
+
+	// License invalid — check whether this is an expired Plus license.
+	// The API may or may not return plan/expires for invalid keys, so we also
+	// fall back to the previously cached plan and expiry date.
+	plan := result.Plan
+	expires := result.Expires
+	if plan == "" {
+		if old := loadCache(); old != nil {
+			plan = old.Plan
+			if expires == "" {
+				expires = old.Expires
+			}
+		}
+	}
+
+	status := &Status{
+		Valid:       false,
+		Plan:        PlanFree,
+		Expires:     expires,
+		ValidatedAt: now,
+	}
+	if plan == PlanPlus && isExpiredDate(expires) {
+		// Expired Plus: keep plan so feature gates still pass, mark Expired for UI warning.
+		status.Expired = true
+		status.Plan = PlanPlus
 	}
 	saveCache(status)
 	return status
 }
 
-// CurrentPlan is a shorthand that loads config license key and returns the plan.
+// CurrentPlan returns the effective plan for feature gating.
+// Expired Plus licenses return PlanPlus — features remain accessible, but
+// the caller is responsible for showing the expiry warning separately.
 func CurrentPlan(licenseKey string) string {
 	s := Check(licenseKey)
-	if s.Valid {
+	if s.Valid || s.Expired {
 		return s.Plan
 	}
 	return PlanFree
@@ -228,21 +272,21 @@ func MaskKey(key string) string {
 }
 
 // CheckDaily refreshes the cached license status if more than 24 hours have passed
-// since the last check. It is intended to be called once at startup — it never blocks
-// for more than 3 seconds and never surfaces errors to the caller.
-func CheckDaily(licenseKey string) {
+// since the last check. It returns the current status so callers can show expiry
+// warnings. It never blocks for more than 3 seconds and never surfaces errors.
+func CheckDaily(licenseKey string) *Status {
 	if licenseKey == "" {
-		return
+		return nil
 	}
 	if cached := loadCache(); cached != nil {
 		if t, err := time.Parse(time.RFC3339, cached.ValidatedAt); err == nil {
 			if time.Since(t) < 24*time.Hour {
-				return // already checked within the last 24 hours
+				return cached // already checked within the last 24 hours
 			}
 		}
 	}
-	// Cache is missing or older than 24 h — refresh silently (Check updates the cache).
-	Check(licenseKey)
+	// Cache missing or older than 24 h — refresh and return updated status.
+	return Check(licenseKey)
 }
 
 func loadCache() *Status {

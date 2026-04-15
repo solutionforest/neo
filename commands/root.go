@@ -36,7 +36,9 @@ func NewRootCmd(version string) *cobra.Command {
 	// Daily license refresh — runs once per startup, skipped if already checked today.
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if cfg, err := config.Load(); err == nil {
-			license.CheckDaily(cfg.LicenseKey)
+			if status := license.CheckDaily(cfg.LicenseKey); status != nil && status.Expired {
+				printLicenseExpiredBanner(status.Expires)
+			}
 		}
 		return nil
 	}
@@ -428,6 +430,19 @@ func mustResolveAndLoadState() (*ssh.Executor, *state.State, error) {
 		return nil, nil, err
 	}
 	return exec, st, nil
+}
+
+// printLicenseExpiredBanner prints a one-time warning when a Neo+ license has expired.
+// The user retains full access to all Plus features — this is advisory only.
+func printLicenseExpiredBanner(expires string) {
+	fmt.Println()
+	fmt.Printf("  %s  %s\n", ui.Yellow.Render("⚠"), ui.Bold.Render("Your Neo+ license has expired"))
+	if expires != "" {
+		fmt.Printf("       Expired: %s\n", ui.Faint.Render(expires))
+	}
+	fmt.Printf("       Updates are no longer included. Renew at %s\n", ui.Bold.Render("neo.vxero.dev"))
+	fmt.Printf("       or email %s for support.\n", ui.Bold.Render("support@vxero.dev"))
+	fmt.Println()
 }
 
 // exitErr prints an error and exits.

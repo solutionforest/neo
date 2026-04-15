@@ -56,10 +56,14 @@ func runPlus() error {
 	}
 
 	status := license.Check(cfg.LicenseKey)
-	if status.Valid && status.Plan == license.PlanPlus {
+	switch {
+	case status.Valid && status.Plan == license.PlanPlus:
 		return tuiPlusMenuLicensed(cfg, status)
+	case status.Expired:
+		return tuiPlusMenuExpired(cfg, status)
+	default:
+		return tuiPlusMenuFree(cfg)
 	}
-	return tuiPlusMenuFree(cfg)
 }
 
 // tuiPlusMenuFree shows the Neo+ menu for free users.
@@ -182,6 +186,92 @@ func tuiPlusMenuLicensed(cfg *config.Config, status *license.Status) error {
 	}
 }
 
+// tuiPlusMenuExpired shows the Neo+ menu for users whose license has expired.
+// They still have full feature access — this menu focuses on renewal.
+func tuiPlusMenuExpired(cfg *config.Config, status *license.Status) error {
+	for {
+		title := fmt.Sprintf("  %s\n  %s\n  %s\n  %s",
+			ui.Bold.Render("Neo+"),
+			ui.Faint.Render("─────────────────────────────────────"),
+			ui.Yellow.Render("⚠  License expired — "+status.Expires),
+			ui.Faint.Render("All features still active. Renew to keep receiving updates."))
+
+		opts := []ui.SelectOption{
+			{fmt.Sprintf("%-22s%s", "Renew Neo+", ui.Faint.Render("neo.vxero.dev")), "renew"},
+			{"Activate New Key", "activate"},
+			{ui.Red.Render("Deactivate License"), "deactivate"},
+			{"Back", "back"},
+		}
+
+		action := ui.Select(title, opts)
+		switch action {
+		case "renew":
+			openBrowser("https://neo.vxero.dev/")
+			return nil
+
+		case "activate":
+			var key string
+			err := huh.NewInput().
+				Title("Enter your new Neo+ license key").
+				Placeholder("NEO-XXXX-XXXX-XXXX").
+				Value(&key).
+				Run()
+			if err != nil || key == "" {
+				continue
+			}
+
+			spin := ui.NewSpinner("Activating license...")
+			spin.Start()
+			newStatus, err := license.Activate(key)
+			spin.Stop()
+
+			if err != nil {
+				ui.Error(err.Error())
+				continue
+			}
+
+			cfg.LicenseKey = key
+			config.Save(cfg)
+
+			card := ui.NewCard()
+			card.Add(ui.Green.Render("License activated!"))
+			card.Blank()
+			card.AddKV("Plan", "Neo+")
+			if newStatus.Expires != "" {
+				card.AddKV("Expires", newStatus.Expires)
+			} else {
+				card.AddKV("Expires", "Never (lifetime)")
+			}
+			card.Render()
+			return nil
+
+		case "deactivate":
+			var confirm bool
+			huh.NewConfirm().
+				Title("Deactivate Neo+ on this machine?").
+				Description("You can reactivate later. Free tier limits will apply.").
+				Value(&confirm).
+				Run() //nolint:errcheck
+			if !confirm {
+				continue
+			}
+
+			spin := ui.NewSpinner("Deactivating...")
+			spin.Start()
+			license.Deactivate(cfg.LicenseKey) //nolint:errcheck
+			spin.Stop()
+
+			cfg.LicenseKey = ""
+			config.Save(cfg)
+			ui.Success("License deactivated")
+			return nil
+
+		case "", "back":
+			return nil
+		}
+	}
+}
+
 // runPlusActivate handles `neo plus activate <key>`.
 func runPlusActivate(key string) error {
 	cfg, err := config.Load()
@@ -245,16 +335,29 @@ func runPlusStatus() error {
 	card.Add(ui.Bold.Render("Neo+ Status"))
 	card.Blank()
 	card.AddKV("Key", license.MaskKey(cfg.LicenseKey))
-	if status.Valid && status.Plan == license.PlanPlus {
-		card.AddKV("Plan", ui.Green.Render("Plus"))
+	switch {
+	case status.Valid && status.Plan == license.PlanPlus:
+		card.AddKV("Plan", ui.Green.Render("Plus (active)"))
 		card.AddKV("Servers", "Unlimited")
 		card.AddKV("Backups", ui.Green.Render("enabled"))
 		if status.Expires != "" {
 			card.AddKV("Expires", status.Expires)
+		} else {
+			card.AddKV("Expires", "Never (lifetime)")
 		}
-	} else {
+	case status.Expired:
+		card.AddKV("Plan", ui.Yellow.Render("Plus (expired)"))
+		card.AddKV("Expired", status.Expires)
+		card.AddKV("Features", "All features still active")
+		card.Blank()
+		card.Add(ui.Yellow.Render("⚠  Updates no longer included"))
+		card.Add(ui.Faint.Render("Renew: neo.vxero.dev"))
+		card.Add(ui.Faint.Render("Support: support@vxero.dev"))
+	default:
 		card.AddKV("Plan", "Free")
-		card.AddKV("Status", ui.Red.Render("invalid or expired"))
+		card.AddKV("Status", ui.Red.Render("invalid or not activated"))
+		card.Blank()
+		card.Add(ui.Faint.Render("Upgrade: neo.vxero.dev"))
 	}
 	card.Render()
 	return nil
