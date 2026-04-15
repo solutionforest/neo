@@ -213,6 +213,9 @@ func (e *Executor) UploadReader(r io.Reader, size int64, remotePath string, mode
 	filename := filepath.Base(remotePath)
 	dir := filepath.Dir(remotePath)
 
+	var stderr bytes.Buffer
+	session.Stderr = &stderr
+
 	go func() {
 		w, _ := session.StdinPipe()
 		fmt.Fprintf(w, "C%04o %d %s\n", mode, size, filename)
@@ -221,7 +224,13 @@ func (e *Executor) UploadReader(r io.Reader, size int64, remotePath string, mode
 		w.Close()
 	}()
 
-	return session.Run(fmt.Sprintf("scp -t %s", dir))
+	if err := session.Run(fmt.Sprintf("scp -t %s", dir)); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("%s", msg)
+		}
+		return err
+	}
+	return nil
 }
 
 // FileExists checks if a file exists on the remote server.

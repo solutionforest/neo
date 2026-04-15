@@ -1311,7 +1311,13 @@ func deployViaLocalBuild(projectPath, dockerfile, imageTag, platform string, ssh
 	if numStreams <= 0 {
 		numStreams = 2
 	}
-	return transferImageParallel(tmpFile, fileSize, sshExec, numStreams)
+	if err := transferImageParallel(tmpFile, fileSize, sshExec, numStreams); err != nil {
+		// Parallel upload failed (e.g. remote /tmp too small for all chunks).
+		// Fall back to streaming the image directly into docker load — no remote temp files needed.
+		ui.Info(fmt.Sprintf("Parallel upload failed (%s) — falling back to single-stream transfer", err))
+		return transferImageStream(tmpFile, sshExec)
+	}
+	return nil
 }
 
 // deployViaRemoteBuild uploads source and builds on the server.
@@ -1854,6 +1860,34 @@ func transferImageParallel(tmpFile string, fileSize int64, sshExec *neossh.Execu
 	if loadErr != nil {
 		return fmt.Errorf("docker load: %w", loadErr)
 	}
+	return nil
+}
+
+// transferImageStream uploads a gzipped image to the server using a single SSH stream,
+// piping the file content directly into `gunzip | docker load` with no temp files on the remote.
+// Used as a fallback when parallel chunked upload fails (e.g. remote /tmp is too small).
+func transferImageStream(tmpFile string, sshExec *neossh.Executor) error {
+	f, err := os.Open(tmpFile)
+	if err != nil {
+		return fmt.Errorf("open image: %w", err)
+	}
+	defer f.Close()
+
+	info, _ := f.Stat()
+	var mb float64
+	if info != nil {
+		mb = float64(info.Size()) / (1024 * 1024)
+	}
+
+	spin := ui.NewSpinner(fmt.Sprintf("Transferring and loading image on server (%.0f MB)...", mb))
+	spin.Start()
+	_, err = sshExec.StreamInput("gunzip | docker load", f)
+	spin.Stop()
+
+	if err != nil {
+		return fmt.Errorf("stream docker load: %w", err)
+	}
+	ui.Success(fmt.Sprintf("Image transferred and loaded on server (%.0f MB)", mb))
 	return nil
 }
 

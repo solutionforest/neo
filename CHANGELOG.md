@@ -4,6 +4,14 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.11.2 — 2026-04-15
+
+### Bug Fixes
+
+- **Image upload failure on servers with small `/tmp`** — Parallel chunked uploads write all chunks to `/tmp` simultaneously. On servers where `/tmp` is a `tmpfs` (common on VPS providers — typically capped at 50% of RAM), a large image could exceed available space and cause `scp` to exit with status 1. Neo now falls back automatically to a single-stream transfer that pipes the image directly into `docker load` with no remote temp files. The actual `scp` error message is also now surfaced (previously swallowed as "Process exited with status 1").
+
+---
+
 ## v0.11.1 — 2026-04-15
 
 ### Bug Fixes
