@@ -18,15 +18,16 @@ import (
 var DefaultLicenseAPIURL = "https://neo.vxero.dev/api/license"
 
 // OfflineGraceDays is how many days the CLI trusts a cached validation.
-const OfflineGraceDays = 7
+const OfflineGraceDays = 3
 
 // Status represents the current license state.
 type Status struct {
 	Valid       bool   `json:"valid"`
-	Expired     bool   `json:"expired"`     // was Plus, now past expiry date
-	Plan        string `json:"plan"`        // "free" or "plus"
-	Expires     string `json:"expires"`     // ISO date, empty if lifetime
+	Expired     bool   `json:"expired"`      // was Plus, now past expiry date
+	Plan        string `json:"plan"`         // "free" or "plus"
+	Expires     string `json:"expires"`      // ISO date, empty if lifetime
 	ValidatedAt string `json:"validated_at"`
+	ValidatedBy string `json:"validated_by"` // license API URL that produced this cache
 }
 
 // isExpiredDate reports whether an ISO date (YYYY-MM-DD or RFC3339) is in the past.
@@ -172,8 +173,12 @@ func Check(licenseKey string) *Status {
 	}
 
 	// Try cached status first (valid or known-expired, within grace period).
+	// Reject cache from a different license server (e.g. staging cache read by production binary).
+	currentAPI := LicenseAPIURL()
 	if cached := loadCache(); cached != nil {
-		if cached.Valid || cached.Expired {
+		if cached.ValidatedBy != "" && cached.ValidatedBy != currentAPI {
+			// Cache was produced by a different environment — ignore it.
+		} else if cached.Valid || cached.Expired {
 			if t, err := time.Parse(time.RFC3339, cached.ValidatedAt); err == nil {
 				if time.Since(t) < time.Duration(OfflineGraceDays)*24*time.Hour {
 					return cached
@@ -192,9 +197,12 @@ func Check(licenseKey string) *Status {
 
 	resp, err := client.PostForm(apiURL, form)
 	if err != nil {
-		// Network error — return stale cache so we don't block the user.
+		// Network error — return stale cache so we don't block the user,
+		// but only if it came from the same license server.
 		if cached := loadCache(); cached != nil {
-			return cached
+			if cached.ValidatedBy == "" || cached.ValidatedBy == currentAPI {
+				return cached
+			}
 		}
 		return &Status{Valid: false, Plan: PlanFree}
 	}
@@ -278,14 +286,17 @@ func CheckDaily(licenseKey string) *Status {
 	if licenseKey == "" {
 		return nil
 	}
+	currentAPI := LicenseAPIURL()
 	if cached := loadCache(); cached != nil {
-		if t, err := time.Parse(time.RFC3339, cached.ValidatedAt); err == nil {
-			if time.Since(t) < 24*time.Hour {
-				return cached // already checked within the last 24 hours
+		if cached.ValidatedBy == "" || cached.ValidatedBy == currentAPI {
+			if t, err := time.Parse(time.RFC3339, cached.ValidatedAt); err == nil {
+				if time.Since(t) < 24*time.Hour {
+					return cached // already checked within the last 24 hours
+				}
 			}
 		}
 	}
-	// Cache missing or older than 24 h — refresh and return updated status.
+	// Cache missing, wrong environment, or older than 24 h — refresh.
 	return Check(licenseKey)
 }
 
@@ -302,6 +313,7 @@ func loadCache() *Status {
 }
 
 func saveCache(s *Status) {
+	s.ValidatedBy = LicenseAPIURL()
 	data, _ := json.MarshalIndent(s, "", "  ")
 	os.MkdirAll(filepath.Dir(cacheFile()), 0o700)
 	os.WriteFile(cacheFile(), data, 0o600) //nolint:errcheck

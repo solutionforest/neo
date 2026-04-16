@@ -4,6 +4,14 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.15.0 — 2026-04-15
+
+### Bug Fixes
+
+- **License cache no longer leaks across staging/production builds** — The license cache (`~/.neo/license.json`) now records which license server validated it (`validated_by` field). A staging binary's cache is rejected by a production binary and vice versa, preventing a staging license from appearing valid on a freshly installed production build. Offline grace period reduced from 7 days to 3 days.
+
+---
+
 ## v0.14.0 — 2026-04-15
 
 ### Bug Fixes
