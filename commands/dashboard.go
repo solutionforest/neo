@@ -1104,6 +1104,9 @@ func printDNSInstructions(domain string) {
 	card.Blank()
 	card.Add(ui.Faint.Render("SSL cert auto-provisioned once DNS propagates (1–5 min)"))
 	card.Render()
+	fmt.Print("\n  " + ui.Faint.Render("Press any key to return..."))
+	ui.ReadKey()
+	fmt.Println()
 }
 
 // tuiLiveMetrics shows a live-updating server + container metrics view.

@@ -339,6 +339,9 @@ func runServiceCreate(typeName, svcName string) error {
 	card.Blank()
 	printConnInfoLines(card, svcState, defaultDB)
 	card.Render()
+	fmt.Print("\n  " + ui.Faint.Render("Press any key to return..."))
+	ui.ReadKey()
+	fmt.Println()
 
 	return nil
 }
