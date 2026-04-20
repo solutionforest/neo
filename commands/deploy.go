@@ -624,6 +624,10 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	if neoConfig != nil && neoConfig.HTTPS != nil {
 		httpOnly = !*neoConfig.HTTPS
 	}
+	// sslip.io domains (--temp or auto-assigned) imply HTTPS; honour that promise on first deploy.
+	if !isRedeploy && strings.HasSuffix(domain, ".sslip.io") && (neoConfig == nil || neoConfig.HTTPS == nil) {
+		httpOnly = false
+	}
 
 	// Build the full domain list for Caddy: primary + config extras + state extras (redeploy).
 	deployDomains := func() []string {
@@ -784,11 +788,10 @@ func runDeploy(projectPath string, flags deployFlags) error {
 						caddy.AddRouteMultiHTTP(containerName, deployDomains, canonicalUpstreams, authOpts...)
 					}
 					httpOnly = false
-				} else if neoConfig != nil && neoConfig.HTTPS != nil && *neoConfig.HTTPS {
-					if err := caddy.AddRouteMulti(containerName, deployDomains, canonicalUpstreams, authOpts...); err != nil {
+				} else if !httpOnly {
+					if err := caddy.UpdateRouteMulti(containerName, deployDomains, canonicalUpstreams, authOpts...); err != nil {
 						ui.Error(fmt.Sprintf("Failed to add Caddy HTTPS route: %s", err))
 					}
-					httpOnly = false
 				} else {
 					if err := caddy.AddRouteMultiHTTP(containerName, deployDomains, canonicalUpstreams, authOpts...); err != nil {
 						ui.Error(fmt.Sprintf("Failed to add Caddy route: %s", err))
@@ -953,14 +956,13 @@ func runDeploy(projectPath string, flags deployFlags) error {
 						caddy.AddRouteHTTP(containerName, domains, upstream, authOpts...)
 					}
 					httpOnly = false
-				} else if neoConfig != nil && neoConfig.HTTPS != nil && *neoConfig.HTTPS {
-					// HTTPS enabled via .neo.yml https: true
-					if err := caddy.AddRoute(containerName, domains, upstream, authOpts...); err != nil {
+				} else if !httpOnly {
+					// HTTPS enabled via .neo.yml https: true or sslip.io domain
+					if err := caddy.UpdateRoute(containerName, domains, upstream, authOpts...); err != nil {
 						ui.Error(fmt.Sprintf("Failed to add Caddy HTTPS route: %s", err))
 					}
-					httpOnly = false
 				} else {
-					// HTTP-only by default (user can enable HTTPS via neo domain --temp or neo domain <app> <domain>)
+					// HTTP-only by default (user can enable HTTPS via TUI or neo domain <app> <domain>)
 					if err := caddy.AddRouteHTTP(containerName, domains, upstream, authOpts...); err != nil {
 						ui.Error(fmt.Sprintf("Failed to add Caddy route: %s", err))
 					}

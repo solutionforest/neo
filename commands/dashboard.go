@@ -779,6 +779,9 @@ func tuiAppActions(appName string, st *state.State, exec *neossh.Executor) (bool
 			if err := runLogs(appName, 50, false, "", "", ""); err != nil {
 				return false, err
 			}
+			fmt.Print("\n  " + ui.Faint.Render("Press any key to return..."))
+			ui.ReadKey()
+			fmt.Println()
 		case "workers":
 			if err := tuiWorkersMenu(appName, a.Workers); err != nil {
 				return false, err
@@ -880,6 +883,9 @@ func tuiWorkerActions(appName, workerName string, w state.AppWorker) error {
 			if err := runLogs(appName, 50, false, workerName, "", ""); err != nil {
 				return err
 			}
+			fmt.Print("\n  " + ui.Faint.Render("Press any key to return..."))
+			ui.ReadKey()
+			fmt.Println()
 		case "start", "stop", "restart":
 			if err := runWorkerManage(appName, workerName, action); err != nil {
 				return err
@@ -961,6 +967,9 @@ func tuiSidecarActions(appName, sidecarName string, sc state.AppSidecar) error {
 			if err := runSidecarLogs(appName, sidecarName); err != nil {
 				return err
 			}
+			fmt.Print("\n  " + ui.Faint.Render("Press any key to return..."))
+			ui.ReadKey()
+			fmt.Println()
 		case "start", "stop", "restart":
 			if err := runSidecarManage(appName, sidecarName, action); err != nil {
 				return err
@@ -1347,7 +1356,13 @@ func tuiServiceActions(svcName string, st *state.State) (bool, error) {
 
 	switch action {
 	case "logs":
-		return false, runServiceLogs(svcName, 50, false)
+		if err := runServiceLogs(svcName, 50, false); err != nil {
+			return false, err
+		}
+		fmt.Print("\n  " + ui.Faint.Render("Press any key to return..."))
+		ui.ReadKey()
+		fmt.Println()
+		return false, nil
 	case "info":
 		tuiShowServiceInfo(svc)
 		return false, nil

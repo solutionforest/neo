@@ -4,6 +4,18 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.16.0 — 2026-04-20
+
+### Bug Fixes
+
+- **TUI "View Logs" no longer flashes and returns immediately** — Selecting "View Logs" from the app, worker, sidecar, or service action menus previously printed log output and then instantly re-rendered the menu before the user could read anything. All four log viewers now wait for a keypress before returning to the menu.
+
+- **HTTPS works on first deploy without the HTTP→HTTPS toggle workaround** — Two related issues caused `ERR_SSL_PROTOCOL_ERROR` after a fresh deploy with HTTPS:
+  1. `--temp` domains and auto-assigned `sslip.io` domains were set up as HTTP-only despite the flag description promising "auto-SSL". They now default to HTTPS on first deploy.
+  2. The initial Caddy route for HTTPS deploys used `AddRoute` directly, which could leave the domain stuck in Caddy's `automatic_https.skip` list from a prior run. The first-deploy path now uses `UpdateRoute` / `UpdateRouteMulti`, which clears the skip list before adding the route — the same clean-state logic the HTTP→HTTPS toggle already used.
+
+---
+
 ## v0.15.0 — 2026-04-15
 
 ### Bug Fixes
