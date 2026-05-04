@@ -20,6 +20,15 @@ func NewDocker(exec *ssh.Executor) *Docker {
 	return &Docker{exec: exec}
 }
 
+// bin returns the docker binary invocation. Non-root SSH users get "sudo docker"
+// so that docker socket access works without requiring a new login session.
+func (d *Docker) bin() string {
+	if d.exec.User() == "root" {
+		return "docker"
+	}
+	return "sudo docker"
+}
+
 // IsInstalled checks if Docker is available on the remote server.
 func (d *Docker) IsInstalled() bool {
 	_, err := d.exec.Run("docker --version")
@@ -27,8 +36,16 @@ func (d *Docker) IsInstalled() bool {
 }
 
 // Install installs Docker on the remote server via the convenience script.
+// For non-root users it also adds them to the docker group so subsequent
+// sudo docker commands work without re-login.
 func (d *Docker) Install() error {
-	return d.exec.RunQuiet(fmt.Sprintf("curl -fsSL %s | sh", config.DefaultDockerInstallURL))
+	if err := d.exec.RunQuiet(fmt.Sprintf("curl -fsSL %s | sh", config.DefaultDockerInstallURL)); err != nil {
+		return err
+	}
+	if user := d.exec.User(); user != "root" {
+		d.exec.RunQuiet("usermod -aG docker " + user)
+	}
+	return nil
 }
 
 // Version returns the Docker version string.
@@ -48,20 +65,21 @@ func (d *Docker) Version() (string, error) {
 // CreateNetwork creates a Docker network if it doesn't exist.
 func (d *Docker) CreateNetwork(name string) error {
 	q := ssh.ShellQuote(name)
+	bin := d.bin()
 	return d.exec.RunQuiet(fmt.Sprintf(
-		"docker network inspect %s >/dev/null 2>&1 || docker network create %s",
-		q, q,
+		"%s network inspect %s >/dev/null 2>&1 || %s network create %s",
+		bin, q, bin, q,
 	))
 }
 
 // Pull pulls a Docker image on the remote server.
 func (d *Docker) Pull(image string) error {
-	return d.exec.RunQuiet(fmt.Sprintf("docker pull %s", ssh.ShellQuote(image)))
+	return d.exec.RunQuiet(fmt.Sprintf("%s pull %s", d.bin(), ssh.ShellQuote(image)))
 }
 
 // PullStream pulls a Docker image and streams output.
 func (d *Docker) PullStream(image string, w io.Writer) error {
-	return d.exec.Stream(fmt.Sprintf("docker pull %s", ssh.ShellQuote(image)), w)
+	return d.exec.Stream(fmt.Sprintf("%s pull %s", d.bin(), ssh.ShellQuote(image)), w)
 }
 
 // RunOpts holds options for running a container.
@@ -86,7 +104,7 @@ type RunOpts struct {
 // Run creates and starts a container.
 func (d *Docker) Run(opts RunOpts) (string, error) {
 	var args []string
-	args = append(args, "docker", "run", "-d")
+	args = append(args, d.bin(), "run", "-d")
 
 	if opts.Name != "" {
 		args = append(args, "--name", ssh.ShellQuote(opts.Name))
@@ -134,32 +152,32 @@ func (d *Docker) Run(opts RunOpts) (string, error) {
 
 // Stop stops a container.
 func (d *Docker) Stop(name string) error {
-	return d.exec.RunQuiet(fmt.Sprintf("docker stop %s", ssh.ShellQuote(name)))
+	return d.exec.RunQuiet(fmt.Sprintf("%s stop %s", d.bin(), ssh.ShellQuote(name)))
 }
 
 // Start starts a stopped container.
 func (d *Docker) Start(name string) error {
-	return d.exec.RunQuiet(fmt.Sprintf("docker start %s", ssh.ShellQuote(name)))
+	return d.exec.RunQuiet(fmt.Sprintf("%s start %s", d.bin(), ssh.ShellQuote(name)))
 }
 
 // Restart restarts a container.
 func (d *Docker) Restart(name string) error {
-	return d.exec.RunQuiet(fmt.Sprintf("docker restart %s", ssh.ShellQuote(name)))
+	return d.exec.RunQuiet(fmt.Sprintf("%s restart %s", d.bin(), ssh.ShellQuote(name)))
 }
 
 // Remove removes a container (force).
 func (d *Docker) Remove(name string) error {
-	return d.exec.RunQuiet(fmt.Sprintf("docker rm -f %s", ssh.ShellQuote(name)))
+	return d.exec.RunQuiet(fmt.Sprintf("%s rm -f %s", d.bin(), ssh.ShellQuote(name)))
 }
 
 // Rename renames a container.
 func (d *Docker) Rename(oldName, newName string) error {
-	return d.exec.RunQuiet(fmt.Sprintf("docker rename %s %s", ssh.ShellQuote(oldName), ssh.ShellQuote(newName)))
+	return d.exec.RunQuiet(fmt.Sprintf("%s rename %s %s", d.bin(), ssh.ShellQuote(oldName), ssh.ShellQuote(newName)))
 }
 
 // Logs streams container logs.
 func (d *Docker) Logs(name string, tail int, follow bool, w io.Writer) error {
-	cmd := fmt.Sprintf("docker logs --tail %d", tail)
+	cmd := fmt.Sprintf("%s logs --tail %d", d.bin(), tail)
 	if follow {
 		cmd += " -f"
 	}
@@ -170,7 +188,7 @@ func (d *Docker) Logs(name string, tail int, follow bool, w io.Writer) error {
 // IsRunning checks if a container is running.
 func (d *Docker) IsRunning(name string) bool {
 	out, err := d.exec.Run(fmt.Sprintf(
-		"docker inspect -f '{{.State.Running}}' %s 2>/dev/null", ssh.ShellQuote(name),
+		"%s inspect -f '{{.State.Running}}' %s 2>/dev/null", d.bin(), ssh.ShellQuote(name),
 	))
 	return err == nil && strings.TrimSpace(out) == "true"
 }
@@ -180,8 +198,8 @@ func (d *Docker) IsRunning(name string) bool {
 // which mirrors exactly what Caddy does when proxying to the container.
 func (d *Docker) IsPortOpen(name string, port int) bool {
 	ip, err := d.exec.Run(fmt.Sprintf(
-		"docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' %s 2>/dev/null",
-		ssh.ShellQuote(name),
+		"%s inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' %s 2>/dev/null",
+		d.bin(), ssh.ShellQuote(name),
 	))
 	if err != nil || strings.TrimSpace(ip) == "" {
 		return false
@@ -218,8 +236,8 @@ func (d *Docker) HTTPHealthCheck(containerName string, port int, opts HTTPHealth
 	}
 
 	ip, err := d.exec.Run(fmt.Sprintf(
-		"docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' %s 2>/dev/null",
-		ssh.ShellQuote(containerName),
+		"%s inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' %s 2>/dev/null",
+		d.bin(), ssh.ShellQuote(containerName),
 	))
 	if err != nil || strings.TrimSpace(ip) == "" {
 		return fmt.Errorf("cannot resolve container IP for %s", containerName)
@@ -260,7 +278,7 @@ func (d *Docker) HTTPHealthCheck(containerName string, port int, opts HTTPHealth
 // ContainerStatus returns the container status string.
 func (d *Docker) ContainerStatus(name string) string {
 	out, err := d.exec.Run(fmt.Sprintf(
-		"docker inspect -f '{{.State.Status}}' %s 2>/dev/null", ssh.ShellQuote(name),
+		"%s inspect -f '{{.State.Status}}' %s 2>/dev/null", d.bin(), ssh.ShellQuote(name),
 	))
 	if err != nil {
 		return "unknown"
@@ -270,14 +288,14 @@ func (d *Docker) ContainerStatus(name string) string {
 
 // VolumeList lists Docker volumes.
 func (d *Docker) VolumeList() (string, error) {
-	return d.exec.Run("docker volume ls --format '{{.Name}}\t{{.Driver}}'")
+	return d.exec.Run(d.bin() + " volume ls --format '{{.Name}}\t{{.Driver}}'")
 }
 
 // VolumeSize returns the disk usage of a volume.
 func (d *Docker) VolumeSize(name string) (string, error) {
 	return d.exec.Run(fmt.Sprintf(
-		"docker system df -v 2>/dev/null | grep -F %s | awk '{print $NF}' || echo 'N/A'",
-		ssh.ShellQuote(name),
+		"%s system df -v 2>/dev/null | grep -F %s | awk '{print $NF}' || echo 'N/A'",
+		d.bin(), ssh.ShellQuote(name),
 	))
 }
 
@@ -287,12 +305,13 @@ func (d *Docker) VolumeSize(name string) (string, error) {
 // Errors are silently ignored — pruning is best-effort and must not block deploys.
 func (d *Docker) PruneImages(appPrefix, keepTag string) {
 	// 1. Remove dangling images (untagged layers left over from builds/loads)
-	d.exec.RunQuiet("docker image prune -f")
+	d.exec.RunQuiet(d.bin() + " image prune -f")
 
 	// 2. List all versioned images for this app, ordered newest-first (docker images
 	//    returns them in creation-time descending order by default).
 	out, err := d.exec.Run(fmt.Sprintf(
-		"docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | grep %s",
+		"%s images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | grep %s",
+		d.bin(),
 		ssh.ShellQuote("^"+appPrefix+":"),
 	))
 	if err != nil || out == "" {
@@ -323,7 +342,7 @@ func (d *Docker) PruneImages(appPrefix, keepTag string) {
 		if i < 2 {
 			continue // keep current + previous
 		}
-		d.exec.RunQuiet(fmt.Sprintf("docker rmi %s 2>/dev/null || true", ssh.ShellQuote(e.tag)))
+		d.exec.RunQuiet(fmt.Sprintf("%s rmi %s 2>/dev/null || true", d.bin(), ssh.ShellQuote(e.tag)))
 	}
 }
 
@@ -338,7 +357,7 @@ type ImageInfo struct {
 // name without tag), ordered newest-first within each group.
 func (d *Docker) ListNeoImages() (map[string][]ImageInfo, error) {
 	out, err := d.exec.Run(
-		`docker images --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}' 2>/dev/null | grep '^neo-'`,
+		d.bin() + ` images --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}' 2>/dev/null | grep '^neo-'`,
 	)
 	if err != nil || strings.TrimSpace(out) == "" {
 		return nil, nil
@@ -366,7 +385,7 @@ func (d *Docker) ListNeoImages() (map[string][]ImageInfo, error) {
 // Running container images are never removed (docker rmi silently skips them).
 func (d *Docker) PruneAllImages(keepCount int) ([]string, error) {
 	// Remove dangling images first.
-	d.exec.RunQuiet("docker image prune -f")
+	d.exec.RunQuiet(d.bin() + " image prune -f")
 
 	groups, err := d.ListNeoImages()
 	if err != nil || len(groups) == 0 {
@@ -381,7 +400,7 @@ func (d *Docker) PruneAllImages(keepCount int) ([]string, error) {
 				continue
 			}
 			if runErr := d.exec.RunQuiet(fmt.Sprintf(
-				"docker rmi %s 2>/dev/null", ssh.ShellQuote(e.Tag),
+				"%s rmi %s 2>/dev/null", d.bin(), ssh.ShellQuote(e.Tag),
 			)); runErr == nil {
 				removed = append(removed, e.Tag)
 			}
@@ -392,53 +411,53 @@ func (d *Docker) PruneAllImages(keepCount int) ([]string, error) {
 
 // RemoveVolume removes a Docker volume.
 func (d *Docker) RemoveVolume(name string) error {
-	return d.exec.RunQuiet(fmt.Sprintf("docker volume rm %s", ssh.ShellQuote(name)))
+	return d.exec.RunQuiet(fmt.Sprintf("%s volume rm %s", d.bin(), ssh.ShellQuote(name)))
 }
 
 // Stats returns a one-shot snapshot of container resource usage.
 func (d *Docker) Stats(format string) (string, error) {
-	cmd := fmt.Sprintf("docker stats --no-stream --format %s 2>/dev/null", ssh.ShellQuote(format))
+	cmd := fmt.Sprintf("%s stats --no-stream --format %s 2>/dev/null", d.bin(), ssh.ShellQuote(format))
 	return d.exec.Run(cmd)
 }
 
 // Exec runs a command inside a running container.
 func (d *Docker) Exec(container, cmd string) (string, error) {
-	return d.exec.Run(fmt.Sprintf("docker exec %s sh -c %s", ssh.ShellQuote(container), ssh.ShellQuote(cmd)))
+	return d.exec.Run(fmt.Sprintf("%s exec %s sh -c %s", d.bin(), ssh.ShellQuote(container), ssh.ShellQuote(cmd)))
 }
 
 // Build builds an image from a build context directory on the remote server.
 func (d *Docker) Build(contextDir, dockerfile, tag string, w io.Writer) error {
-	cmd := fmt.Sprintf("DOCKER_BUILDKIT=1 docker build -t %s -f %s %s", ssh.ShellQuote(tag), ssh.ShellQuote(dockerfile), ssh.ShellQuote(contextDir))
+	cmd := fmt.Sprintf("DOCKER_BUILDKIT=1 %s build -t %s -f %s %s", d.bin(), ssh.ShellQuote(tag), ssh.ShellQuote(dockerfile), ssh.ShellQuote(contextDir))
 	return d.exec.Stream(cmd, w)
 }
 
 // LoadImage loads a Docker image by streaming a tar archive into docker load.
 func (d *Docker) LoadImage(r io.Reader) (string, error) {
-	return d.exec.StreamInput("docker load", r)
+	return d.exec.StreamInput(d.bin()+" load", r)
 }
 
 // LoadImageGzipped loads a gzip-compressed Docker image from a reader.
 // The stream is decompressed server-side before being piped into docker load.
 func (d *Docker) LoadImageGzipped(r io.Reader) (string, error) {
-	return d.exec.StreamInput("gunzip | docker load", r)
+	return d.exec.StreamInput("gunzip | "+d.bin()+" load", r)
 }
 
 // Tag tags a Docker image.
 func (d *Docker) Tag(src, dst string) error {
-	return d.exec.RunQuiet(fmt.Sprintf("docker tag %s %s", ssh.ShellQuote(src), ssh.ShellQuote(dst)))
+	return d.exec.RunQuiet(fmt.Sprintf("%s tag %s %s", d.bin(), ssh.ShellQuote(src), ssh.ShellQuote(dst)))
 }
 
 // CopyVolume copies data between a Docker volume and a host path.
 func (d *Docker) CopyVolume(volumeName, hostPath string) error {
 	return d.exec.RunQuiet(fmt.Sprintf(
-		"docker run --rm -v %s:/src -v %s:/dst alpine cp -a /src/. /dst/",
-		ssh.ShellQuote(volumeName), ssh.ShellQuote(hostPath),
+		"%s run --rm -v %s:/src -v %s:/dst alpine cp -a /src/. /dst/",
+		d.bin(), ssh.ShellQuote(volumeName), ssh.ShellQuote(hostPath),
 	))
 }
 
 // RunningContainers returns a list of running container names (excluding neo-managed ones).
 func (d *Docker) RunningContainers() []string {
-	out, err := d.exec.Run(`docker ps --format '{{.Names}}' 2>/dev/null`)
+	out, err := d.exec.Run(d.bin() + ` ps --format '{{.Names}}' 2>/dev/null`)
 	if err != nil || strings.TrimSpace(out) == "" {
 		return nil
 	}
@@ -461,6 +480,6 @@ func (d *Docker) StopAll(names []string) error {
 	for i, n := range names {
 		quoted[i] = ssh.ShellQuote(n)
 	}
-	_, err := d.exec.Run("docker stop " + strings.Join(quoted, " "))
+	_, err := d.exec.Run(d.bin() + " stop " + strings.Join(quoted, " "))
 	return err
 }

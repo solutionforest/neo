@@ -54,6 +54,12 @@ func New(host string, port int) *Executor {
 	return &Executor{Host: host, Port: port}
 }
 
+// User returns the SSH username (the part before @ in Host, defaulting to "root").
+func (e *Executor) User() string {
+	user, _ := parseHost(e.Host)
+	return user
+}
+
 // Connect establishes the SSH connection.
 func (e *Executor) Connect() error {
 	user, host := parseHost(e.Host)
