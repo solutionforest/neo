@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/vxero/neo/internal/config"
 	"github.com/vxero/neo/internal/remote"
-	neossh "github.com/vxero/neo/internal/ssh"
 	"github.com/vxero/neo/internal/state"
 	"github.com/vxero/neo/internal/ui"
 )
@@ -300,17 +299,16 @@ func runDomainCustomCert(appName, domain, certFile, keyFile string) error {
 
 	// Upload cert and key to server
 	remoteCertDir := fmt.Sprintf("/etc/neo/certs/%s", sanitizeName(appName))
-	exec.RunQuiet(fmt.Sprintf("mkdir -p %s", neossh.ShellQuote(remoteCertDir)))
 
 	spin := ui.NewSpinner("Uploading SSL certificate...")
 	spin.Start()
 	certPath := remoteCertDir + "/cert.pem"
 	keyPath := remoteCertDir + "/key.pem"
-	if err := exec.WriteFile(certPath, certData, 0644); err != nil {
+	if err := exec.WriteFileElevated(certPath, certData, 0644); err != nil {
 		spin.Stop()
 		return fmt.Errorf("upload certificate: %w", err)
 	}
-	if err := exec.WriteFile(keyPath, keyData, 0600); err != nil {
+	if err := exec.WriteFileElevated(keyPath, keyData, 0600); err != nil {
 		spin.Stop()
 		return fmt.Errorf("upload key: %w", err)
 	}

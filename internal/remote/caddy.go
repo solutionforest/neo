@@ -140,8 +140,7 @@ func (c *Caddy) StartContainer() error {
 	// Write initial Caddyfile to a persistent path that survives reboots.
 	// /tmp is cleared on boot, so we use /etc/neo/caddy/ instead.
 	caddyfile := "{\n  admin 0.0.0.0:2019\n}\n"
-	c.exec.RunQuiet("mkdir -p /etc/neo/caddy")
-	if err := c.exec.WriteFile("/etc/neo/caddy/Caddyfile", []byte(caddyfile), 0644); err != nil {
+	if err := c.exec.WriteFileElevated("/etc/neo/caddy/Caddyfile", []byte(caddyfile), 0644); err != nil {
 		return fmt.Errorf("write Caddyfile: %w", err)
 	}
 

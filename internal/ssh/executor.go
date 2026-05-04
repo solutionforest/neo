@@ -175,6 +175,26 @@ func (e *Executor) WriteFile(remotePath string, data []byte, mode os.FileMode) e
 	return session.Run(fmt.Sprintf("scp -t %s", dir))
 }
 
+// WriteFileElevated writes content to a remote path that requires elevated privileges
+// (e.g. /etc/neo/). For root SSH sessions it behaves like WriteFile. For non-root
+// sessions it stages the file in /tmp first, then sudo-moves it to the target so
+// the operation works without a new login session after usermod.
+func (e *Executor) WriteFileElevated(remotePath string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(remotePath)
+	if e.User() == "root" {
+		e.RunQuiet("mkdir -p '" + dir + "'") //nolint:errcheck
+		return e.WriteFile(remotePath, data, mode)
+	}
+	tmp := fmt.Sprintf("/tmp/.neo_%d", time.Now().UnixNano())
+	if err := e.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	return e.RunQuiet(fmt.Sprintf(
+		"sudo mkdir -p '%s' && sudo mv '%s' '%s' && sudo chmod %04o '%s'",
+		dir, tmp, remotePath, mode, remotePath,
+	))
+}
+
 // ReadFile reads a file from the remote server.
 func (e *Executor) ReadFile(remotePath string) ([]byte, error) {
 	out, err := e.Run(fmt.Sprintf("cat %s", ShellQuote(remotePath)))
