@@ -1286,13 +1286,22 @@ func tuiServicesMenu(cfg *config.Config) error {
 		case "", "back":
 			return nil
 		case "create":
-			// Re-create SSH exec since we share within this menu
+			before := make(map[string]bool)
+			for n := range st.Services {
+				before[n] = true
+			}
 			if err := runServiceCreate("", ""); err != nil {
 				ui.Error(err.Error())
 			}
-			// Reload state
+			// Reload state and show credentials for the new service via TUI
 			if freshSt, err := state.Load(exec); err == nil {
 				st = freshSt
+				for n, svc := range st.Services {
+					if !before[n] {
+						tuiShowServiceInfo(svc)
+						break
+					}
+				}
 			}
 		default:
 			done, err := tuiServiceActions(selected, st)

@@ -33,7 +33,7 @@ func newInitCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&name, "name", "", "server name (default: derived from host)")
-	cmd.Flags().StringVar(&key, "key", "", "path to SSH private key file")
+	cmd.Flags().StringVarP(&key, "key", "i", "", "path to SSH private key file")
 	return cmd
 }
 
