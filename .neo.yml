@@ -2,6 +2,7 @@ name: neo-builder
 domain: none
 port: 9100
 https: false
+server: "flint-153"
 
 env:
   NEO_SOURCE_DIR: /src/neo

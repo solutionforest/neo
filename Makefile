@@ -2,6 +2,7 @@ VERSION ?= dev
 BINARY  := neo
 IMAGE   ?= vxero/neo
 GO_IMAGE ?= golang:1.24-alpine
+DEV_LICENSE_BYPASS ?= false
 
 # Staging endpoints — injected at build time for staging binaries
 STAGING_LICENSE_URL  := https://neo-staging.vxero.dev/api/license
@@ -15,12 +16,13 @@ LDFLAGS := -s -w -X main.version=$(VERSION) \
 	-X github.com/vxero/neo/internal/config.DefaultAPIBaseURL=$(STAGING_API_BASE_URL) \
 	-X github.com/vxero/neo/internal/config.DefaultInstallURL=$(STAGING_INSTALL_URL)
 else
-LDFLAGS := -s -w -X main.version=$(VERSION)
+LDFLAGS := -s -w -X main.version=$(VERSION) \
+	-X github.com/vxero/neo/internal/license.DevLicenseBypass=$(DEV_LICENSE_BYPASS)
 endif
 HOSTOS ?= $(shell uname -s | sed -e 's/Darwin/darwin/' -e 's/Linux/linux/' -e 's/MINGW.*/windows/' -e 's/MSYS.*/windows/' -e 's/CYGWIN.*/windows/')
 HOSTARCH ?= $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/amd64/amd64/' -e 's/arm64/arm64/' -e 's/aarch64/arm64/')
 
-.PHONY: build build-staging build-all build-neotest build-sandbox-test install clean test fmt docker-build docker-run image-build sandbox
+.PHONY: build build-dev build-staging build-all build-neotest build-sandbox-test install clean test fmt docker-build docker-run image-build sandbox
 
 DOCKER_GO = docker run --rm -v "$(CURDIR):/src" -w /src $(GO_IMAGE)
 GO_BIN = /usr/local/go/bin/go
@@ -28,6 +30,9 @@ GO_BIN = /usr/local/go/bin/go
 build:
 	@mkdir -p bin
 	$(DOCKER_GO) sh -c '$(GO_BIN) mod download && CGO_ENABLED=0 GOOS=$(HOSTOS) GOARCH=$(HOSTARCH) $(GO_BIN) build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/neo'
+
+build-dev:
+	$(MAKE) build VERSION=dev-local DEV_LICENSE_BYPASS=true
 
 build-staging:
 	$(MAKE) build VERSION=$(VERSION)-staging BINARY=$(BINARY)-staging

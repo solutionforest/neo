@@ -90,6 +90,7 @@ type RunOpts struct {
 	Restart    string
 	Ports      []string          // "host:container"
 	Volumes    []string          // "name:/path" or "/host:/container"
+	EnvFiles   []string          // paths to Docker --env-file files on the remote host
 	Env        map[string]string // KEY=VALUE
 	Entrypoint string            // override entrypoint
 	Cmd        string            // override cmd
@@ -120,6 +121,9 @@ func (d *Docker) Run(opts RunOpts) (string, error) {
 	}
 	for _, v := range opts.Volumes {
 		args = append(args, "-v", ssh.ShellQuote(v))
+	}
+	for _, f := range opts.EnvFiles {
+		args = append(args, "--env-file", ssh.ShellQuote(f))
 	}
 	for k, v := range opts.Env {
 		args = append(args, "-e", ssh.ShellQuote(fmt.Sprintf("%s=%s", k, v)))

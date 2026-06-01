@@ -17,15 +17,19 @@ import (
 // Override at build time via: -ldflags "-X github.com/vxero/neo/internal/license.DefaultLicenseAPIURL=..."
 var DefaultLicenseAPIURL = "https://neo.vxero.dev/api/license"
 
+// DevLicenseBypass allows local development builds to exercise Neo+ gates
+// without requiring a live license. It is intended only for local/staging testing.
+var DevLicenseBypass = "false"
+
 // OfflineGraceDays is how many days the CLI trusts a cached validation.
 const OfflineGraceDays = 3
 
 // Status represents the current license state.
 type Status struct {
 	Valid       bool   `json:"valid"`
-	Expired     bool   `json:"expired"`      // was Plus, now past expiry date
-	Plan        string `json:"plan"`         // "free" or "plus"
-	Expires     string `json:"expires"`      // ISO date, empty if lifetime
+	Expired     bool   `json:"expired"` // was Plus, now past expiry date
+	Plan        string `json:"plan"`    // "free" or "plus"
+	Expires     string `json:"expires"` // ISO date, empty if lifetime
 	ValidatedAt string `json:"validated_at"`
 	ValidatedBy string `json:"validated_by"` // license API URL that produced this cache
 }
@@ -263,11 +267,24 @@ func Check(licenseKey string) *Status {
 // Expired Plus licenses return PlanPlus — features remain accessible, but
 // the caller is responsible for showing the expiry warning separately.
 func CurrentPlan(licenseKey string) string {
+	if DevBypassEnabled() {
+		return PlanPlus
+	}
 	s := Check(licenseKey)
 	if s.Valid || s.Expired {
 		return s.Plan
 	}
 	return PlanFree
+}
+
+// DevBypassEnabled reports whether local development gates should behave as Neo+.
+func DevBypassEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(DevLicenseBypass))
+	if v == "1" || v == "true" || v == "yes" {
+		return true
+	}
+	v = strings.ToLower(strings.TrimSpace(os.Getenv("NEO_DEV_PLUS")))
+	return v == "1" || v == "true" || v == "yes"
 }
 
 // MaskKey masks a license key for display (shows first 4 and last 4 chars).

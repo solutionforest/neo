@@ -24,8 +24,8 @@ func NewRootCmd(version string) *cobra.Command {
 	cliVersion = version
 
 	root := &cobra.Command{
-		Use:   "neo",
-		RunE:  runDashboard,
+		Use:           "neo",
+		RunE:          runDashboard,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -71,6 +71,7 @@ func NewRootCmd(version string) *cobra.Command {
 		newPlusCmd(),
 		newSSHCmd(),
 		newStealthCmd(),
+		newCaddyCmd(),
 		newFirewallCmd(),
 		newKeyCmd(),
 		newRedirectCmd(),
@@ -191,6 +192,8 @@ func printHelp() {
 				{"neo status", "Show server health and container stats"},
 				{"neo status --live", "Live-updating server metrics"},
 				{"neo stealth", "Toggle stealth mode (hide IP welcome page)"},
+				{"neo caddy dns <domain>", "Enable wildcard SSL via DNS-01"},
+				{"neo caddy ondemand <domain>", "Enable wildcard tenant SSL on demand"},
 			},
 		},
 		{
@@ -264,6 +267,8 @@ It handles deployment, SSL certificates, shared database services, and app lifec
 
 ### Domains & SSL
 - neo domain <app> <domain>     Set domain (auto-provisions SSL via Caddy)
+- neo caddy dns <domain>        Enable wildcard SSL via DNS-01
+- neo caddy ondemand <domain>   Enable wildcard tenant SSL on demand
 
 ### Environment Variables
 - neo env <app>                 View env vars (secrets masked)

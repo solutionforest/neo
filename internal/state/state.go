@@ -75,9 +75,10 @@ type AppSidecar struct {
 type App struct {
 	Name         string                `json:"name"`
 	Image        string                `json:"image"`
-	Domain       string                `json:"domain"`                    // primary domain (backward compat)
-	ExtraDomains []string              `json:"extra_domains,omitempty"`   // additional domains
-	HTTPOnly     bool                  `json:"http_only,omitempty"` // true = HTTP, false = HTTPS (default)
+	Domain       string                `json:"domain"`                  // primary domain (backward compat)
+	ExtraDomains []string              `json:"extra_domains,omitempty"` // additional domains
+	HTTPOnly     bool                  `json:"http_only,omitempty"`     // true = HTTP, false = HTTPS (default)
+	EdgeHTTPS    bool                  `json:"edge_https,omitempty"`    // true = HTTP origin behind HTTPS edge proxy
 	Status       string                `json:"status"`
 	ContainerID  string                `json:"container_id,omitempty"`
 	InternalPort int                   `json:"internal_port"`
@@ -148,17 +149,17 @@ type DomainRedirect struct {
 
 // State is the remote server state stored at /etc/neo/state.json.
 type State struct {
-	Initialized       bool                       `json:"initialized"`
-	ServerIP          string                     `json:"server_ip"`
-	ServerArch        string                     `json:"server_arch,omitempty"`
-	StealthMode       bool                       `json:"stealth_mode,omitempty"`
-	FirewallInstalled bool                       `json:"firewall_installed,omitempty"`
-	Apps              map[string]App             `json:"apps"`
-	Services          map[string]SharedService   `json:"services,omitempty"`
-	Redirects         map[string]DomainRedirect  `json:"redirects,omitempty"`
-	Connected         bool                       `json:"connected"`
-	VxeroURL          string                     `json:"vxero_url,omitempty"`
-	VxeroToken        string                     `json:"vxero_token,omitempty"`
+	Initialized       bool                      `json:"initialized"`
+	ServerIP          string                    `json:"server_ip"`
+	ServerArch        string                    `json:"server_arch,omitempty"`
+	StealthMode       bool                      `json:"stealth_mode,omitempty"`
+	FirewallInstalled bool                      `json:"firewall_installed,omitempty"`
+	Apps              map[string]App            `json:"apps"`
+	Services          map[string]SharedService  `json:"services,omitempty"`
+	Redirects         map[string]DomainRedirect `json:"redirects,omitempty"`
+	Connected         bool                      `json:"connected"`
+	VxeroURL          string                    `json:"vxero_url,omitempty"`
+	VxeroToken        string                    `json:"vxero_token,omitempty"`
 }
 
 // NewState returns an empty state.

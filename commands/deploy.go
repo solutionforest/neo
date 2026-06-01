@@ -205,7 +205,13 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			if env.EnvFile != "" && neoConfig.EnvFile == "" {
 				neoConfig.EnvFile = env.EnvFile
 			}
-			// Environment SSL overrides top-level
+			// Environment SSL/proxy settings override top-level
+			if env.HTTPS != nil {
+				neoConfig.HTTPS = env.HTTPS
+			}
+			if env.EdgeHTTPS {
+				neoConfig.EdgeHTTPS = true
+			}
 			if env.SSL != nil {
 				neoConfig.SSL = env.SSL
 			}
@@ -440,11 +446,19 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		}
 	}
 
+	edgeHTTPS := false
+	if isRedeploy {
+		edgeHTTPS = existing.EdgeHTTPS
+	}
+	if neoConfig != nil && neoConfig.EdgeHTTPS {
+		edgeHTTPS = true
+	}
+
 	// Auto-set APP_URL from domain if not already explicitly set
 	if domain != "" {
 		if _, ok := env["APP_URL"]; !ok {
 			// Scheme: explicit .neo.yml https: flag wins; else redeploy inherits state; first deploy defaults to http
-			httpsEnabled := false
+			httpsEnabled := edgeHTTPS
 			if neoConfig != nil && neoConfig.HTTPS != nil {
 				httpsEnabled = *neoConfig.HTTPS
 			} else if isRedeploy && !existing.HTTPOnly {
@@ -529,7 +543,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		// though the image hasn't changed.
 		if domains := existing.AllDomains(); len(domains) > 0 {
 			upstream := fmt.Sprintf("%s:%d", containerName, existing.InternalPort)
-			authOpts := neoBasicAuthToRouteOpts(neoConfig)
+			authOpts := routeOptionsFromConfig(neoConfig, existing.EdgeHTTPS)
 			if existing.HTTPOnly {
 				caddy.UpdateRouteHTTP(containerName, domains, upstream, authOpts...)
 			} else {
@@ -624,6 +638,9 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	if neoConfig != nil && neoConfig.HTTPS != nil {
 		httpOnly = !*neoConfig.HTTPS
 	}
+	if edgeHTTPS {
+		httpOnly = true
+	}
 	// sslip.io domains (--temp or auto-assigned) imply HTTPS; honour that promise on first deploy.
 	if !isRedeploy && strings.HasSuffix(domain, ".sslip.io") && (neoConfig == nil || neoConfig.HTTPS == nil) {
 		httpOnly = false
@@ -654,6 +671,16 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		}
 		return result
 	}()
+	if hasWildcardDomain(deployDomains) && !httpOnly {
+		provider, _ := remote.CaddyDNSProviderFor("cloudflare")
+		baseDomain := wildcardBaseDomain(deployDomains)
+		if !caddy.HasDNSProvider(provider.Name) && !caddy.HasOnDemandTLS(baseDomain) {
+			return fmt.Errorf("wildcard HTTPS needs DNS-01 or guarded on-demand TLS; run 'neo caddy dns %s --provider %s --app %s' or 'neo caddy ondemand %s --app %s' first", baseDomain, provider.Name, appName, baseDomain, appName)
+		}
+	}
+	if neoConfig != nil {
+		neoConfig.EdgeHTTPS = edgeHTTPS
+	}
 
 	// addCaddyRoute replaces (or creates) the single-upstream Caddy route for this app.
 	addCaddyRoute := func(cName string, domains []string, p int) {
@@ -665,7 +692,8 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		if httpOnly {
 			caddy.UpdateRouteHTTP(cName, domains, upstream, authOpts...)
 		} else {
-			caddy.UpdateRoute(cName, domains, upstream, authOpts...)
+			provider, _ := remote.CaddyDNSProviderFor("cloudflare")
+			_ = updateHTTPSRouteAllowingWildcard(caddy, provider, cName, domains, upstream, authOpts...)
 		}
 	}
 
@@ -1235,6 +1263,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		Image:        imageTag,
 		Domain:       domain,
 		HTTPOnly:     httpOnly,
+		EdgeHTTPS:    edgeHTTPS,
 		Status:       "running",
 		InternalPort: port,
 		Env:          env,
@@ -1551,19 +1580,30 @@ func restartPolicy(r string) string {
 	return r
 }
 
-// neoBasicAuthToRouteOpts converts a NeoConfig's BasicAuth into remote.RouteOptions.
-// Returns nil slice (no options) when basic auth is not configured.
+// neoBasicAuthToRouteOpts converts route-related NeoConfig fields into remote.RouteOptions.
+// Returns nil slice when no route options are configured.
 func neoBasicAuthToRouteOpts(cfg *NeoConfig) []remote.RouteOptions {
-	if cfg == nil || cfg.BasicAuth == nil || cfg.BasicAuth.User == "" || cfg.BasicAuth.Password == "" {
-		return nil
-	}
-	return []remote.RouteOptions{{
-		BasicAuth: &remote.BasicAuthConfig{
+	edgeHTTPS := cfg != nil && cfg.EdgeHTTPS
+	return routeOptionsFromConfig(cfg, edgeHTTPS)
+}
+
+func routeOptionsFromConfig(cfg *NeoConfig, edgeHTTPS bool) []remote.RouteOptions {
+	var opts remote.RouteOptions
+	if cfg != nil && cfg.BasicAuth != nil && cfg.BasicAuth.User != "" && cfg.BasicAuth.Password != "" {
+		opts.BasicAuth = &remote.BasicAuthConfig{
 			Username:    cfg.BasicAuth.User,
 			Password:    cfg.BasicAuth.Password,
 			BypassPaths: cfg.BasicAuth.Bypass,
-		},
-	}}
+		}
+	}
+	if edgeHTTPS {
+		opts.ForwardedProto = "https"
+		opts.ForwardedSSL = true
+	}
+	if opts.BasicAuth == nil && opts.ForwardedProto == "" && !opts.ForwardedSSL {
+		return nil
+	}
+	return []remote.RouteOptions{opts}
 }
 
 // neoHealthToState converts a NeoHealth config to a state HealthCheck.
@@ -2183,10 +2223,15 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		domain = appName + "." + st.ServerIP + ".sslip.io"
 	}
 
+	edgeHTTPS := neoConfig.EdgeHTTPS || envCfg.EdgeHTTPS
+	if isRedeploy {
+		edgeHTTPS = existing.EdgeHTTPS || edgeHTTPS
+	}
+
 	// Auto-set APP_URL
 	if domain != "" {
 		if _, ok := env["APP_URL"]; !ok {
-			httpsEnabled := false
+			httpsEnabled := edgeHTTPS
 			if httpsFlag != nil {
 				httpsEnabled = *httpsFlag
 			} else if isRedeploy && !existing.HTTPOnly {
@@ -2278,6 +2323,10 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 	if httpsFlag != nil {
 		httpOnly = !*httpsFlag
 	}
+	if edgeHTTPS {
+		httpOnly = true
+		neoConfig.EdgeHTTPS = true
+	}
 
 	var deployDomains []string
 	if domain != "" {
@@ -2306,6 +2355,13 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 			}
 		}
 	}
+	if hasWildcardDomain(deployDomains) && !httpOnly {
+		provider, _ := remote.CaddyDNSProviderFor("cloudflare")
+		baseDomain := wildcardBaseDomain(deployDomains)
+		if !caddy.HasDNSProvider(provider.Name) && !caddy.HasOnDemandTLS(baseDomain) {
+			return "", fmt.Errorf("wildcard HTTPS needs DNS-01 or guarded on-demand TLS; run 'neo caddy dns %s --provider %s --app %s' or 'neo caddy ondemand %s --app %s' first", baseDomain, provider.Name, appName, baseDomain, appName)
+		}
+	}
 
 	swapCaddy := func(cName, upstream string) {
 		if len(deployDomains) == 0 {
@@ -2315,7 +2371,8 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		if httpOnly {
 			caddy.UpdateRouteHTTP(cName, deployDomains, upstream, authOpts...)
 		} else {
-			caddy.UpdateRoute(cName, deployDomains, upstream, authOpts...)
+			provider, _ := remote.CaddyDNSProviderFor("cloudflare")
+			_ = updateHTTPSRouteAllowingWildcard(caddy, provider, cName, deployDomains, upstream, authOpts...)
 		}
 	}
 
@@ -2343,6 +2400,7 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		Image:        imageTag,
 		Domain:       domain,
 		HTTPOnly:     httpOnly,
+		EdgeHTTPS:    edgeHTTPS,
 		Status:       "running",
 		InternalPort: port,
 		Env:          env,

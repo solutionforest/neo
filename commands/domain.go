@@ -21,6 +21,16 @@ func validateDomain(domain string) error {
 	if domain == "" {
 		return nil // empty domain is allowed (means no domain)
 	}
+	if strings.HasPrefix(domain, "*.") {
+		base := strings.TrimPrefix(domain, "*.")
+		if base == "" || strings.Contains(base, "*") {
+			return fmt.Errorf("invalid wildcard domain %q — wildcard must be a single leading *.", domain)
+		}
+		return validateDomain(base)
+	}
+	if strings.Contains(domain, "*") {
+		return fmt.Errorf("invalid wildcard domain %q — wildcard must be a single leading *.", domain)
+	}
 	if len(domain) > 253 {
 		return fmt.Errorf("domain name too long (max 253 characters)")
 	}
@@ -33,6 +43,7 @@ func validateDomain(domain string) error {
 func newDomainCmd() *cobra.Command {
 	var tempFlag bool
 	var addFlag, removeFlag bool
+	var httpOnlyFlag, httpsFlag, cloudflareFlexibleFlag bool
 	var certFile, keyFile string
 
 	cmd := &cobra.Command{
@@ -50,13 +61,26 @@ specific domain without affecting the others.`,
 			if addFlag && removeFlag {
 				return fmt.Errorf("--add and --remove are mutually exclusive")
 			}
+			if httpOnlyFlag && httpsFlag {
+				return fmt.Errorf("--http-only and --https are mutually exclusive")
+			}
+			if cloudflareFlexibleFlag && httpsFlag {
+				return fmt.Errorf("--cloudflare-flexible uses HTTP origin routing and cannot be combined with --https")
+			}
+			if cloudflareFlexibleFlag {
+				httpOnlyFlag = true
+			}
 
 			if tempFlag {
 				return runDomainTemp(appName, addFlag)
 			}
 
+			if len(args) == 1 && (httpOnlyFlag || httpsFlag) {
+				return runSetHTTPS(appName, httpsFlag, cloudflareFlexibleFlag)
+			}
+
 			if len(args) < 2 {
-				return fmt.Errorf("provide a domain name, or use --temp for a temporary sslip.io domain")
+				return fmt.Errorf("provide a domain name, use --temp, or pass --http-only/--https to change the current route mode")
 			}
 
 			domain := args[1]
@@ -72,19 +96,32 @@ specific domain without affecting the others.`,
 				return runDomainCustomCert(appName, domain, certFile, keyFile)
 			}
 
-			return runDomain(appName, domain, addFlag)
+			return runDomain(appName, domain, addFlag, domainModeOptions{
+				HTTPOnly:           httpOnlyFlag,
+				HTTPS:              httpsFlag,
+				CloudflareFlexible: cloudflareFlexibleFlag,
+			})
 		},
 	}
 
 	cmd.Flags().BoolVar(&tempFlag, "temp", false, "assign a temporary {app}.{ip}.sslip.io domain with auto-SSL")
 	cmd.Flags().BoolVar(&addFlag, "add", false, "add domain alongside existing ones instead of replacing")
 	cmd.Flags().BoolVar(&removeFlag, "remove", false, "remove a specific domain without affecting others")
+	cmd.Flags().BoolVar(&httpOnlyFlag, "http-only", false, "serve this domain over HTTP only at the origin")
+	cmd.Flags().BoolVar(&httpsFlag, "https", false, "serve this domain over HTTPS at the origin")
+	cmd.Flags().BoolVar(&cloudflareFlexibleFlag, "cloudflare-flexible", false, "HTTP origin route for Cloudflare Flexible SSL; forwards HTTPS scheme to the app")
 	cmd.Flags().StringVar(&certFile, "cert", "", "path to SSL certificate file (PEM)")
 	cmd.Flags().StringVar(&keyFile, "key", "", "path to SSL private key file (PEM)")
 	return cmd
 }
 
-func runDomain(appName, domain string, add bool) error {
+type domainModeOptions struct {
+	HTTPOnly           bool
+	HTTPS              bool
+	CloudflareFlexible bool
+}
+
+func runDomain(appName, domain string, add bool, mode domainModeOptions) error {
 	if err := validateDomain(domain); err != nil {
 		return err
 	}
@@ -106,7 +143,17 @@ func runDomain(appName, domain string, add bool) error {
 		app.Domain = domain
 		app.ExtraDomains = nil
 	}
-
+	if mode.HTTPOnly {
+		app.HTTPOnly = true
+	}
+	if mode.HTTPS {
+		app.HTTPOnly = false
+		app.EdgeHTTPS = false
+	}
+	if mode.CloudflareFlexible {
+		app.HTTPOnly = true
+		app.EdgeHTTPS = true
+	}
 	caddy := remote.NewCaddy(exec)
 	containerName := config.AppContainer(appName)
 	upstream := fmt.Sprintf("%s:%d", containerName, app.InternalPort)
@@ -115,10 +162,12 @@ func runDomain(appName, domain string, add bool) error {
 	spin := ui.NewSpinner(fmt.Sprintf("Updating Caddy route (%d domain(s))...", len(domains)))
 	spin.Start()
 	var routeErr error
+	routeOpts := routeOptionsForApp(app)
 	if app.HTTPOnly {
-		routeErr = caddy.UpdateRouteHTTP(containerName, domains, upstream)
+		routeErr = caddy.UpdateRouteHTTP(containerName, domains, upstream, routeOpts...)
 	} else {
-		routeErr = caddy.UpdateRoute(containerName, domains, upstream)
+		provider, _ := remote.CaddyDNSProviderFor("cloudflare")
+		routeErr = updateHTTPSRouteAllowingWildcard(caddy, provider, containerName, domains, upstream, routeOpts...)
 	}
 	spin.Stop()
 
@@ -142,6 +191,9 @@ func runDomain(appName, domain string, add bool) error {
 		}
 	} else {
 		ui.Success(fmt.Sprintf("Domain set — %s://%s", scheme, domain))
+	}
+	if app.EdgeHTTPS {
+		ui.Info("Cloudflare Flexible mode: origin is HTTP-only, but X-Forwarded-Proto is sent as https to the app.")
 	}
 	return nil
 }
@@ -173,12 +225,13 @@ func runDomainRemove(appName, domain string) error {
 	spin := ui.NewSpinner(fmt.Sprintf("Removing %s from Caddy route...", domain))
 	spin.Start()
 	var routeErr error
+	routeOpts := routeOptionsForApp(app)
 	if len(remaining) == 0 {
 		routeErr = caddy.RemoveRoute(containerName)
 	} else if app.HTTPOnly {
-		routeErr = caddy.UpdateRouteHTTP(containerName, remaining, upstream)
+		routeErr = caddy.UpdateRouteHTTP(containerName, remaining, upstream, routeOpts...)
 	} else {
-		routeErr = caddy.UpdateRoute(containerName, remaining, upstream)
+		routeErr = caddy.UpdateRoute(containerName, remaining, upstream, routeOpts...)
 	}
 	spin.Stop()
 
@@ -342,7 +395,7 @@ func runDomainCustomCert(appName, domain, certFile, keyFile string) error {
 }
 
 // runSetHTTPS switches an app between HTTPS (secure) and HTTP-only (insecure).
-func runSetHTTPS(appName string, httpsOn bool) error {
+func runSetHTTPS(appName string, httpsOn bool, edgeHTTPS ...bool) error {
 	exec, st, err := mustResolveAndLoadState()
 	if err != nil {
 		return err
@@ -366,15 +419,29 @@ func runSetHTTPS(appName string, httpsOn bool) error {
 	if httpsOn {
 		label = "HTTPS"
 	}
+	useEdgeHTTPS := false
+	if len(edgeHTTPS) > 0 {
+		useEdgeHTTPS = edgeHTTPS[0]
+	}
+	if useEdgeHTTPS {
+		label = "Cloudflare Flexible origin"
+	}
 
 	spin := ui.NewSpinner(fmt.Sprintf("Switching to %s...", label))
 	spin.Start()
 	var routeErr error
 	domains := app.AllDomains()
+	app.HTTPOnly = !httpsOn
+	app.EdgeHTTPS = useEdgeHTTPS
 	if httpsOn {
-		routeErr = caddy.UpdateRoute(containerName, domains, upstream)
+		app.EdgeHTTPS = false
+	}
+	routeOpts := routeOptionsForApp(app)
+	if httpsOn {
+		provider, _ := remote.CaddyDNSProviderFor("cloudflare")
+		routeErr = updateHTTPSRouteAllowingWildcard(caddy, provider, containerName, domains, upstream, routeOpts...)
 	} else {
-		routeErr = caddy.UpdateRouteHTTP(containerName, domains, upstream)
+		routeErr = caddy.UpdateRouteHTTP(containerName, domains, upstream, routeOpts...)
 	}
 	spin.Stop()
 
@@ -382,14 +449,54 @@ func runSetHTTPS(appName string, httpsOn bool) error {
 		return fmt.Errorf("update caddy route: %w", routeErr)
 	}
 
-	app.HTTPOnly = !httpsOn
 	st.Apps[appName] = app
 	state.Save(exec, st)
 
 	if httpsOn {
 		ui.Success(fmt.Sprintf("HTTPS enabled — https://%s (SSL cert auto-provisioned)", app.Domain))
+	} else if app.EdgeHTTPS {
+		ui.Success(fmt.Sprintf("Cloudflare Flexible origin enabled — http://%s", app.Domain))
+		ui.Info("Cloudflare should be orange-cloud proxied with SSL mode Flexible.")
 	} else {
 		ui.Success(fmt.Sprintf("HTTP only — http://%s", app.Domain))
 	}
 	return nil
+}
+
+func routeOptionsForApp(app state.App) []remote.RouteOptions {
+	if !app.EdgeHTTPS {
+		return nil
+	}
+	return []remote.RouteOptions{{
+		ForwardedProto: "https",
+		ForwardedSSL:   true,
+	}}
+}
+
+func hasWildcardDomain(domains []string) bool {
+	for _, domain := range domains {
+		if strings.HasPrefix(domain, "*.") {
+			return true
+		}
+	}
+	return false
+}
+
+func updateHTTPSRouteAllowingWildcard(caddy *remote.Caddy, provider remote.CaddyDNSProvider, appID string, domains []string, upstream string, opts ...remote.RouteOptions) error {
+	if hasWildcardDomain(domains) {
+		baseDomain := wildcardBaseDomain(domains)
+		if !caddy.HasDNSProvider(provider.Name) && !caddy.HasOnDemandTLS(baseDomain) {
+			return fmt.Errorf("wildcard HTTPS needs DNS-01 or guarded on-demand TLS; run 'neo caddy dns %s --provider %s --app <app>' or 'neo caddy ondemand %s --app <app>' first", baseDomain, provider.Name, baseDomain)
+		}
+	}
+	return caddy.UpdateRoute(appID, domains, upstream, opts...)
+}
+
+func wildcardBaseDomain(domains []string) string {
+	for _, domain := range domains {
+		if strings.HasPrefix(domain, "*.") {
+			return strings.TrimPrefix(domain, "*.")
+		}
+	}
+	return "<domain>"
 }

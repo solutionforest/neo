@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"strings"
 
 	"golang.org/x/crypto/bcrypt"
@@ -12,11 +13,41 @@ import (
 )
 
 const (
-	CaddyContainer = "neo-caddy"
-	CaddyImage     = "caddy:2-alpine"
-	CaddyNetwork   = "neo"
-	CaddyAdminURL  = "http://localhost:2019"
+	CaddyContainer   = "neo-caddy"
+	CaddyImage       = "caddy:2-alpine"
+	CaddyNetwork     = "neo"
+	CaddyAdminURL    = "http://localhost:2019"
+	CaddyDNSEnvFile  = "/etc/neo/secrets/caddy-dns.env"
+	caddyDNSBuildDir = "/etc/neo/caddy-dns"
 )
+
+// CaddyDNSProvider describes a Caddy DNS challenge plugin.
+type CaddyDNSProvider struct {
+	Name       string
+	Module     string
+	TokenEnv   string
+	TokenField string
+}
+
+// CaddyDNSProviderFor resolves a supported DNS provider name.
+func CaddyDNSProviderFor(name string) (CaddyDNSProvider, error) {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "", "cloudflare":
+		return CaddyDNSProvider{
+			Name:       "cloudflare",
+			Module:     "github.com/caddy-dns/cloudflare",
+			TokenEnv:   "CLOUDFLARE_API_TOKEN",
+			TokenField: "api_token",
+		}, nil
+	default:
+		return CaddyDNSProvider{}, fmt.Errorf("unsupported DNS provider %q (currently supported: cloudflare)", name)
+	}
+}
+
+// WildcardDomain returns the one-label wildcard domain for a base domain.
+func WildcardDomain(baseDomain string) string {
+	return "*." + strings.TrimPrefix(strings.TrimSpace(baseDomain), "*.")
+}
 
 // Caddy wraps SSH-based Caddy Admin API operations.
 type Caddy struct {
@@ -38,7 +69,9 @@ type BasicAuthConfig struct {
 
 // RouteOptions carries optional configuration for AddRoute / UpdateRoute calls.
 type RouteOptions struct {
-	BasicAuth *BasicAuthConfig
+	BasicAuth      *BasicAuthConfig
+	ForwardedProto string // override X-Forwarded-Proto when behind an HTTPS edge proxy
+	ForwardedSSL   bool   // set X-Forwarded-Ssl=on when behind an HTTPS edge proxy
 }
 
 // caddyRoute represents a Caddy reverse proxy route.
@@ -69,7 +102,7 @@ type caddyUpstream struct {
 //
 // upstreams may contain one or more dial addresses (e.g. "app-name:8080").
 // Multiple upstreams are load-balanced round-robin by Caddy automatically.
-func buildRouteJSON(appID string, domains []string, upstreams []string, auth *BasicAuthConfig) ([]byte, error) {
+func buildRouteJSON(appID string, domains []string, upstreams []string, opts RouteOptions) ([]byte, error) {
 	dialList := make([]map[string]string, len(upstreams))
 	for i, u := range upstreams {
 		dialList[i] = map[string]string{"dial": u}
@@ -78,11 +111,29 @@ func buildRouteJSON(appID string, domains []string, upstreams []string, auth *Ba
 		"handler":   "reverse_proxy",
 		"upstreams": dialList,
 	}
+	if opts.ForwardedProto != "" || opts.ForwardedSSL {
+		set := map[string][]string{}
+		if opts.ForwardedProto != "" {
+			set["X-Forwarded-Proto"] = []string{opts.ForwardedProto}
+			set["X-Forwarded-Scheme"] = []string{opts.ForwardedProto}
+			if opts.ForwardedProto == "https" {
+				set["X-Forwarded-Port"] = []string{"443"}
+			}
+		}
+		if opts.ForwardedSSL {
+			set["X-Forwarded-Ssl"] = []string{"on"}
+		}
+		reverseProxy["headers"] = map[string]interface{}{
+			"request": map[string]interface{}{
+				"set": set,
+			},
+		}
+	}
 
 	var handles []interface{}
 
-	if auth != nil {
-		hashBytes, err := bcrypt.GenerateFromPassword([]byte(auth.Password), bcrypt.DefaultCost)
+	if opts.BasicAuth != nil {
+		hashBytes, err := bcrypt.GenerateFromPassword([]byte(opts.BasicAuth.Password), bcrypt.DefaultCost)
 		if err != nil {
 			return nil, fmt.Errorf("bcrypt password: %w", err)
 		}
@@ -91,17 +142,17 @@ func buildRouteJSON(appID string, domains []string, upstreams []string, auth *Ba
 			"providers": map[string]interface{}{
 				"http_basic": map[string]interface{}{
 					"accounts": []map[string]string{
-						{"username": auth.Username, "password": string(hashBytes)},
+						{"username": opts.BasicAuth.Username, "password": string(hashBytes)},
 					},
 				},
 			},
 		}
 
 		var subroutes []interface{}
-		if len(auth.BypassPaths) > 0 {
+		if len(opts.BasicAuth.BypassPaths) > 0 {
 			// Bypass route: matching paths skip auth entirely
 			subroutes = append(subroutes, map[string]interface{}{
-				"match":  []map[string]interface{}{{"path": auth.BypassPaths}},
+				"match":  []map[string]interface{}{{"path": opts.BasicAuth.BypassPaths}},
 				"handle": []interface{}{reverseProxy},
 			})
 		}
@@ -166,6 +217,231 @@ func (c *Caddy) StartContainer() error {
 	return err
 }
 
+// InstallDNSProvider builds a custom Caddy image with the selected DNS plugin and
+// stores the DNS API token in a root-only env file on the remote host.
+func (c *Caddy) InstallDNSProvider(provider CaddyDNSProvider, token string, w io.Writer) (string, error) {
+	if strings.TrimSpace(token) == "" {
+		return "", fmt.Errorf("%s is empty", provider.TokenEnv)
+	}
+	if strings.ContainsAny(token, "\r\n") {
+		return "", fmt.Errorf("%s must be a single-line token", provider.TokenEnv)
+	}
+
+	dockerfile := fmt.Sprintf(`FROM caddy:2-builder AS builder
+RUN xcaddy build --with %s
+
+FROM caddy:2-alpine
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy
+`, provider.Module)
+	if err := c.exec.WriteFileElevated(caddyDNSBuildDir+"/Dockerfile", []byte(dockerfile), 0644); err != nil {
+		return "", fmt.Errorf("write Caddy DNS Dockerfile: %w", err)
+	}
+
+	envData := fmt.Sprintf("%s=%s\n", provider.TokenEnv, token)
+	if err := c.exec.WriteFileElevated(CaddyDNSEnvFile, []byte(envData), 0600); err != nil {
+		return "", fmt.Errorf("write Caddy DNS env file: %w", err)
+	}
+
+	image := "neo-caddy-dns-" + provider.Name + ":latest"
+	if err := NewDocker(c.exec).Build(caddyDNSBuildDir, caddyDNSBuildDir+"/Dockerfile", image, w); err != nil {
+		return "", fmt.Errorf("build Caddy DNS image: %w", err)
+	}
+	return image, nil
+}
+
+// RecreateWithImage recreates the neo-caddy container using the given image while
+// preserving Neo's Caddy data/config volumes and routes.
+func (c *Caddy) RecreateWithImage(image string, envFiles []string) error {
+	docker := NewDocker(c.exec)
+	_ = docker.Remove(CaddyContainer)
+	_, err := docker.Run(RunOpts{
+		Name:    CaddyContainer,
+		Image:   image,
+		Network: CaddyNetwork,
+		Restart: "unless-stopped",
+		Ports: []string{
+			"80:80",
+			"443:443",
+			"127.0.0.1:2019:2019",
+		},
+		EnvFiles: envFiles,
+		Volumes: []string{
+			"neo-caddy-data:/data",
+			"neo-caddy-config:/config",
+			"/etc/neo/caddy/Caddyfile:/etc/caddy/Caddyfile",
+		},
+		Cmd: "caddy run --config /etc/caddy/Caddyfile --resume",
+	})
+	return err
+}
+
+// ConfigureDNSAutomation enables ACME DNS-01 for the base domain and its
+// one-label wildcard using the selected provider.
+func (c *Caddy) ConfigureDNSAutomation(baseDomain string, provider CaddyDNSProvider) error {
+	baseDomain = strings.TrimPrefix(strings.TrimSpace(baseDomain), "*.")
+	providerConfig := map[string]interface{}{
+		"name":              provider.Name,
+		provider.TokenField: fmt.Sprintf("{env.%s}", provider.TokenEnv),
+	}
+	automation := map[string]interface{}{
+		"policies": []map[string]interface{}{
+			{
+				"subjects": []string{baseDomain, WildcardDomain(baseDomain)},
+				"issuers": []map[string]interface{}{
+					{
+						"module": "acme",
+						"challenges": map[string]interface{}{
+							"dns": map[string]interface{}{
+								"provider": providerConfig,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	data, err := json.Marshal(automation)
+	if err != nil {
+		return fmt.Errorf("build TLS automation config: %w", err)
+	}
+
+	ensureTLS := fmt.Sprintf(
+		`curl -sf %s/config/apps/tls >/dev/null 2>&1 || curl -sf -X PUT %s/config/apps/tls -H 'Content-Type: application/json' -d '{}'`,
+		CaddyAdminURL, CaddyAdminURL,
+	)
+	if err := c.exec.RunQuiet(ensureTLS); err != nil {
+		return fmt.Errorf("ensure Caddy TLS app: %w", err)
+	}
+	cmd := fmt.Sprintf(
+		`curl -sf -X PATCH %s/config/apps/tls/automation -H "Content-Type: application/json" -d %s || curl -sf -X PUT %s/config/apps/tls/automation -H "Content-Type: application/json" -d %s`,
+		CaddyAdminURL, ssh.ShellQuote(string(data)), CaddyAdminURL, ssh.ShellQuote(string(data)),
+	)
+	return c.exec.RunQuiet(cmd)
+}
+
+func buildOnDemandAutomationJSON(baseDomain, askURL string) ([]byte, error) {
+	baseDomain = strings.TrimPrefix(strings.TrimSpace(baseDomain), "*.")
+	askURL = strings.TrimSpace(askURL)
+	if baseDomain == "" {
+		return nil, fmt.Errorf("base domain is required")
+	}
+	if askURL == "" {
+		return nil, fmt.Errorf("ask URL is required")
+	}
+	automation := map[string]interface{}{
+		"policies": []map[string]interface{}{
+			{
+				"subjects":  []string{baseDomain, WildcardDomain(baseDomain)},
+				"on_demand": true,
+			},
+		},
+		"on_demand": map[string]interface{}{
+			"permission": map[string]interface{}{
+				"module":   "http",
+				"endpoint": askURL,
+			},
+		},
+	}
+	return json.Marshal(automation)
+}
+
+// ConfigureOnDemandTLS enables guarded on-demand TLS for the base domain and
+// its one-label wildcard. Caddy calls askURL before issuing a certificate for a
+// new hostname, so apps can allow only active tenant subdomains.
+func (c *Caddy) ConfigureOnDemandTLS(baseDomain, askURL string) error {
+	data, err := buildOnDemandAutomationJSON(baseDomain, askURL)
+	if err != nil {
+		return err
+	}
+
+	ensureTLS := fmt.Sprintf(
+		`curl -sf %s/config/apps/tls >/dev/null 2>&1 || curl -sf -X PUT %s/config/apps/tls -H 'Content-Type: application/json' -d '{}'`,
+		CaddyAdminURL, CaddyAdminURL,
+	)
+	if err := c.exec.RunQuiet(ensureTLS); err != nil {
+		return fmt.Errorf("ensure Caddy TLS app: %w", err)
+	}
+	cmd := fmt.Sprintf(
+		`curl -sf -X PATCH %s/config/apps/tls/automation -H "Content-Type: application/json" -d %s || curl -sf -X PUT %s/config/apps/tls/automation -H "Content-Type: application/json" -d %s`,
+		CaddyAdminURL, ssh.ShellQuote(string(data)), CaddyAdminURL, ssh.ShellQuote(string(data)),
+	)
+	return c.exec.RunQuiet(cmd)
+}
+
+// HasOnDemandTLS reports whether Caddy has guarded on-demand TLS configured for
+// the base domain's wildcard.
+func (c *Caddy) HasOnDemandTLS(baseDomain string) bool {
+	out, err := c.exec.Run(fmt.Sprintf("curl -sf %s/config/apps/tls 2>/dev/null", CaddyAdminURL))
+	if err != nil || strings.TrimSpace(out) == "" {
+		return false
+	}
+	return tlsConfigHasOnDemandWildcard([]byte(out), baseDomain)
+}
+
+func tlsConfigHasOnDemandWildcard(data []byte, baseDomain string) bool {
+	baseDomain = strings.TrimPrefix(strings.TrimSpace(baseDomain), "*.")
+	if baseDomain == "" {
+		return false
+	}
+	var cfg struct {
+		Automation struct {
+			OnDemand *struct {
+				Permission *struct {
+					Module   string `json:"module"`
+					Endpoint string `json:"endpoint"`
+				} `json:"permission"`
+			} `json:"on_demand"`
+			Policies []struct {
+				OnDemand bool     `json:"on_demand"`
+				Subjects []string `json:"subjects"`
+			} `json:"policies"`
+		} `json:"automation"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+	if cfg.Automation.OnDemand == nil || cfg.Automation.OnDemand.Permission == nil {
+		return false
+	}
+	if cfg.Automation.OnDemand.Permission.Module != "http" || strings.TrimSpace(cfg.Automation.OnDemand.Permission.Endpoint) == "" {
+		return false
+	}
+
+	wildcard := WildcardDomain(baseDomain)
+	for _, policy := range cfg.Automation.Policies {
+		if !policy.OnDemand {
+			continue
+		}
+		seenBase := false
+		seenWildcard := false
+		for _, subject := range policy.Subjects {
+			switch strings.TrimSpace(subject) {
+			case baseDomain:
+				seenBase = true
+			case wildcard:
+				seenWildcard = true
+			}
+		}
+		if seenBase && seenWildcard {
+			return true
+		}
+	}
+	return false
+}
+
+// HasDNSProvider reports whether the running Caddy binary includes a DNS provider module.
+func (c *Caddy) HasDNSProvider(provider string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return false
+	}
+	out, err := NewDocker(c.exec).Exec(CaddyContainer, "caddy list-modules 2>/dev/null || true")
+	if err != nil {
+		return false
+	}
+	return strings.Contains(out, "dns.providers."+provider)
+}
+
 // Version returns the Caddy version.
 func (c *Caddy) Version() (string, error) {
 	docker := NewDocker(c.exec)
@@ -190,12 +466,12 @@ func (c *Caddy) AddRoute(appID string, domains []string, upstream string, opts .
 	)
 	c.exec.RunQuiet(ensure)
 
-	var auth *BasicAuthConfig
+	var routeOpts RouteOptions
 	if len(opts) > 0 {
-		auth = opts[0].BasicAuth
+		routeOpts = opts[0]
 	}
 
-	data, err := buildRouteJSON(appID, domains, []string{upstream}, auth)
+	data, err := buildRouteJSON(appID, domains, []string{upstream}, routeOpts)
 	if err != nil {
 		return fmt.Errorf("build route: %w", err)
 	}
@@ -231,8 +507,8 @@ func (c *Caddy) AddRedirect(fromDomain, toURL string, code int) error {
 	c.exec.RunQuiet(ensure)
 
 	route := map[string]interface{}{
-		"@id":      redirectRouteID(fromDomain),
-		"match":    []map[string]interface{}{{"host": []string{fromDomain}}},
+		"@id":   redirectRouteID(fromDomain),
+		"match": []map[string]interface{}{{"host": []string{fromDomain}}},
 		"handle": []interface{}{
 			map[string]interface{}{
 				"handler": "subroute",
@@ -294,25 +570,21 @@ func (c *Caddy) AddRouteHTTP(appID string, domains []string, upstream string, op
 
 // UpdateRouteHTTP replaces an existing route with an HTTP-only route.
 func (c *Caddy) UpdateRouteHTTP(appID string, domains []string, upstream string, opts ...RouteOptions) error {
-	c.RemoveRoute(appID)
 	if err := c.addToAutoHTTPSSkip(domains); err != nil {
 		return fmt.Errorf("disable auto-https: %w", err)
 	}
+	c.RemoveRoute(appID)
 	return c.AddRoute(appID, domains, upstream, opts...)
 }
 
 // addToAutoHTTPSSkip adds domains to srv0's automatic_https.skip list so Caddy
 // does not provision certificates or redirect HTTP→HTTPS for them.
 func (c *Caddy) addToAutoHTTPSSkip(domains []string) error {
-	// Read current skip list (may not exist yet)
-	out, _ := c.exec.Run(fmt.Sprintf(
-		"curl -sf %s/config/apps/http/servers/srv0/automatic_https/skip 2>/dev/null || echo '[]'",
-		CaddyAdminURL,
-	))
-	var skip []string
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &skip); err != nil {
-		skip = nil
+	server, err := c.loadHTTPServerConfig()
+	if err != nil {
+		return err
 	}
+	skip := autoHTTPSSkip(server)
 
 	existing := make(map[string]bool, len(skip))
 	for _, d := range skip {
@@ -324,29 +596,19 @@ func (c *Caddy) addToAutoHTTPSSkip(domains []string) error {
 		}
 	}
 
-	data, _ := json.Marshal(skip)
-
-	// Ensure the automatic_https object exists, then set the skip list
-	c.exec.RunQuiet(fmt.Sprintf(
-		`curl -sf %s/config/apps/http/servers/srv0/automatic_https >/dev/null 2>&1 || curl -sf -X PUT %s/config/apps/http/servers/srv0/automatic_https -H 'Content-Type: application/json' -d '{}'`,
-		CaddyAdminURL, CaddyAdminURL,
-	))
-	cmd := fmt.Sprintf(
-		`curl -sf -X PUT %s/config/apps/http/servers/srv0/automatic_https/skip -H "Content-Type: application/json" -d %s`,
-		CaddyAdminURL, ssh.ShellQuote(string(data)),
-	)
-	return c.exec.RunQuiet(cmd)
+	setAutoHTTPSSkip(server, skip)
+	return c.saveHTTPServerConfig(server)
 }
 
 // removeFromAutoHTTPSSkip removes domains from srv0's automatic_https.skip list
 // so Caddy resumes certificate provisioning and HTTPS redirects for them.
 func (c *Caddy) removeFromAutoHTTPSSkip(domains []string) {
-	out, _ := c.exec.Run(fmt.Sprintf(
-		"curl -sf %s/config/apps/http/servers/srv0/automatic_https/skip 2>/dev/null || echo '[]'",
-		CaddyAdminURL,
-	))
-	var skip []string
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &skip); err != nil || len(skip) == 0 {
+	server, err := c.loadHTTPServerConfig()
+	if err != nil {
+		return
+	}
+	skip := autoHTTPSSkip(server)
+	if len(skip) == 0 {
 		return
 	}
 
@@ -361,19 +623,72 @@ func (c *Caddy) removeFromAutoHTTPSSkip(domains []string) {
 		}
 	}
 
-	if len(newSkip) == 0 {
-		c.exec.RunQuiet(fmt.Sprintf(
-			"curl -sf -X DELETE %s/config/apps/http/servers/srv0/automatic_https/skip 2>/dev/null || true",
-			CaddyAdminURL,
-		))
+	setAutoHTTPSSkip(server, newSkip)
+	_ = c.saveHTTPServerConfig(server)
+}
+
+func (c *Caddy) loadHTTPServerConfig() (map[string]interface{}, error) {
+	out, err := c.exec.Run(fmt.Sprintf("curl -sf %s/config/apps/http/servers/srv0 2>/dev/null", CaddyAdminURL))
+	if err != nil || strings.TrimSpace(out) == "" {
+		return map[string]interface{}{
+			"listen": []interface{}{":443", ":80"},
+			"routes": []interface{}{},
+		}, nil
+	}
+	var server map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &server); err != nil {
+		return nil, fmt.Errorf("parse Caddy HTTP server config: %w", err)
+	}
+	return server, nil
+}
+
+func (c *Caddy) saveHTTPServerConfig(server map[string]interface{}) error {
+	data, err := json.Marshal(server)
+	if err != nil {
+		return fmt.Errorf("build Caddy HTTP server config: %w", err)
+	}
+	cmd := fmt.Sprintf(
+		`curl -sf -X PUT %s/config/apps/http/servers/srv0 -H "Content-Type: application/json" -d %s`,
+		CaddyAdminURL, ssh.ShellQuote(string(data)),
+	)
+	return c.exec.RunQuiet(cmd)
+}
+
+func autoHTTPSSkip(server map[string]interface{}) []string {
+	auto, _ := server["automatic_https"].(map[string]interface{})
+	if auto == nil {
+		return nil
+	}
+	raw, _ := auto["skip"].([]interface{})
+	result := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok && s != "" {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+func setAutoHTTPSSkip(server map[string]interface{}, skip []string) {
+	if len(skip) == 0 {
+		if auto, ok := server["automatic_https"].(map[string]interface{}); ok {
+			delete(auto, "skip")
+			if len(auto) == 0 {
+				delete(server, "automatic_https")
+			}
+		}
 		return
 	}
-
-	data, _ := json.Marshal(newSkip)
-	c.exec.RunQuiet(fmt.Sprintf(
-		`curl -sf -X PUT %s/config/apps/http/servers/srv0/automatic_https/skip -H "Content-Type: application/json" -d %s`,
-		CaddyAdminURL, ssh.ShellQuote(string(data)),
-	))
+	auto, _ := server["automatic_https"].(map[string]interface{})
+	if auto == nil {
+		auto = map[string]interface{}{}
+		server["automatic_https"] = auto
+	}
+	values := make([]interface{}, len(skip))
+	for i, domain := range skip {
+		values[i] = domain
+	}
+	auto["skip"] = values
 }
 
 // PatchUpstream atomically updates the upstream dial address for an existing route
@@ -425,11 +740,11 @@ func (c *Caddy) AddRouteMulti(appID string, domains []string, upstreams []string
 		`curl -sf %s/config/apps/http/servers/srv0 >/dev/null 2>&1 || curl -sf -X PUT %s/config/apps/http/servers/srv0 -H 'Content-Type: application/json' -d '{"listen":[":443",":80"],"routes":[]}'`,
 		CaddyAdminURL, CaddyAdminURL,
 	))
-	var auth *BasicAuthConfig
+	var routeOpts RouteOptions
 	if len(opts) > 0 {
-		auth = opts[0].BasicAuth
+		routeOpts = opts[0]
 	}
-	data, err := buildRouteJSON(appID, domains, upstreams, auth)
+	data, err := buildRouteJSON(appID, domains, upstreams, routeOpts)
 	if err != nil {
 		return fmt.Errorf("build route: %w", err)
 	}

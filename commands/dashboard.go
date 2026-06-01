@@ -474,7 +474,7 @@ func tuiAddServer(cfg *config.Config) error {
 	if host == "" {
 		return nil
 	}
-	huh.NewInput().Title("Server name (leave empty to auto-detect)").Value(&name).Run()                         //nolint:errcheck
+	huh.NewInput().Title("Server name (leave empty to auto-detect)").Value(&name).Run()                       //nolint:errcheck
 	huh.NewInput().Title("SSH key path (leave empty to use default ~/.ssh/id_ed25519)").Value(&keyPath).Run() //nolint:errcheck
 	return runInitWithKey(host, name, keyPath)
 }
@@ -1042,14 +1042,14 @@ func tuiManageDomains(appName string) error {
 		case "set":
 			var domain string
 			huh.NewInput().
-				Title("New domain for "+appName+" (replaces all existing)").
+				Title("New domain for " + appName + " (replaces all existing)").
 				Placeholder("app.example.com").
 				Value(&domain).
 				Run() //nolint:errcheck
 			if domain == "" {
 				continue
 			}
-			if err := runDomain(appName, domain, false); err != nil {
+			if err := runDomain(appName, domain, false, domainModeOptions{}); err != nil {
 				ui.Error(err.Error())
 				continue
 			}
@@ -1057,14 +1057,14 @@ func tuiManageDomains(appName string) error {
 		case "add":
 			var domain string
 			huh.NewInput().
-				Title("Additional domain for "+appName).
+				Title("Additional domain for " + appName).
 				Placeholder("other.example.com").
 				Value(&domain).
 				Run() //nolint:errcheck
 			if domain == "" {
 				continue
 			}
-			if err := runDomain(appName, domain, true); err != nil {
+			if err := runDomain(appName, domain, true, domainModeOptions{}); err != nil {
 				ui.Error(err.Error())
 				continue
 			}
@@ -1235,7 +1235,6 @@ func buildSSHArgs(srv *config.Server) []string {
 	}
 	return args
 }
-
 
 // tuiServicesMenu shows the shared services submenu.
 func tuiServicesMenu(cfg *config.Config) error {

@@ -24,7 +24,7 @@ type NeoHealth struct {
 type NeoWorker struct {
 	Command     string `yaml:"command"`
 	HealthCheck string `yaml:"health_check,omitempty"` // optional health check command
-	Restart     string `yaml:"restart,omitempty"`       // Docker restart policy
+	Restart     string `yaml:"restart,omitempty"`      // Docker restart policy
 }
 
 // SidecarBuild supports both string ("../path") and object ({context, dockerfile}) forms.
@@ -72,7 +72,7 @@ type NeoSidecar struct {
 // NeoSSL represents custom SSL certificate configuration in .neo.yml.
 type NeoSSL struct {
 	Certificate string `yaml:"certificate"` // path to PEM certificate file (relative to .neo.yml)
-	PrivateKey  string `yaml:"private_key"`  // path to PEM private key file (relative to .neo.yml)
+	PrivateKey  string `yaml:"private_key"` // path to PEM private key file (relative to .neo.yml)
 }
 
 // HookCommands holds one or more shell commands for a deploy hook.
@@ -160,47 +160,49 @@ type NeoDevConfig struct {
 
 // NeoEnvironment represents a named deployment target in .neo.yml.
 type NeoEnvironment struct {
-	Name      string               `yaml:"name,omitempty"`      // override app/container name for this env
-	Server    string               `yaml:"server,omitempty"`    // single server (use servers: for a group)
-	Servers   []string             `yaml:"servers,omitempty"`   // server group — deploy to all in parallel
-	Domain    string               `yaml:"domain,omitempty"`    // single domain (backward compat)
-	Domains   []string             `yaml:"domains,omitempty"`   // multiple domains (takes precedence)
-	Port      int                  `yaml:"port,omitempty"`
-	HTTPS     *bool                `yaml:"https,omitempty"`     // nil=default, true=HTTPS, false=HTTP-only
-	Env       map[string]string    `yaml:"env,omitempty"`
-	EnvFile   string               `yaml:"env_file,omitempty"`
-	SSL       *NeoSSL              `yaml:"ssl,omitempty"`
-	BasicAuth *NeoBasicAuth        `yaml:"basic_auth,omitempty"` // HTTP basic auth at proxy layer
-	Volumes   map[string]NeoVolume `yaml:"volumes,omitempty"`   // environment-specific persistent volumes
-	Workers   map[string]NeoWorker `yaml:"workers,omitempty"`   // environment-specific workers (override top-level)
-	Sidecars  map[string]NeoSidecar `yaml:"sidecars,omitempty"` // environment-specific sidecars (override top-level)
-	Restart   string               `yaml:"restart,omitempty"`   // Docker restart policy override
-	Health    *NeoHealth           `yaml:"health,omitempty"`    // Docker health check override
-	Hooks     *NeoHooks            `yaml:"hooks,omitempty"`     // deploy lifecycle hooks (override top-level)
-	Scale     int                  `yaml:"scale,omitempty"`     // number of app replicas (overrides top-level)
+	Name      string                `yaml:"name,omitempty"`    // override app/container name for this env
+	Server    string                `yaml:"server,omitempty"`  // single server (use servers: for a group)
+	Servers   []string              `yaml:"servers,omitempty"` // server group — deploy to all in parallel
+	Domain    string                `yaml:"domain,omitempty"`  // single domain (backward compat)
+	Domains   []string              `yaml:"domains,omitempty"` // multiple domains (takes precedence)
+	Port      int                   `yaml:"port,omitempty"`
+	HTTPS     *bool                 `yaml:"https,omitempty"`      // nil=default, true=HTTPS, false=HTTP-only
+	EdgeHTTPS bool                  `yaml:"edge_https,omitempty"` // HTTP origin behind HTTPS edge proxy (e.g. Cloudflare Flexible)
+	Env       map[string]string     `yaml:"env,omitempty"`
+	EnvFile   string                `yaml:"env_file,omitempty"`
+	SSL       *NeoSSL               `yaml:"ssl,omitempty"`
+	BasicAuth *NeoBasicAuth         `yaml:"basic_auth,omitempty"` // HTTP basic auth at proxy layer
+	Volumes   map[string]NeoVolume  `yaml:"volumes,omitempty"`    // environment-specific persistent volumes
+	Workers   map[string]NeoWorker  `yaml:"workers,omitempty"`    // environment-specific workers (override top-level)
+	Sidecars  map[string]NeoSidecar `yaml:"sidecars,omitempty"`   // environment-specific sidecars (override top-level)
+	Restart   string                `yaml:"restart,omitempty"`    // Docker restart policy override
+	Health    *NeoHealth            `yaml:"health,omitempty"`     // Docker health check override
+	Hooks     *NeoHooks             `yaml:"hooks,omitempty"`      // deploy lifecycle hooks (override top-level)
+	Scale     int                   `yaml:"scale,omitempty"`      // number of app replicas (overrides top-level)
 }
 
 // NeoConfig represents a .neo.yml project configuration file.
 type NeoConfig struct {
 	Name           string                    `yaml:"name,omitempty"`
 	Server         string                    `yaml:"server,omitempty"`
-	Domain         string                    `yaml:"domain,omitempty"`          // single domain (backward compat)
-	Domains        []string                  `yaml:"domains,omitempty"`         // multiple domains (takes precedence)
+	Domain         string                    `yaml:"domain,omitempty"`  // single domain (backward compat)
+	Domains        []string                  `yaml:"domains,omitempty"` // multiple domains (takes precedence)
 	Port           int                       `yaml:"port,omitempty"`
-	HTTPS          *bool                     `yaml:"https,omitempty"` // nil=default, true=HTTPS, false=HTTP-only
+	HTTPS          *bool                     `yaml:"https,omitempty"`      // nil=default, true=HTTPS, false=HTTP-only
+	EdgeHTTPS      bool                      `yaml:"edge_https,omitempty"` // HTTP origin behind HTTPS edge proxy (e.g. Cloudflare Flexible)
 	SSL            *NeoSSL                   `yaml:"ssl,omitempty"`
 	BasicAuth      *NeoBasicAuth             `yaml:"basic_auth,omitempty"` // HTTP basic auth at proxy layer
 	Env            map[string]string         `yaml:"env,omitempty"`
 	EnvFile        string                    `yaml:"env_file,omitempty"`
 	ComposeService string                    `yaml:"compose_service,omitempty"`
 	Restart        string                    `yaml:"restart,omitempty"` // Docker restart policy (default: unless-stopped)
-	Health         *NeoHealth                `yaml:"health,omitempty"` // Docker health check
+	Health         *NeoHealth                `yaml:"health,omitempty"`  // Docker health check
 	Hooks          *NeoHooks                 `yaml:"hooks,omitempty"`
 	Environments   map[string]NeoEnvironment `yaml:"environments,omitempty"`
 	Workers        map[string]NeoWorker      `yaml:"workers,omitempty"`
 	Sidecars       map[string]NeoSidecar     `yaml:"sidecars,omitempty"`
 	Volumes        map[string]NeoVolume      `yaml:"volumes,omitempty"`
-	Dev            *NeoDevConfig             `yaml:"dev,omitempty"` // dev-only settings for `neo dev`
+	Dev            *NeoDevConfig             `yaml:"dev,omitempty"`   // dev-only settings for `neo dev`
 	Scale          int                       `yaml:"scale,omitempty"` // number of app replicas (default: 1)
 }
 
