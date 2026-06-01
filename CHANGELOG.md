@@ -4,6 +4,35 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.17.0 — 2026-06-01
+
+### New Features
+
+- **Wildcard HTTPS via ACME DNS-01 (`neo caddy dns`)** — Provisions a custom Caddy build with a DNS provider plugin, stores the API token securely on the server, and configures ACME DNS-01 automation for the base domain and its `*.` wildcard. Currently supports Cloudflare. Usage:
+  ```
+  CLOUDFLARE_API_TOKEN=... neo --server prod caddy dns example.com --provider cloudflare --app myapp
+  ```
+
+- **Guarded on-demand wildcard TLS (`neo caddy ondemand`)** — Enables dynamic tenant subdomains without pre-listing every hostname. Caddy issues a real Let's Encrypt certificate for each subdomain on first use, gated by an ask URL that your app controls. Usage:
+  ```
+  neo --server prod caddy ondemand example.com --app myapp --replace-domains
+  ```
+
+- **Cloudflare Flexible SSL support (`--cloudflare-flexible`)** — For apps behind Cloudflare's Flexible SSL mode (HTTPS at the edge, HTTP to origin): the new `--cloudflare-flexible` flag on `neo domain` sets the origin route to HTTP-only while injecting `X-Forwarded-Proto: https`, `X-Forwarded-Ssl: on`, and `X-Forwarded-Port: 443` headers so the app sees the correct scheme. Also available as `edge_https: true` in `.neo.yml`.
+
+- **`--http-only` and `--https` flags for `neo domain`** — Switch an existing app's route mode without changing its domain:
+  ```
+  neo domain myapp --https
+  neo domain myapp --http-only
+  neo domain myapp --cloudflare-flexible
+  ```
+
+- **Wildcard domain support** — `neo domain` now accepts `*.example.com` as a valid domain. Deploys and domain changes with wildcard hostnames are guarded: they require DNS-01 or guarded on-demand TLS to be configured first, preventing silent Caddy failures.
+
+- **Dev license bypass (`make build-dev`)** — Local development builds can now exercise Neo+ feature gates without a live license. Build with `make build-dev` (sets `DEV_LICENSE_BYPASS=true`) or export `NEO_DEV_PLUS=true` at runtime. Has no effect on standard `make build` output.
+
+---
+
 ## v0.16.0 — 2026-04-20
 
 ### Bug Fixes
