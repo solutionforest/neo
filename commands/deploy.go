@@ -1295,8 +1295,11 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		}
 	}
 
-	// Prune old images in the background (best-effort, never blocks or fails the deploy)
-	go docker.PruneImages(fmt.Sprintf("neo-%s", appName), imageTag)
+	// Prune old images, keeping the two most recent for rollback (best-effort,
+	// errors are ignored). Runs synchronously — a background goroutine would be
+	// killed when the CLI process exits before its SSH calls complete, so old
+	// images would never actually be removed.
+	docker.PruneImages(fmt.Sprintf("neo-%s", appName), imageTag)
 
 	// Success card
 	card := ui.NewCard()
@@ -2433,8 +2436,9 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		}
 	}
 
-	// Prune old images in the background
-	go docker.PruneImages(fmt.Sprintf("neo-%s", appName), imageTag)
+	// Prune old images synchronously — see note in the single-deploy path. A
+	// background goroutine would be killed before its SSH rmi calls complete.
+	docker.PruneImages(fmt.Sprintf("neo-%s", appName), imageTag)
 
 	url := ""
 	if domain != "" {

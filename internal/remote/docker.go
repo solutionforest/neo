@@ -304,49 +304,60 @@ func (d *Docker) VolumeSize(name string) (string, error) {
 }
 
 // PruneImages removes dangling images and old versioned images for the given
-// app prefix (e.g. "neo-myapp"), keeping the two most recent image tags
-// (current + previous) so an instant rollback is always available.
+// app prefix (e.g. "neo-myapp"), keeping the two most recent image tags per
+// repository (current + previous) so an instant rollback is always available.
+// This covers the app image AND its sidecar images (neo-myapp-sidecar-*), each
+// of which is its own repository and is kept to two tags independently.
 // Errors are silently ignored — pruning is best-effort and must not block deploys.
 func (d *Docker) PruneImages(appPrefix, keepTag string) {
 	// 1. Remove dangling images (untagged layers left over from builds/loads)
 	d.exec.RunQuiet(d.bin() + " image prune -f")
 
-	// 2. List all versioned images for this app, ordered newest-first (docker images
-	//    returns them in creation-time descending order by default).
+	// 2. List this app's images — the app repo (neo-myapp:) and any sidecar repos
+	//    (neo-myapp-sidecar-*) — ordered newest-first (docker images returns them
+	//    in creation-time descending order by default). The (:|-sidecar-) anchor
+	//    avoids matching a different app whose name shares this prefix.
 	out, err := d.exec.Run(fmt.Sprintf(
-		"%s images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | grep %s",
+		"%s images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | grep -E %s",
 		d.bin(),
-		ssh.ShellQuote("^"+appPrefix+":"),
+		ssh.ShellQuote("^"+appPrefix+"(:|-sidecar-)"),
 	))
 	if err != nil || out == "" {
 		return
 	}
 
-	// Collect tags in order; ensure keepTag is always first (safety).
+	// Group tags by repository (image name without :tag), preserving the
+	// newest-first order within each repository.
 	type imgEntry struct{ tag, id string }
-	var ordered []imgEntry
-	var rest []imgEntry
+	groups := make(map[string][]imgEntry)
+	var repoOrder []string
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		parts := strings.Fields(line)
 		if len(parts) != 2 {
 			continue
 		}
-		e := imgEntry{parts[0], parts[1]}
-		if e.tag == keepTag {
-			ordered = append([]imgEntry{e}, ordered...)
-		} else {
-			rest = append(rest, e)
+		tag := parts[0]
+		colon := strings.LastIndex(tag, ":")
+		if colon < 0 {
+			continue
 		}
+		repo := tag[:colon]
+		if _, ok := groups[repo]; !ok {
+			repoOrder = append(repoOrder, repo)
+		}
+		groups[repo] = append(groups[repo], imgEntry{tag, parts[1]})
 	}
-	ordered = append(ordered, rest...)
 
-	// Keep the two most recent; remove everything older (by tag, not ID —
-	// removing by ID fails when multiple tags share the same layer digest).
-	for i, e := range ordered {
-		if i < 2 {
-			continue // keep current + previous
+	// Keep the two most recent tags per repository; remove everything older (by
+	// tag, not ID — removing by ID fails when multiple tags share the same layer
+	// digest). keepTag (the image just deployed) is never removed as a safety net.
+	for _, repo := range repoOrder {
+		for i, e := range groups[repo] {
+			if i < 2 || e.tag == keepTag {
+				continue // keep current + previous
+			}
+			d.exec.RunQuiet(fmt.Sprintf("%s rmi %s 2>/dev/null || true", d.bin(), ssh.ShellQuote(e.tag)))
 		}
-		d.exec.RunQuiet(fmt.Sprintf("%s rmi %s 2>/dev/null || true", d.bin(), ssh.ShellQuote(e.tag)))
 	}
 }
 
