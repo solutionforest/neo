@@ -4,6 +4,25 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.18.0 — 2026-06-03
+
+### Bug Fixes
+
+- **Old deploy images no longer pile up** — Image pruning was launched as a fire-and-forget goroutine after each deploy, so the CLI process exited and killed it before its SSH `docker rmi` calls ran. Every deploy left its predecessor's `neo-<app>:<timestamp>` image on disk and they accumulated indefinitely. Pruning now runs synchronously (it is best-effort and ignores errors, so it never fails a deploy) and reliably keeps the two most recent images per repository for instant rollback.
+
+- **Sidecar images are pruned too** — `PruneImages` now also cleans up sidecar repositories (`neo-<app>-sidecar-*`), keeping the two most recent tags of each independently. Previously only the main app image was considered, so rebuilt sidecar images grew without bound.
+
+### New Features
+
+- **Multiple wildcard certificate trees on one server** — `neo caddy dns` and `neo caddy ondemand` now **merge** their TLS automation policy into Caddy's existing config instead of replacing the whole `automation` block. Independent wildcard trees can coexist — e.g. `*.example.com` for production and `*.staging.example.com` for a staging environment on the same server — each getting its own free Let's Encrypt wildcard certificate. Policies are keyed by base domain, so re-running a command for the same domain is idempotent. Run once per tree:
+  ```
+  CLOUDFLARE_API_TOKEN=... neo --server prod caddy dns example.com
+  CLOUDFLARE_API_TOKEN=... neo --server prod caddy dns staging.example.com
+  ```
+  Note: on-demand TLS still uses a single automation-level permission endpoint (a Caddy limitation), so DNS-01 is preferred when running independent trees across separate apps.
+
+---
+
 ## v0.17.0 — 2026-06-01
 
 ### New Features

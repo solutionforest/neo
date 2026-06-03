@@ -90,6 +90,32 @@ func TestBuildOnDemandAutomationJSON(t *testing.T) {
 	}
 }
 
+func TestTLSPolicyManagesBase(t *testing.T) {
+	prod := map[string]interface{}{
+		"subjects": []interface{}{"gatherpro.events", "*.gatherpro.events"},
+	}
+	staging := map[string]interface{}{
+		"subjects": []interface{}{"staging.gatherpro.events", "*.staging.gatherpro.events"},
+	}
+
+	// The prod policy manages the prod base, not the staging base — so merging a
+	// staging policy must not match (and therefore not replace) the prod policy.
+	if !tlsPolicyManagesBase(prod, "gatherpro.events", "*.gatherpro.events") {
+		t.Fatal("expected prod policy to manage gatherpro.events")
+	}
+	if tlsPolicyManagesBase(prod, "staging.gatherpro.events", "*.staging.gatherpro.events") {
+		t.Fatal("prod policy must NOT be treated as managing the staging tree")
+	}
+	if !tlsPolicyManagesBase(staging, "staging.gatherpro.events", "*.staging.gatherpro.events") {
+		t.Fatal("expected staging policy to manage staging.gatherpro.events")
+	}
+	// A policy missing the wildcard does not "manage" the tree.
+	partial := map[string]interface{}{"subjects": []interface{}{"gatherpro.events"}}
+	if tlsPolicyManagesBase(partial, "gatherpro.events", "*.gatherpro.events") {
+		t.Fatal("policy without the wildcard subject must not match")
+	}
+}
+
 func TestTLSConfigHasOnDemandWildcard(t *testing.T) {
 	data := []byte(`{
 		"automation": {

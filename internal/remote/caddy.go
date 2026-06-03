@@ -276,47 +276,50 @@ func (c *Caddy) RecreateWithImage(image string, envFiles []string) error {
 }
 
 // ConfigureDNSAutomation enables ACME DNS-01 for the base domain and its
-// one-label wildcard using the selected provider.
+// one-label wildcard using the selected provider. The policy is merged into any
+// existing TLS automation (keyed by base domain), so independent wildcard trees
+// — e.g. *.example.com and *.staging.example.com — coexist instead of one call
+// overwriting the other.
 func (c *Caddy) ConfigureDNSAutomation(baseDomain string, provider CaddyDNSProvider) error {
 	baseDomain = strings.TrimPrefix(strings.TrimSpace(baseDomain), "*.")
 	providerConfig := map[string]interface{}{
 		"name":              provider.Name,
 		provider.TokenField: fmt.Sprintf("{env.%s}", provider.TokenEnv),
 	}
-	automation := map[string]interface{}{
-		"policies": []map[string]interface{}{
+	policy := map[string]interface{}{
+		"subjects": []string{baseDomain, WildcardDomain(baseDomain)},
+		"issuers": []map[string]interface{}{
 			{
-				"subjects": []string{baseDomain, WildcardDomain(baseDomain)},
-				"issuers": []map[string]interface{}{
-					{
-						"module": "acme",
-						"challenges": map[string]interface{}{
-							"dns": map[string]interface{}{
-								"provider": providerConfig,
-							},
-						},
+				"module": "acme",
+				"challenges": map[string]interface{}{
+					"dns": map[string]interface{}{
+						"provider": providerConfig,
 					},
 				},
 			},
 		},
 	}
-	data, err := json.Marshal(automation)
-	if err != nil {
-		return fmt.Errorf("build TLS automation config: %w", err)
-	}
+	return c.upsertTLSPolicy(baseDomain, policy, nil)
+}
 
-	ensureTLS := fmt.Sprintf(
-		`curl -sf %s/config/apps/tls >/dev/null 2>&1 || curl -sf -X PUT %s/config/apps/tls -H 'Content-Type: application/json' -d '{}'`,
-		CaddyAdminURL, CaddyAdminURL,
-	)
-	if err := c.exec.RunQuiet(ensureTLS); err != nil {
-		return fmt.Errorf("ensure Caddy TLS app: %w", err)
+// onDemandPolicy builds the automation policy enabling on-demand TLS for a base
+// domain and its one-label wildcard.
+func onDemandPolicy(baseDomain string) map[string]interface{} {
+	return map[string]interface{}{
+		"subjects":  []string{baseDomain, WildcardDomain(baseDomain)},
+		"on_demand": true,
 	}
-	cmd := fmt.Sprintf(
-		`curl -sf -X PATCH %s/config/apps/tls/automation -H "Content-Type: application/json" -d %s || curl -sf -X PUT %s/config/apps/tls/automation -H "Content-Type: application/json" -d %s`,
-		CaddyAdminURL, ssh.ShellQuote(string(data)), CaddyAdminURL, ssh.ShellQuote(string(data)),
-	)
-	return c.exec.RunQuiet(cmd)
+}
+
+// onDemandPermission builds the automation-level on_demand permission block that
+// makes Caddy ask askURL before issuing a cert for a new hostname.
+func onDemandPermission(askURL string) map[string]interface{} {
+	return map[string]interface{}{
+		"permission": map[string]interface{}{
+			"module":   "http",
+			"endpoint": askURL,
+		},
+	}
 }
 
 func buildOnDemandAutomationJSON(baseDomain, askURL string) ([]byte, error) {
@@ -329,31 +332,82 @@ func buildOnDemandAutomationJSON(baseDomain, askURL string) ([]byte, error) {
 		return nil, fmt.Errorf("ask URL is required")
 	}
 	automation := map[string]interface{}{
-		"policies": []map[string]interface{}{
-			{
-				"subjects":  []string{baseDomain, WildcardDomain(baseDomain)},
-				"on_demand": true,
-			},
-		},
-		"on_demand": map[string]interface{}{
-			"permission": map[string]interface{}{
-				"module":   "http",
-				"endpoint": askURL,
-			},
-		},
+		"policies":  []map[string]interface{}{onDemandPolicy(baseDomain)},
+		"on_demand": onDemandPermission(askURL),
 	}
 	return json.Marshal(automation)
 }
 
 // ConfigureOnDemandTLS enables guarded on-demand TLS for the base domain and
 // its one-label wildcard. Caddy calls askURL before issuing a certificate for a
-// new hostname, so apps can allow only active tenant subdomains.
+// new hostname, so apps can allow only active tenant subdomains. The policy is
+// merged into any existing TLS automation (keyed by base domain).
+//
+// Note: Caddy supports a single automation-level on_demand permission endpoint,
+// so the most recently configured askURL applies to all on-demand hostnames. For
+// independent wildcard trees on separate apps, prefer DNS-01 (ConfigureDNSAutomation).
 func (c *Caddy) ConfigureOnDemandTLS(baseDomain, askURL string) error {
-	data, err := buildOnDemandAutomationJSON(baseDomain, askURL)
-	if err != nil {
-		return err
+	baseDomain = strings.TrimPrefix(strings.TrimSpace(baseDomain), "*.")
+	askURL = strings.TrimSpace(askURL)
+	if baseDomain == "" {
+		return fmt.Errorf("base domain is required")
 	}
+	if askURL == "" {
+		return fmt.Errorf("ask URL is required")
+	}
+	return c.upsertTLSPolicy(baseDomain, onDemandPolicy(baseDomain), onDemandPermission(askURL))
+}
 
+// loadTLSAutomation fetches Caddy's current tls.automation object, or an empty
+// map if none is configured yet.
+func (c *Caddy) loadTLSAutomation() map[string]interface{} {
+	out, err := c.exec.Run(fmt.Sprintf("curl -sf %s/config/apps/tls/automation 2>/dev/null", CaddyAdminURL))
+	trimmed := strings.TrimSpace(out)
+	if err != nil || trimmed == "" || trimmed == "null" {
+		return map[string]interface{}{}
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &m); err != nil || m == nil {
+		return map[string]interface{}{}
+	}
+	return m
+}
+
+// tlsPolicyManagesBase reports whether an existing automation policy is the one
+// managing baseDomain's wildcard tree — its subjects are exactly the base domain
+// and its one-label wildcard. Used to upsert policies keyed by base domain.
+func tlsPolicyManagesBase(policy map[string]interface{}, base, wildcard string) bool {
+	raw, _ := policy["subjects"].([]interface{})
+	if len(raw) == 0 {
+		return false
+	}
+	seenBase, seenWildcard := false, false
+	for _, v := range raw {
+		s, _ := v.(string)
+		switch strings.TrimSpace(s) {
+		case base:
+			seenBase = true
+		case wildcard:
+			seenWildcard = true
+		}
+	}
+	return seenBase && seenWildcard
+}
+
+// upsertTLSPolicy merges newPolicy into Caddy's tls.automation, replacing any
+// existing policy that manages baseDomain's wildcard tree while preserving every
+// other policy (and any unrelated automation keys). This lets independent
+// wildcard trees coexist instead of overwriting one another. When onDemand is
+// non-nil it is set as the automation's on_demand permission block; when nil any
+// existing on_demand block is left untouched.
+func (c *Caddy) upsertTLSPolicy(baseDomain string, newPolicy, onDemand map[string]interface{}) error {
+	base := strings.TrimPrefix(strings.TrimSpace(baseDomain), "*.")
+	if base == "" {
+		return fmt.Errorf("base domain is required")
+	}
+	wildcard := WildcardDomain(base)
+
+	// Ensure the TLS app exists so the automation path is writable.
 	ensureTLS := fmt.Sprintf(
 		`curl -sf %s/config/apps/tls >/dev/null 2>&1 || curl -sf -X PUT %s/config/apps/tls -H 'Content-Type: application/json' -d '{}'`,
 		CaddyAdminURL, CaddyAdminURL,
@@ -361,9 +415,33 @@ func (c *Caddy) ConfigureOnDemandTLS(baseDomain, askURL string) error {
 	if err := c.exec.RunQuiet(ensureTLS); err != nil {
 		return fmt.Errorf("ensure Caddy TLS app: %w", err)
 	}
+
+	automation := c.loadTLSAutomation()
+
+	// Keep every policy except the one already managing this base domain.
+	var policies []interface{}
+	if existing, ok := automation["policies"].([]interface{}); ok {
+		for _, p := range existing {
+			if pm, ok := p.(map[string]interface{}); ok && tlsPolicyManagesBase(pm, base, wildcard) {
+				continue
+			}
+			policies = append(policies, p)
+		}
+	}
+	policies = append(policies, newPolicy)
+	automation["policies"] = policies
+
+	if onDemand != nil {
+		automation["on_demand"] = onDemand
+	}
+
+	data, err := json.Marshal(automation)
+	if err != nil {
+		return fmt.Errorf("build TLS automation config: %w", err)
+	}
 	cmd := fmt.Sprintf(
-		`curl -sf -X PATCH %s/config/apps/tls/automation -H "Content-Type: application/json" -d %s || curl -sf -X PUT %s/config/apps/tls/automation -H "Content-Type: application/json" -d %s`,
-		CaddyAdminURL, ssh.ShellQuote(string(data)), CaddyAdminURL, ssh.ShellQuote(string(data)),
+		`curl -sf -X PUT %s/config/apps/tls/automation -H "Content-Type: application/json" -d %s`,
+		CaddyAdminURL, ssh.ShellQuote(string(data)),
 	)
 	return c.exec.RunQuiet(cmd)
 }
