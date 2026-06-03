@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -200,12 +202,72 @@ func runBuild(version string) buildResponse {
 	duration := time.Since(start).Round(time.Millisecond)
 	logs.WriteString(fmt.Sprintf("All platforms built in %s\n", duration))
 
+	// Retain only the most recent N versions per channel (staging vs prod) so
+	// old builds don't accumulate on disk. The version just built is the newest,
+	// so it is always kept. Best-effort: a prune failure never fails the build.
+	keep := envIntOr("NEO_KEEP_VERSIONS", 3)
+	if removed, err := pruneOldVersions(outputDir, keep); err != nil {
+		logs.WriteString(fmt.Sprintf("version prune skipped: %v\n", err))
+	} else if len(removed) > 0 {
+		logs.WriteString(fmt.Sprintf("pruned %d old version(s), keeping %d per channel: %s\n",
+			len(removed), keep, strings.Join(removed, ", ")))
+	}
+
 	return buildResponse{
 		Status:    "completed",
 		Version:   version,
 		Log:       logs.String(),
 		Checksums: checksums,
 	}
+}
+
+// pruneOldVersions keeps only the newest `keep` version directories per channel
+// (staging versions contain "-staging", everything else is treated as prod) and
+// removes the rest. Ordering is by directory mtime (build recency) descending.
+// Only directories whose name is a valid version are considered, so unrelated
+// files in the output dir are never touched. Returns the removed version names.
+func pruneOldVersions(dir string, keep int) ([]string, error) {
+	if keep < 1 {
+		keep = 1
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	type verDir struct {
+		name string
+		mod  time.Time
+	}
+	var staging, prod []verDir
+	for _, e := range entries {
+		if !e.IsDir() || !versionRe.MatchString(e.Name()) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		vd := verDir{name: e.Name(), mod: info.ModTime()}
+		if strings.Contains(e.Name(), "-staging") {
+			staging = append(staging, vd)
+		} else {
+			prod = append(prod, vd)
+		}
+	}
+
+	var removed []string
+	prune := func(list []verDir) {
+		sort.Slice(list, func(i, j int) bool { return list[i].mod.After(list[j].mod) })
+		for i := keep; i < len(list); i++ {
+			if err := os.RemoveAll(filepath.Join(dir, list[i].name)); err == nil {
+				removed = append(removed, list[i].name)
+			}
+		}
+	}
+	prune(staging)
+	prune(prod)
+	return removed, nil
 }
 
 func buildEnv(goos, goarch string) []string {
@@ -225,6 +287,15 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func envIntOr(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			return n
+		}
 	}
 	return fallback
 }
