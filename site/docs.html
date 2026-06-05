@@ -880,30 +880,44 @@ neo list --server staging</pre>
 <!-- TEAM ACCESS -->
 <section class="doc-section" id="team-access">
     <h2>Team Access (SSH Keys)</h2>
-    <p>Share server access with teammates using <code>neo key</code> — no GitHub, no manual SSH config, no key files to copy around. Each teammate generates their own Neo key; you authorize it on the server.</p>
+    <p>Give teammates their own access to a server with <code>neo key</code> — no shared passwords, no copying private key files, no GitHub. Everyone uses their <strong>own</strong> key; the admin authorizes or revokes each person individually.</p>
+
+    <h3>Two roles</h3>
+    <table class="doc-table">
+        <tr><th>Role</th><th>Who they are</th><th>Commands they run</th></tr>
+        <tr><td><strong>Admin</strong></td><td>Owns the server — ran <code>neo init</code> (or attached it) and already has access.</td><td><code>neo key add</code>, <code>neo key list</code>, <code>neo key remove</code></td></tr>
+        <tr><td><strong>Teammate</strong></td><td>Wants access to the admin's server. Starts with nothing configured.</td><td><code>neo key show</code>, then <code>neo attach</code> (or <code>neo deploy</code>)</td></tr>
+    </table>
+    <p>The only thing that passes between people is the teammate's <strong>public</strong> key — safe to send over Slack or email. Private keys never leave their owner's machine.</p>
+
+    <div class="callout callout-warn">
+        <strong>The admin needs server access first</strong>
+        <code>neo key add</code>, <code>list</code>, and <code>remove</code> all run <em>on the server</em>, so the admin must have it in their own config before authorizing anyone. Fresh server → <code>neo init &lt;user@host&gt;</code>. Server that was set up on another machine → <code>neo attach &lt;user@host&gt;</code>. Until then, those commands fail with <em>"no server selected — run: neo init"</em>.
+    </div>
 
     <div class="codeblock">
         <div class="codeblock-header">Shell</div>
-        <pre><span class="c"># Generate + print your Neo public key (share this with your admin)</span>
+        <pre><span class="c"># [Teammate] Generate + print your public key to send to the admin</span>
 neo key show
 
-<span class="c"># Authorize a teammate's key on the server</span>
+<span class="c"># [Admin] Authorize a teammate's public key on the server</span>
 neo key add "ssh-ed25519 AAAAC3Nz... teammate@example.com"
 
-<span class="c"># List authorized keys (marks your own)</span>
+<span class="c"># [Admin] List authorized keys (marks your own)</span>
 neo key list
 
-<span class="c"># Revoke a key by its number from the list</span>
+<span class="c"># [Admin] Revoke a key by its number from the list</span>
 neo key remove 2</pre>
     </div>
 
     <h3>Step-by-step workflow</h3>
     <table class="doc-table">
         <tr><th>Step</th><th>Who</th><th>What happens</th></tr>
-        <tr><td>1</td><td>Teammate</td><td>Runs <code>neo key show</code>. Neo generates a key at <code>~/.neo/neo_ed25519</code> if one doesn't exist, then prints the single-line public key. No server or local config required.</td></tr>
-        <tr><td>2</td><td>Teammate</td><td>Sends you the key line — it looks like <code>ssh-ed25519 AAAA... name@host</code>. Safe to share; it's a public key.</td></tr>
+        <tr><td>0</td><td>Admin</td><td>Has the server in their config. Ran <code>neo init</code> here already, or — if it was set up elsewhere — runs <code>neo attach root@1.2.3.4</code> first. This is what lets <code>neo key add</code> reach the server.</td></tr>
+        <tr><td>1</td><td>Teammate</td><td>Runs <code>neo key show</code> — no server or config needed yet. Neo generates a key at <code>~/.neo/neo_ed25519</code> if one doesn't exist, then prints the single-line public key.</td></tr>
+        <tr><td>2</td><td>Teammate → Admin</td><td>Sends the key line — it looks like <code>ssh-ed25519 AAAA... name@host</code>. Safe to share; it's a public key.</td></tr>
         <tr><td>3</td><td>Admin</td><td>Runs <code>neo key add "&lt;key&gt;"</code>. Neo appends it to <code>~/.ssh/authorized_keys</code> on the server and prints the exact <code>server:</code> line to send back.</td></tr>
-        <tr><td>4</td><td>Teammate</td><td>Adds that <code>server:</code> line to their <code>.neo.yml</code> and runs <code>neo deploy</code> — no <code>neo init</code> required.</td></tr>
+        <tr><td>4</td><td>Teammate</td><td>Runs <code>neo attach root@1.2.3.4</code> to register the server locally — the dashboard and every command then work. (Deploy only? Skip attach and put that <code>server:</code> line in <code>.neo.yml</code>, then <code>neo deploy</code>.) Never <code>neo init</code> — that's the admin's job and would wipe the server.</td></tr>
     </table>
 
     <div class="callout callout-warn">
