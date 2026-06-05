@@ -4,6 +4,25 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.19.0 — 2026-06-05
+
+### New Features
+
+- **`neo attach` — join a server someone else set up** — Registers an already-initialized server into your local config without re-running setup. Unlike `neo init`, it never installs Docker/Caddy and never overwrites the server's `/etc/neo/state.json`, so it is safe to run against a live server with apps deployed. It verifies the server is initialized (refusing a fresh server with a pointer to `neo init`), adds it to `~/.neo/config.json`, and deploys your neo key for passwordless access. Teammates now onboard in one step:
+  ```
+  neo key show                 # teammate prints their key; admin runs: neo key add "<key>"
+  neo attach root@1.2.3.4       # teammate registers the server — dashboard + every command now work
+  ```
+  Also available from the dashboard: **Servers → Attach Existing Server**.
+
+### Bug Fixes
+
+- **Team Access docs corrected** — The `.neo.yml` `server:` field must be a full `user@host` (e.g. `root@1.2.3.4`), not a bare name. The `@` is what lets a teammate connect without the server being registered locally; a bare name failed with "no server selected". The docs site and CMS now spell this out and point to `neo attach` for the dashboard case.
+
+- **Server requirements docs fixed** — The docs site listed only Ubuntu/Debian as supported and named Fedora/CentOS/RHEL as *unsupported*, contradicting the actual OS validation. Corrected to match the code: Ubuntu 24.04+, Debian, Fedora 39+, and CentOS / RHEL / AlmaLinux / Rocky 9+.
+
+---
+
 ## v0.18.0 — 2026-06-03
 
 ### Bug Fixes

@@ -72,7 +72,7 @@ func runAsk() error {
 
 		chosen := ui.Select("  What do you need help with?", opts)
 		if chosen == "" || chosen == "quit" || stopped {
-			fmt.Println("\n  Goodbye!\n")
+			fmt.Print("\n  Goodbye!\n\n")
 			return nil
 		}
 
@@ -84,7 +84,7 @@ func runAsk() error {
 		}
 
 		if stopped {
-			fmt.Println("\n  Goodbye!\n")
+			fmt.Print("\n  Goodbye!\n\n")
 			return nil
 		}
 	}

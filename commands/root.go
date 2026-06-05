@@ -45,6 +45,7 @@ func NewRootCmd(version string) *cobra.Command {
 
 	root.AddCommand(
 		newInitCmd(),
+		newAttachCmd(),
 		newConfigCmd(),
 		newDevCmd(),
 		newDeployCmd(),
@@ -186,6 +187,7 @@ func printHelp() {
 		{
 			title: "Servers",
 			entries: []entry{
+				{"neo attach <user@host>", "Add an already-initialized server to local config"},
 				{"neo servers", "List all configured servers"},
 				{"neo use <name>", "Switch the active server"},
 				{"neo ssh", "SSH into the current server"},
@@ -244,6 +246,7 @@ It handles deployment, SSL certificates, shared database services, and app lifec
 
 ### Setup
 - neo init <user@host>          Initialize a remote server (installs Docker + Caddy)
+- neo attach <user@host>        Add an already-initialized server to local config (no setup, no overwrite)
 - neo servers                   List configured servers
 - neo use <name>                Switch active server
 - neo ssh                       SSH into the current server

@@ -1,27 +1,44 @@
 package commands
 
 import (
+	"strings"
 	"testing"
 )
 
 func TestDeriveServerName(t *testing.T) {
-	tests := []struct {
+	// Hostname inputs derive deterministically from the first DNS label.
+	hostnameTests := []struct {
 		host string
 		want string
 	}{
-		{"root@159.65.100.42", "production"},                // IP → "production"
-		{"root@staging.mysite.com", "staging"},               // subdomain → first part
-		{"root@app.example.com", "app"},                      // subdomain → first part
-		{"ubuntu@myserver.dev", "myserver"},                   // subdomain → first part
-		{"10.0.0.1", "production"},                           // bare IP → "production"
-		{"deploy.prod.example.com", "deploy"},                // multi-level → first part
+		{"root@staging.mysite.com", "staging"},   // subdomain → first part
+		{"root@app.example.com", "app"},          // subdomain → first part
+		{"ubuntu@myserver.dev", "myserver"},      // subdomain → first part
+		{"deploy.prod.example.com", "deploy"},    // multi-level → first part
 	}
-
-	for _, tt := range tests {
+	for _, tt := range hostnameTests {
 		t.Run(tt.host, func(t *testing.T) {
 			got := deriveServerName(tt.host)
 			if got != tt.want {
 				t.Errorf("deriveServerName(%q) = %q, want %q", tt.host, got, tt.want)
+			}
+		})
+	}
+
+	// Bare IP inputs get a random adjective plus the last octet (e.g. "jade-42"),
+	// so assert the contract: a non-empty name ending in "-<last octet>".
+	ipTests := []struct {
+		host       string
+		wantSuffix string
+	}{
+		{"root@159.65.100.42", "-42"},
+		{"10.0.0.1", "-1"},
+	}
+	for _, tt := range ipTests {
+		t.Run(tt.host, func(t *testing.T) {
+			got := deriveServerName(tt.host)
+			if got == tt.wantSuffix || !strings.HasSuffix(got, tt.wantSuffix) {
+				t.Errorf("deriveServerName(%q) = %q, want a non-empty name ending in %q", tt.host, got, tt.wantSuffix)
 			}
 		})
 	}
@@ -64,9 +81,13 @@ func TestValidateOS(t *testing.T) {
 		{"Ubuntu 22.04 too old", "ubuntu", "22.04", true},
 		{"Ubuntu 20.04 too old", "ubuntu", "20.04", true},
 		{"Ubuntu 18.04 too old", "ubuntu", "18.04", true},
-		{"CentOS unsupported", "centos", "9", true},
-		{"RHEL unsupported", "rhel", "9", true},
-		{"Fedora unsupported", "fedora", "40", true},
+		{"CentOS 9 supported", "centos", "9", false},
+		{"RHEL 9 supported", "rhel", "9", false},
+		{"AlmaLinux 9 supported", "almalinux", "9", false},
+		{"Rocky 9 supported", "rocky", "9", false},
+		{"Fedora 40 supported", "fedora", "40", false},
+		{"CentOS 7 too old", "centos", "7", true},
+		{"Fedora 38 too old", "fedora", "38", true},
 		{"Alpine unsupported", "alpine", "3.19", true},
 		{"Empty OS ID", "", "", true},
 		{"Ubuntu with whitespace", "  ubuntu  ", "24.04", false},

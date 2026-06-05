@@ -431,7 +431,8 @@ func tuiServersMenu(cfg *config.Config) error {
 		}
 
 		opts := []ui.SelectOption{
-			{"Add New Server", "add"},
+			{"Initialize New Server", "init"},
+			{"Attach Existing Server", "attach"},
 		}
 		if len(cfg.Servers) > 1 {
 			opts = append(opts, ui.SelectOption{"Switch Server", "switch"})
@@ -445,8 +446,12 @@ func tuiServersMenu(cfg *config.Config) error {
 		action := ui.Select(sb.String(), opts)
 
 		switch action {
-		case "add":
+		case "init":
 			if err := tuiAddServer(cfg); err != nil {
+				return err
+			}
+		case "attach":
+			if err := tuiAttachServer(cfg); err != nil {
 				return err
 			}
 		case "switch":
@@ -477,6 +482,20 @@ func tuiAddServer(cfg *config.Config) error {
 	huh.NewInput().Title("Server name (leave empty to auto-detect)").Value(&name).Run()                       //nolint:errcheck
 	huh.NewInput().Title("SSH key path (leave empty to use default ~/.ssh/id_ed25519)").Value(&keyPath).Run() //nolint:errcheck
 	return runInitWithKey(host, name, keyPath)
+}
+
+// tuiAttachServer prompts for an already-initialized server and runs the attach
+// flow — no Docker/Caddy setup, no remote state overwrite. Use for joining a
+// server someone else set up.
+func tuiAttachServer(cfg *config.Config) error {
+	var host, name, keyPath string
+	huh.NewInput().Title("Existing server SSH address (e.g. root@159.65.100.42)").Value(&host).Run() //nolint:errcheck
+	if host == "" {
+		return nil
+	}
+	huh.NewInput().Title("Server name (leave empty to auto-detect)").Value(&name).Run()              //nolint:errcheck
+	huh.NewInput().Title("SSH key path (leave empty to use your neo key / default)").Value(&keyPath).Run() //nolint:errcheck
+	return runAttach(host, name, keyPath)
 }
 
 // tuiSwitchServer prompts to switch the active server.

@@ -177,6 +177,7 @@
         <a class="sidebar-link" href="#services">Shared services</a>
         <a class="sidebar-link" href="#databases">Databases &amp; data</a>
         <a class="sidebar-link" href="#servers">Server management</a>
+        <a class="sidebar-link" href="#team-access">Team access (SSH keys)</a>
     </div>
     <div class="sidebar-section">
         <div class="sidebar-title">Reference</div>
@@ -856,7 +857,10 @@ scp root@your-server:/var/backups/mysql-2026-03-23.sql ./backups/</pre>
 
     <div class="codeblock">
         <div class="codeblock-header">Shell</div>
-        <pre><span class="c"># List servers</span>
+        <pre><span class="c"># Add an already-initialized server (no setup, safe on a live server)</span>
+neo attach root@1.2.3.4
+
+<span class="c"># List servers</span>
 neo servers
 
 <span class="c"># Switch active server</span>
@@ -873,6 +877,53 @@ neo list --server staging</pre>
     </div>
 </section>
 
+<!-- TEAM ACCESS -->
+<section class="doc-section" id="team-access">
+    <h2>Team Access (SSH Keys)</h2>
+    <p>Share server access with teammates using <code>neo key</code> — no GitHub, no manual SSH config, no key files to copy around. Each teammate generates their own Neo key; you authorize it on the server.</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre><span class="c"># Generate + print your Neo public key (share this with your admin)</span>
+neo key show
+
+<span class="c"># Authorize a teammate's key on the server</span>
+neo key add "ssh-ed25519 AAAAC3Nz... teammate@example.com"
+
+<span class="c"># List authorized keys (marks your own)</span>
+neo key list
+
+<span class="c"># Revoke a key by its number from the list</span>
+neo key remove 2</pre>
+    </div>
+
+    <h3>Step-by-step workflow</h3>
+    <table class="doc-table">
+        <tr><th>Step</th><th>Who</th><th>What happens</th></tr>
+        <tr><td>1</td><td>Teammate</td><td>Runs <code>neo key show</code>. Neo generates a key at <code>~/.neo/neo_ed25519</code> if one doesn't exist, then prints the single-line public key. No server or local config required.</td></tr>
+        <tr><td>2</td><td>Teammate</td><td>Sends you the key line — it looks like <code>ssh-ed25519 AAAA... name@host</code>. Safe to share; it's a public key.</td></tr>
+        <tr><td>3</td><td>Admin</td><td>Runs <code>neo key add "&lt;key&gt;"</code>. Neo appends it to <code>~/.ssh/authorized_keys</code> on the server and prints the exact <code>server:</code> line to send back.</td></tr>
+        <tr><td>4</td><td>Teammate</td><td>Adds that <code>server:</code> line to their <code>.neo.yml</code> and runs <code>neo deploy</code> — no <code>neo init</code> required.</td></tr>
+    </table>
+
+    <div class="callout callout-warn">
+        <strong>The server value must be <code>user@host</code></strong>
+        In step 4 the <code>.neo.yml</code> <code>server:</code> field must be the full <code>user@host</code> (e.g. <code>root@1.2.3.4</code>), not a bare name. The <code>@</code> is what lets Neo connect without the server being registered in the teammate's <code>~/.neo/config.json</code>. A bare name like <code>server: production</code> is looked up in local config and fails with <em>"no server selected — run: neo init"</em> for a teammate who never ran <code>neo init</code>. <code>neo key add</code> prints the correct line for you to copy.
+    </div>
+
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml — teammate</div>
+        <pre><span class="k">name:</span> my-app
+<span class="k">domain:</span> app.example.com
+<span class="k">server:</span> root@1.2.3.4   <span class="c"># full user@host — the @ skips local config</span></pre>
+    </div>
+
+    <div class="callout callout-tip">
+        <strong>Commands other than deploy</strong>
+        Only <code>neo deploy</code> reads <code>server:</code> from <code>.neo.yml</code>. For any other command, pass the same <code>user@host</code> via the global flag — e.g. <code>neo logs my-app --server root@1.2.3.4</code>. To make the bare <code>neo</code> dashboard and all commands work without a flag, register the server once with <code>neo attach root@1.2.3.4</code> — it adds an already-initialized server to <code>~/.neo/config.json</code> with no setup and no overwrite, so it's safe on a live server.
+    </div>
+</section>
+
 <!-- CLI REFERENCE -->
 <section class="doc-section" id="cli-reference">
     <h2>CLI Reference</h2>
@@ -880,7 +931,8 @@ neo list --server staging</pre>
     <table class="doc-table">
         <tr><th>Command</th><th>Description</th></tr>
         <tr><td><code>neo</code></td><td>Interactive TUI dashboard</td></tr>
-        <tr><td><code>neo init &lt;host&gt;</code></td><td>Initialize server (Docker + Caddy)</td></tr>
+        <tr><td><code>neo init &lt;host&gt;</code></td><td>Initialize a fresh server (Docker + Caddy)</td></tr>
+        <tr><td><code>neo attach &lt;host&gt;</code></td><td>Add an already-initialized server to local config (no setup, no overwrite)</td></tr>
         <tr><td><code>neo deploy [path]</code></td><td>Build and deploy a Dockerfile project</td></tr>
         <tr><td><code>neo list</code></td><td>List apps on the server</td></tr>
         <tr><td><code>neo logs &lt;app&gt;</code></td><td>Stream container logs</td></tr>
@@ -899,6 +951,10 @@ neo list --server staging</pre>
         <tr><td><code>neo servers remove &lt;name&gt;</code></td><td>Remove server from config</td></tr>
         <tr><td><code>neo use &lt;name&gt;</code></td><td>Switch active server</td></tr>
         <tr><td><code>neo ssh</code></td><td>SSH into current server</td></tr>
+        <tr><td><code>neo key show</code></td><td>Generate + print your Neo public key to share</td></tr>
+        <tr><td><code>neo key add "&lt;pubkey&gt;"</code></td><td>Authorize a teammate's key on the server</td></tr>
+        <tr><td><code>neo key list</code></td><td>List authorized keys (marks your own)</td></tr>
+        <tr><td><code>neo key remove &lt;number&gt;</code></td><td>Revoke a key by its list number</td></tr>
         <tr><td><code>neo version</code></td><td>Show version, check for updates</td></tr>
         <tr><td><code>neo upgrade</code></td><td>Self-update to latest version</td></tr>
         <tr><td><code>neo backup &lt;app&gt;</code></td><td>Backup data volumes <span class="badge badge-new">Neo+</span></td></tr>
@@ -908,7 +964,7 @@ neo list --server staging</pre>
     <h3>Global flags</h3>
     <table class="doc-table">
         <tr><th>Flag</th><th>Description</th></tr>
-        <tr><td><code>--server &lt;name&gt;</code></td><td>Target a specific server instead of the current one</td></tr>
+        <tr><td><code>--server &lt;name|user@host&gt;</code></td><td>Target a specific server — by config name, or a full <code>user@host</code> to connect without registering it locally</td></tr>
     </table>
 </section>
 
@@ -918,7 +974,7 @@ neo list --server staging</pre>
 
     <table class="doc-table">
         <tr><th>Requirement</th><th>Details</th></tr>
-        <tr><td>OS</td><td><strong>Ubuntu 24.04+</strong> or <strong>Debian</strong> (any version). Other distros are not supported.</td></tr>
+        <tr><td>OS</td><td><strong>Ubuntu 24.04+</strong>, <strong>Debian</strong> (any version), <strong>Fedora 39+</strong>, or <strong>CentOS / RHEL / AlmaLinux / Rocky 9+</strong>.</td></tr>
         <tr><td>Access</td><td>Root SSH access with key-based authentication</td></tr>
         <tr><td>Ports</td><td>80 (HTTP), 443 (HTTPS) must be open</td></tr>
         <tr><td>RAM</td><td>Minimum 512MB. 1GB+ recommended for builds.</td></tr>
@@ -926,7 +982,7 @@ neo list --server staging</pre>
 
     <div class="callout callout-warn">
         <strong>Unsupported</strong>
-        Ubuntu 22.04, 20.04, CentOS, RHEL, Alpine, Fedora, and Arch are not supported. <code>neo init</code> will detect the OS and show an error if unsupported.
+        Older releases (Ubuntu 22.04 / 20.04, Fedora 38 and below, CentOS 7), plus Alpine and Arch, are not supported. <code>neo init</code> detects the OS and version from <code>/etc/os-release</code> and shows a clear error if unsupported.
     </div>
 </section>
 

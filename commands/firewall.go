@@ -62,7 +62,7 @@ func runFirewallInstall() error {
 		return nil
 	}
 
-	fmt.Println("\n  Installing CrowdSec + nftables bouncer...\n")
+	fmt.Print("\n  Installing CrowdSec + nftables bouncer...\n\n")
 
 	if err := cs.Install(os.Stdout); err != nil {
 		return err
@@ -250,7 +250,7 @@ func runFirewallList() error {
 	fmt.Printf("\n  Server: %s (%s)\n\n", ui.Bold.Render(srv.Name), srv.Host)
 
 	if len(decisions) == 0 {
-		fmt.Println("  No active firewall decisions.\n")
+		fmt.Print("  No active firewall decisions.\n\n")
 		ui.Info("Block an IP: neo firewall block <ip>")
 		return nil
 	}
