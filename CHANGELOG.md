@@ -31,6 +31,8 @@ All notable changes to Neo will be documented here.
 
 - **Sidecar images are pruned too** — `PruneImages` now also cleans up sidecar repositories (`neo-<app>-sidecar-*`), keeping the two most recent tags of each independently. Previously only the main app image was considered, so rebuilt sidecar images grew without bound.
 
+- **neo-builder no longer fills the disk with old binaries** — The build service wrote a new `/output/<version>` directory on every build and never cleaned up, so compiled binaries accumulated indefinitely on the server. After each successful build it now keeps only the most recent versions per channel — staging (`-staging` versions) and production tracked separately — and removes the rest. The count is configurable via `NEO_KEEP_VERSIONS` (default `3`). Pruning is best-effort and never fails a build.
+
 ### New Features
 
 - **Multiple wildcard certificate trees on one server** — `neo caddy dns` and `neo caddy ondemand` now **merge** their TLS automation policy into Caddy's existing config instead of replacing the whole `automation` block. Independent wildcard trees can coexist — e.g. `*.example.com` for production and `*.staging.example.com` for a staging environment on the same server — each getting its own free Let's Encrypt wildcard certificate. Policies are keyed by base domain, so re-running a command for the same domain is idempotent. Run once per tree:
