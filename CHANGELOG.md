@@ -4,6 +4,28 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.20.0 — 2026-07-07
+
+### Breaking Changes
+
+- **Neo is now free for everyone — and requires a free license.** The paid Neo+ tier is gone. Every feature is unlocked for all users, but you must activate a free license key before running commands. The first time you run any command (or run `neo activate`), Neo asks for your email and issues a free key instantly, then continues. In non-interactive contexts (CI, no TTY) it prints a clear "run `neo activate`" message instead. Set `NEO_DEV_PLUS=true` to bypass activation in local development.
+  - Existing paid `plus`/`team` license keys are **grandfathered** — they still validate and keep working.
+  - **Deploy order for self-hosters:** the CMS `/register` endpoint must be live before this CLI is rolled out, otherwise clients cannot activate.
+
+### New Features
+
+- **`neo activate` — one-step free activation** — `neo activate` with no argument prompts for your email and registers a free license (`POST /api/license/register`); `neo activate <key>` activates an existing key. One key works on **unlimited servers and unlimited devices**.
+
+- **`neo config init` — scaffold a `.neo.yml`** — Creates a commented `.neo.yml` for projects without a `docker-compose.yml`. Prompts for name (defaults to the directory), domain (optional), and port (auto-detected from the Dockerfile `EXPOSE`, default 8080), then stubs `env`, `volumes`, `workers`, `sidecars`, `health`, `hooks`, and `environments` as commented examples. Use `--yes` to accept defaults non-interactively. Complements `neo config generate` (which builds from `docker-compose.yml`).
+
+### Changes
+
+- **No more feature gates.** Multi-server (previously capped at 1 on the free tier), backups (previously blocked), and device activations are now **unlimited** for everyone. Parallel image-upload streams are fixed at 3 for all users.
+
+- **`neo plus` → `neo license`.** License management moved to `neo license` (`activate`/`status`/`deactivate`); `neo plus` remains as a hidden alias. All paid-tier upsell UI (pricing, upgrade prompts, expiry banners) has been removed, and the marketing site and docs are reframed around the free model.
+
+---
+
 ## v0.19.0 — 2026-06-05
 
 ### New Features
