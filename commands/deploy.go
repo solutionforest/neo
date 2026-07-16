@@ -1354,11 +1354,7 @@ func deployViaLocalBuild(projectPath, dockerfile, imageTag, platform string, ssh
 	}
 	defer os.Remove(tmpFile)
 
-	plan := license.CurrentPlan(licenseKey)
-	numStreams := license.Limit(license.FeatureParallelUploads, plan)
-	if numStreams <= 0 {
-		numStreams = 2
-	}
+	numStreams := license.MaxParallelUploads
 	if err := transferImageParallel(tmpFile, fileSize, sshExec, numStreams); err != nil {
 		// Parallel upload failed (e.g. remote /tmp too small for all chunks).
 		// Fall back to streaming the image directly into docker load — no remote temp files needed.

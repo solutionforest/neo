@@ -33,12 +33,28 @@ func NewRootCmd(version string) *cobra.Command {
 	root.PersistentFlags().StringVar(&serverFlag, "server", "", "target a specific server by name")
 	root.PersistentFlags().BoolVar(&debugFlag, "debug", false, "log SSH commands for diagnostics")
 
-	// Daily license refresh — runs once per startup, skipped if already checked today.
+	// Activation gate — every command except the activation/help commands
+	// requires a valid (free) license. Dev builds bypass via NEO_DEV_PLUS.
+	// When unactivated, launch the inline email→key flow, then continue.
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		if cfg, err := config.Load(); err == nil {
-			if status := license.CheckDaily(cfg.LicenseKey); status != nil && status.Expired {
-				printLicenseExpiredBanner(status.Expires)
-			}
+		if isActivationExempt(cmd) || license.DevBypassEnabled() {
+			return nil
+		}
+		cfg, err := config.Load()
+		if err != nil {
+			return nil // let the command surface config errors itself
+		}
+		if license.IsActivated(cfg.LicenseKey) {
+			return nil
+		}
+		// Not activated — run the inline activation flow (prompts for email,
+		// registers a free key). Falls back to a clear error with no TTY.
+		if err := runActivate(nil); err != nil {
+			return err
+		}
+		cfg, _ = config.Load()
+		if !license.IsActivated(cfg.LicenseKey) {
+			return errNotActivated()
 		}
 		return nil
 	}
@@ -69,7 +85,8 @@ func NewRootCmd(version string) *cobra.Command {
 		newPruneCmd(),
 		newSyncCmd(),
 		newConnectCmd(),
-		newPlusCmd(),
+		newLicenseCmd(),
+		newActivateCmd(),
 		newSSHCmd(),
 		newStealthCmd(),
 		newCaddyCmd(),
@@ -123,6 +140,7 @@ func printHelp() {
 		{
 			title: "Getting Started",
 			entries: []entry{
+				{"neo activate", "Activate neo (free — required before use)"},
 				{"neo", "Launch interactive dashboard"},
 				{"neo init <user@host>", "Initialize a remote server"},
 				{"neo config generate", "Generate .neo.yml from docker-compose.yml"},
@@ -440,31 +458,41 @@ func mustResolveAndLoadState() (*ssh.Executor, *state.State, error) {
 	return exec, st, nil
 }
 
-// printNeoPlusGate prints a consistent upgrade CTA when a gated feature is blocked.
-// feature is a short description like "Backups" or "Multiple servers".
-func printNeoPlusGate(feature string) {
-	fmt.Println()
-	ui.Error(feature + " require a Neo+ license")
-	fmt.Println()
-	fmt.Printf("  %s  %s\n", ui.Yellow.Render("★"), ui.Bold.Render("Upgrade to Neo+"))
-	fmt.Printf("       Unlimited servers, automated backups, and more.\n")
-	fmt.Printf("       %s\n", ui.Cyan.Render("neo.vxero.dev"))
-	fmt.Println()
-	fmt.Printf("  Already have a key?  %s\n", ui.Faint.Render("neo plus activate <key>"))
-	fmt.Println()
+// activationExempt lists the top-level commands that run without a license.
+var activationExempt = map[string]bool{
+	"license":    true,
+	"plus":       true, // hidden alias of license
+	"activate":   true,
+	"help":       true,
+	"version":    true,
+	"upgrade":    true,
+	"completion": true,
+	"__complete": true,
 }
 
-// printLicenseExpiredBanner prints a one-time warning when a Neo+ license has expired.
-// The user retains full access to all Plus features — this is advisory only.
-func printLicenseExpiredBanner(expires string) {
-	fmt.Println()
-	fmt.Printf("  %s  %s\n", ui.Yellow.Render("⚠"), ui.Bold.Render("Your Neo+ license has expired"))
-	if expires != "" {
-		fmt.Printf("       Expired: %s\n", ui.Faint.Render(expires))
+// isActivationExempt reports whether cmd may run without a valid license.
+func isActivationExempt(cmd *cobra.Command) bool {
+	return activationExempt[topCommandName(cmd)]
+}
+
+// topCommandName returns the name of cmd's top-level ancestor (the direct child
+// of root), or the root's own name when cmd is the root.
+func topCommandName(cmd *cobra.Command) string {
+	for cmd.HasParent() && cmd.Parent().HasParent() {
+		cmd = cmd.Parent()
 	}
-	fmt.Printf("       Updates are no longer included. Renew at %s\n", ui.Bold.Render("neo.vxero.dev"))
-	fmt.Printf("       or email %s for support.\n", ui.Bold.Render("support@vxero.dev"))
+	return cmd.Name()
+}
+
+// errNotActivated is returned when a gated command runs without a license.
+func errNotActivated() error {
 	fmt.Println()
+	ui.Error("neo needs to be activated before you can use this command")
+	fmt.Println()
+	fmt.Printf("  Run:  %s\n", ui.Bold.Render("neo activate"))
+	fmt.Printf("        %s\n", ui.Faint.Render("It's free — enter your email and you're set."))
+	fmt.Println()
+	return fmt.Errorf("not activated")
 }
 
 // exitErr prints an error and exits.

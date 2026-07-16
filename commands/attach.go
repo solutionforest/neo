@@ -56,8 +56,6 @@ func runAttach(host, name, keyPath string) error {
 		if !overwrite {
 			return nil
 		}
-	} else if err := checkServerLimit(cfg); err != nil {
-		return err
 	}
 
 	// Build the SSH executor. A teammate who ran `neo key show` already has key

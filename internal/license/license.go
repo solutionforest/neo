@@ -17,34 +17,22 @@ import (
 // Override at build time via: -ldflags "-X github.com/vxero/neo/internal/license.DefaultLicenseAPIURL=..."
 var DefaultLicenseAPIURL = "https://neo.vxero.dev/api/license"
 
-// DevLicenseBypass allows local development builds to exercise Neo+ gates
-// without requiring a live license. It is intended only for local/staging testing.
+// DevLicenseBypass allows local development builds to skip activation without
+// a live license. Intended only for local/staging testing.
 var DevLicenseBypass = "false"
 
-// OfflineGraceDays is how many days the CLI trusts a cached validation.
+// OfflineGraceDays is how many days the CLI trusts a cached validation once a
+// license has been activated at least once.
 const OfflineGraceDays = 3
 
 // Status represents the current license state.
 type Status struct {
 	Valid       bool   `json:"valid"`
-	Expired     bool   `json:"expired"` // was Plus, now past expiry date
-	Plan        string `json:"plan"`    // "free" or "plus"
-	Expires     string `json:"expires"` // ISO date, empty if lifetime
+	Key         string `json:"license_key"` // returned by /register
+	Plan        string `json:"plan"`        // "free" (or grandfathered "plus"/"team")
+	Expires     string `json:"expires"`     // ISO date, empty if lifetime
 	ValidatedAt string `json:"validated_at"`
 	ValidatedBy string `json:"validated_by"` // license API URL that produced this cache
-}
-
-// isExpiredDate reports whether an ISO date (YYYY-MM-DD or RFC3339) is in the past.
-func isExpiredDate(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, layout := range []string{"2006-01-02", time.RFC3339} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return time.Now().After(t)
-		}
-	}
-	return false
 }
 
 // cacheFile returns the license cache path.
@@ -69,7 +57,51 @@ func MachineID() string {
 	return fmt.Sprintf("%x", h[:8])
 }
 
-// Activate calls the license API to validate and activate a key on this machine.
+// Register issues a free license for an email and activates it on this machine.
+// The returned Status.Key is the license key to persist in config.
+func Register(email string) (*Status, error) {
+	apiURL := LicenseAPIURL() + "/register"
+
+	form := url.Values{}
+	form.Set("email", email)
+	form.Set("machine_id", MachineID())
+
+	resp, err := http.PostForm(apiURL, form)
+	if err != nil {
+		return nil, fmt.Errorf("cannot reach license server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Valid   bool   `json:"valid"`
+		Key     string `json:"license_key"`
+		Plan    string `json:"plan"`
+		Expires string `json:"expires"`
+		Error   string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("invalid response from license server")
+	}
+	if !result.Valid || result.Key == "" {
+		msg := "registration failed"
+		if result.Error != "" {
+			msg = result.Error
+		}
+		return nil, fmt.Errorf("%s", msg)
+	}
+
+	status := &Status{
+		Valid:       true,
+		Key:         result.Key,
+		Plan:        result.Plan,
+		Expires:     result.Expires,
+		ValidatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	saveCache(status)
+	return status, nil
+}
+
+// Activate validates and activates an existing key on this machine.
 func Activate(key string) (*Status, error) {
 	apiURL := LicenseAPIURL() + "/activate"
 
@@ -102,46 +134,10 @@ func Activate(key string) (*Status, error) {
 
 	status := &Status{
 		Valid:       true,
+		Key:         key,
 		Plan:        result.Plan,
 		Expires:     result.Expires,
 		ValidatedAt: time.Now().UTC().Format(time.RFC3339),
-	}
-	saveCache(status)
-	return status, nil
-}
-
-// Validate checks the key against the API and registers the device.
-func Validate(key string) (*Status, error) {
-	apiURL := LicenseAPIURL() + "/validate"
-
-	form := url.Values{}
-	form.Set("license_key", key)
-	form.Set("machine_id", MachineID())
-
-	resp, err := http.PostForm(apiURL, form)
-	if err != nil {
-		return nil, fmt.Errorf("cannot reach license server: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Valid   bool   `json:"valid"`
-		Plan    string `json:"plan"`
-		Expires string `json:"expires"`
-		Error   string `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("invalid response from license server")
-	}
-
-	status := &Status{
-		Valid:       result.Valid,
-		Plan:        PlanFree,
-		ValidatedAt: time.Now().UTC().Format(time.RFC3339),
-	}
-	if result.Valid {
-		status.Plan = result.Plan
-		status.Expires = result.Expires
 	}
 	saveCache(status)
 	return status, nil
@@ -170,19 +166,18 @@ func Deactivate(key string) error {
 }
 
 // Check returns the current license status using cached data with offline grace.
-// This is the main function used by feature gates — it never blocks on network.
+// It never blocks on network for long. A key is valid once it has been
+// activated (online) at least once; after that the cache carries it offline.
 func Check(licenseKey string) *Status {
 	if licenseKey == "" {
 		return &Status{Valid: false, Plan: PlanFree}
 	}
 
-	// Try cached status first (valid or known-expired, within grace period).
-	// Reject cache from a different license server (e.g. staging cache read by production binary).
 	currentAPI := LicenseAPIURL()
-	if cached := loadCache(); cached != nil {
-		if cached.ValidatedBy != "" && cached.ValidatedBy != currentAPI {
-			// Cache was produced by a different environment — ignore it.
-		} else if cached.Valid || cached.Expired {
+
+	// Try cached status first (within grace period, same license server).
+	if cached := loadCache(); cached != nil && cached.Valid {
+		if cached.ValidatedBy == "" || cached.ValidatedBy == currentAPI {
 			if t, err := time.Parse(time.RFC3339, cached.ValidatedAt); err == nil {
 				if time.Since(t) < time.Duration(OfflineGraceDays)*24*time.Hour {
 					return cached
@@ -191,9 +186,9 @@ func Check(licenseKey string) *Status {
 		}
 	}
 
-	// Cache stale or missing — try online validation (with short timeout).
+	// Cache stale or missing — try online validation (short timeout).
 	client := &http.Client{Timeout: 3 * time.Second}
-	apiURL := LicenseAPIURL() + "/validate"
+	apiURL := currentAPI + "/validate"
 
 	form := url.Values{}
 	form.Set("license_key", licenseKey)
@@ -201,9 +196,8 @@ func Check(licenseKey string) *Status {
 
 	resp, err := client.PostForm(apiURL, form)
 	if err != nil {
-		// Network error — return stale cache so we don't block the user,
-		// but only if it came from the same license server.
-		if cached := loadCache(); cached != nil {
+		// Network error — fall back to any same-server cache so we don't block.
+		if cached := loadCache(); cached != nil && cached.Valid {
 			if cached.ValidatedBy == "" || cached.ValidatedBy == currentAPI {
 				return cached
 			}
@@ -222,10 +216,10 @@ func Check(licenseKey string) *Status {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-
 	if result.Valid {
 		status := &Status{
 			Valid:       true,
+			Key:         licenseKey,
 			Plan:        result.Plan,
 			Expires:     result.Expires,
 			ValidatedAt: now,
@@ -234,50 +228,20 @@ func Check(licenseKey string) *Status {
 		return status
 	}
 
-	// License invalid — check whether this is an expired Plus license.
-	// The API may or may not return plan/expires for invalid keys, so we also
-	// fall back to the previously cached plan and expiry date.
-	plan := result.Plan
-	expires := result.Expires
-	if plan == "" {
-		if old := loadCache(); old != nil {
-			plan = old.Plan
-			if expires == "" {
-				expires = old.Expires
-			}
-		}
-	}
-
-	status := &Status{
-		Valid:       false,
-		Plan:        PlanFree,
-		Expires:     expires,
-		ValidatedAt: now,
-	}
-	if plan == PlanPlus && isExpiredDate(expires) {
-		// Expired Plus: keep plan so feature gates still pass, mark Expired for UI warning.
-		status.Expired = true
-		status.Plan = PlanPlus
-	}
+	status := &Status{Valid: false, Plan: PlanFree, ValidatedAt: now}
 	saveCache(status)
 	return status
 }
 
-// CurrentPlan returns the effective plan for feature gating.
-// Expired Plus licenses return PlanPlus — features remain accessible, but
-// the caller is responsible for showing the expiry warning separately.
-func CurrentPlan(licenseKey string) string {
+// IsActivated reports whether neo may run: a valid license, or a dev bypass.
+func IsActivated(licenseKey string) bool {
 	if DevBypassEnabled() {
-		return PlanPlus
+		return true
 	}
-	s := Check(licenseKey)
-	if s.Valid || s.Expired {
-		return s.Plan
-	}
-	return PlanFree
+	return Check(licenseKey).Valid
 }
 
-// DevBypassEnabled reports whether local development gates should behave as Neo+.
+// DevBypassEnabled reports whether activation should be skipped for local dev.
 func DevBypassEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(DevLicenseBypass))
 	if v == "1" || v == "true" || v == "yes" {
@@ -294,27 +258,6 @@ func MaskKey(key string) string {
 		return "****"
 	}
 	return key[:4] + strings.Repeat("*", len(key)-8) + key[len(key)-4:]
-}
-
-// CheckDaily refreshes the cached license status if more than 24 hours have passed
-// since the last check. It returns the current status so callers can show expiry
-// warnings. It never blocks for more than 3 seconds and never surfaces errors.
-func CheckDaily(licenseKey string) *Status {
-	if licenseKey == "" {
-		return nil
-	}
-	currentAPI := LicenseAPIURL()
-	if cached := loadCache(); cached != nil {
-		if cached.ValidatedBy == "" || cached.ValidatedBy == currentAPI {
-			if t, err := time.Parse(time.RFC3339, cached.ValidatedAt); err == nil {
-				if time.Since(t) < 24*time.Hour {
-					return cached // already checked within the last 24 hours
-				}
-			}
-		}
-	}
-	// Cache missing, wrong environment, or older than 24 h — refresh.
-	return Check(licenseKey)
 }
 
 func loadCache() *Status {

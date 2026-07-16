@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/vxero/neo/internal/config"
-	"github.com/vxero/neo/internal/license"
 	"github.com/vxero/neo/internal/remote"
 	neossh "github.com/vxero/neo/internal/ssh"
 	"github.com/vxero/neo/internal/ui"
@@ -39,16 +38,6 @@ func newRestoreCmd() *cobra.Command {
 }
 
 func runBackup(appName string) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	plan := license.CurrentPlan(cfg.LicenseKey)
-	if !license.Allowed(license.FeatureBackup, plan, 0) {
-		printNeoPlusGate("Backups")
-		return fmt.Errorf("backups require Neo+")
-	}
-
 	exec, st, err := mustResolveAndLoadState()
 	if err != nil {
 		return err

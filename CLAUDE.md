@@ -379,24 +379,35 @@ When installing a template app that needs a service (e.g., Ghost → MySQL), if 
 - Docker network: `neo-dev-<app>` (created only when workers or sidecars exist)
 - Dev image: `neo-dev-<app>:latest`
 
-## Neo+ Licensing (`internal/license/`)
+## Licensing (`internal/license/`)
 
-Feature-gated commercial tier:
-- **`neo plus`** — interactive license management menu
-- **`neo plus activate <key>`** — activate license on this machine
-- **`neo plus status`** — show current license state
-- **`neo plus deactivate`** — remove license from machine
+Free, but **required** — every user must activate a license key before using neo.
+There is no paid tier; all features are unlocked for any valid license.
 
-### Feature Gates
-- `FeatureMultiServer` — Free: 1 server, Plus: unlimited
-- `FeatureBackup` — Free: blocked, Plus: unlimited
-- Max 2 device activations per license key
+- **`neo activate [key]`** — top-level activation. No key → prompts for email and
+  registers a free license (`POST /register`). With a key → activates an existing key.
+- **`neo license`** — interactive license menu (`plus` is a hidden alias for back-compat).
+- **`neo license status`** — show current license state.
+- **`neo license deactivate`** — remove license from this machine.
+
+### Enforcement (hard-block)
+- `root.go` `PersistentPreRunE` blocks every command until the license is valid.
+- Exempt commands (run without a license): `activate`, `license`/`plus`, `help`,
+  `version`, `upgrade`, `completion`, and the bare `neo` dashboard (routes to activation).
+- `NEO_DEV_PLUS=true` (or build flag `DevLicenseBypass=true`) skips the gate for local dev.
+- First activation requires network; after that a 3-day offline cache grace applies.
+
+### No feature gates
+- Multi-server: unlimited. Backups: unlimited. Parallel image uploads: `MaxParallelUploads = 3` for all.
+- Device activations: unlimited per key (server-side `activation_limit = 0`).
 
 ### License Validation
 - API: `https://neo.vxero.dev/api/license` (overridable via `NEO_LICENSE_URL` env var)
+- Endpoints: `/register` (new), `/activate`, `/validate`, `/deactivate`
 - Machine fingerprint: SHA-256 of `hostname-os-arch`
-- Offline cache: `~/.neo/license.json` with 7-day grace period
+- Offline cache: `~/.neo/license.json` with 3-day grace period (after first activation)
 - Config stores license key in `~/.neo/config.json` as `license_key`
+- Existing paid `plus`/`team` keys are grandfathered — they still validate.
 
 ## CrowdSec / Firewall (`commands/firewall.go`, `internal/remote/crowdsec.go`)
 
@@ -563,7 +574,8 @@ plans/                       # Planning documents
 | `neo config` | Manage local config |
 | `neo firewall install/status/block/unblock/list` | CrowdSec firewall |
 | `neo stealth` | Toggle stealth mode |
-| `neo plus activate/status/deactivate` | Neo+ license management |
+| `neo activate [key]` | Activate neo (free) — by email or existing key |
+| `neo license status/deactivate` | License management (`plus` = hidden alias) |
 | `neo connect` | Vxero bridge (Coming Soon) |
 | `neo ask` | Interactive skill assistant |
 | `neo version` | Show version, check for updates |
