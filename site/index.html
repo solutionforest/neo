@@ -945,53 +945,33 @@
     <div class="w">
         <div class="section-header center">
             <div class="section-badge">Pricing</div>
-            <h2 class="section-title">Free to start.<br><span class="gradient">Neo+</span> when you want more.</h2>
-            <p class="section-sub">Neo is free forever for the core deployment workflow. Neo+ adds deep introspection, real-time visibility, and data protection &mdash; for less than a coffee a month.</p>
+            <h2 class="section-title">Free. Full-featured.<br><span class="gradient">No catch.</span></h2>
+            <p class="section-sub">Every feature, every command, every server &mdash; free. Just activate with your email to get started.</p>
         </div>
-        <div class="pricing-grid">
+        <div class="pricing-grid" style="grid-template-columns:1fr;max-width:520px;margin:0 auto;">
             <!-- Neo Free -->
-            <div class="price-card">
+            <div class="price-card featured">
                 <div class="price-badge free">Free</div>
                 <div class="price-name">Neo</div>
                 <div class="price-amount">$0 <span>forever</span></div>
-                <p class="price-desc">Everything you need to deploy and manage apps on your VPS.</p>
+                <p class="price-desc">Everything you need to deploy and manage apps on your VPS. No paid tier, no feature gates, no usage caps.</p>
                 <ul class="price-features">
+                    <li class="included">Unlimited servers</li>
+                    <li class="included">Unlimited devices</li>
                     <li class="included">Server init &amp; Docker setup</li>
                     <li class="included">Deploy your own Dockerfile</li>
                     <li class="included">10 built-in app templates</li>
                     <li class="included">Auto-SSL via Caddy</li>
-                    <li class="included">Background workers</li>
-                    <li class="included">Persistent volumes</li>
+                    <li class="included">Background workers &amp; persistent volumes</li>
                     <li class="included">Env var management</li>
-                    <li class="included">Live logs &amp; app lifecycle</li>
-                    <li class="included">Zero-downtime deploys</li>
-                    <li class="included">Up to 2 servers</li>
-                    <li class="na">App terminal &amp; one-off exec</li>
-                    <li class="na">Real-time app &amp; VM metrics</li>
-                    <li class="na">Local backup to laptop</li>
+                    <li class="included">Live logs, metrics &amp; app terminal</li>
+                    <li class="included">One-off exec &amp; zero-downtime deploys</li>
+                    <li class="included">Local volume backups</li>
                 </ul>
                 <button class="price-cta cta-free copy-cmd" data-copy="curl -fsSL https://get.vxero.dev/neo | sh">Get started free</button>
             </div>
-            <!-- Neo+ -->
-            <div class="price-card featured">
-                <div class="price-badge plus">Plus</div>
-                <div class="price-name">Neo+</div>
-                <div class="price-amount">$79 <span>/ user / year</span></div>
-                <p class="price-desc">Introspect, debug, and protect your running apps. Everything in Neo, plus the toolkit you reach for every week.</p>
-                <ul class="price-features">
-                    <li class="included">Everything in Neo, plus:</li>
-                    <li class="plus-only">Unlimited servers</li>
-                    <li class="plus-only">App terminal &mdash; interactive shell into any container</li>
-                    <li class="plus-only">Real-time app metrics &mdash; CPU, RAM, I/O per container</li>
-                    <li class="plus-only">Real-time VM metrics &mdash; server CPU, disk, network</li>
-                    <li class="plus-only">One-off exec &mdash; <code style="font-size:0.78rem;background:var(--accent-soft);padding:1px 6px;border-radius:4px;">neo run &lt;app&gt; -- php artisan migrate</code></li>
-                    <li class="plus-only">Local backup &mdash; download volumes to your laptop</li>
-                    <li class="plus-only">Priority support</li>
-                </ul>
-                <a class="price-cta cta-plus" href="#" onclick="return false;" style="text-decoration:none;">Coming soon</a>
-            </div>
         </div>
-        <p class="price-note">Neo+ is coming soon &mdash; $79/user/year. Neo free is fully usable today, no sign-up required.</p>
+        <p class="price-note">100% free. A one-time <code style="font-size:0.82rem;background:var(--accent-soft);padding:1px 6px;border-radius:4px;">neo activate</code> (just your email) issues a free license key &mdash; it works on unlimited servers and devices.</p>
     </div>
 </section>
 
@@ -1050,7 +1030,7 @@
                     Is Neo free?
                     <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                 </button>
-                <div class="faq-a"><p>Neo is free forever for the core workflow &mdash; init, deploy, install, logs, env management, and up to 2 servers. <strong>Neo+</strong> ($79/user/year, ~$6.58/mo) adds an interactive app terminal, real-time app and VM metrics, one-off exec commands, local volume backup to your laptop, and unlimited servers. You only pay your cloud provider for the VPS itself.</p></div>
+                <div class="faq-a"><p>Yes &mdash; completely free, with every feature included: init, deploy, install, logs, env, app terminal, metrics, one-off exec, backups, and unlimited servers. There is no paid tier. The only step is a one-time free activation: run <code>neo activate</code>, enter your email, and Neo issues a free license key instantly (it works on unlimited servers and devices). You only pay your cloud provider for the VPS itself.</p></div>
             </div>
             <div class="faq-item">
                 <button class="faq-q" aria-expanded="false">
@@ -1076,7 +1056,7 @@
         <div class="section-header center">
             <div class="section-badge">Scale when you're ready</div>
             <h2 class="section-title">Need a dashboard &amp; team access?<br>Meet <span class="gradient">Vxero.</span></h2>
-            <p class="section-sub">Neo and Neo+ handle the CLI workflow. When you need a web dashboard, team collaboration, monitoring, and managed infrastructure &mdash; Vxero picks up where Neo leaves off.</p>
+            <p class="section-sub">Neo handles the CLI workflow. When you need a web dashboard, team collaboration, monitoring, and managed infrastructure &mdash; Vxero picks up where Neo leaves off.</p>
         </div>
         <div class="upgrade">
             <div class="upgrade-grid">
@@ -1103,8 +1083,7 @@
                         <thead>
                             <tr>
                                 <th></th>
-                                <th>Neo</th>
-                                <th>Neo+</th>
+                                <th>Neo (free)</th>
                                 <th>Vxero</th>
                             </tr>
                         </thead>
@@ -1113,53 +1092,44 @@
                                 <td>Deploy apps</td>
                                 <td class="check">&#10003;</td>
                                 <td class="check">&#10003;</td>
-                                <td class="check">&#10003;</td>
                             </tr>
                             <tr>
                                 <td>Auto-SSL</td>
                                 <td class="check">&#10003;</td>
                                 <td class="check">&#10003;</td>
-                                <td class="check">&#10003;</td>
                             </tr>
                             <tr>
                                 <td>Servers</td>
-                                <td>Up to 2</td>
                                 <td class="check">Unlimited</td>
                                 <td class="check">By plan</td>
                             </tr>
                             <tr>
                                 <td>App terminal &amp; exec</td>
-                                <td>&mdash;</td>
                                 <td class="check">&#10003;</td>
                                 <td class="check">&#10003;</td>
                             </tr>
                             <tr>
                                 <td>Real-time metrics</td>
-                                <td>&mdash;</td>
                                 <td class="check">&#10003;</td>
                                 <td class="check">&#10003;</td>
                             </tr>
                             <tr>
                                 <td>Local backup</td>
-                                <td>&mdash;</td>
                                 <td class="check">&#10003;</td>
                                 <td>&mdash;</td>
                             </tr>
                             <tr>
                                 <td>Web dashboard</td>
                                 <td>&mdash;</td>
-                                <td>&mdash;</td>
                                 <td class="check">&#10003;</td>
                             </tr>
                             <tr>
                                 <td>Team access</td>
                                 <td>&mdash;</td>
-                                <td>&mdash;</td>
                                 <td class="check">&#10003;</td>
                             </tr>
                             <tr>
                                 <td>Monitoring</td>
-                                <td>&mdash;</td>
                                 <td>&mdash;</td>
                                 <td class="check">&#10003;</td>
                             </tr>
