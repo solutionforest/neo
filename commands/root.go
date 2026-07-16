@@ -143,6 +143,7 @@ func printHelp() {
 				{"neo activate", "Activate neo (free — required before use)"},
 				{"neo", "Launch interactive dashboard"},
 				{"neo init <user@host>", "Initialize a remote server"},
+				{"neo config init", "Scaffold a new .neo.yml for this project"},
 				{"neo config generate", "Generate .neo.yml from docker-compose.yml"},
 				{"neo help", "Show this help"},
 			},

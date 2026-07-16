@@ -571,7 +571,8 @@ plans/                       # Planning documents
 | `neo ssh` | SSH into server |
 | `neo servers` | List configured servers |
 | `neo use <name>` | Switch active server |
-| `neo config` | Manage local config |
+| `neo config init` | Scaffold a new `.neo.yml` (interactive, `--yes` for defaults) |
+| `neo config generate` | Generate `.neo.yml` from `docker-compose.yml` |
 | `neo firewall install/status/block/unblock/list` | CrowdSec firewall |
 | `neo stealth` | Toggle stealth mode |
 | `neo activate [key]` | Activate neo (free) — by email or existing key |

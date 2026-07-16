@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/vxero/neo/internal/ui"
 )
@@ -16,8 +18,134 @@ func newConfigCmd() *cobra.Command {
 		Use:   "config",
 		Short: "Manage .neo.yml configuration",
 	}
+	cmd.AddCommand(newConfigInitCmd())
 	cmd.AddCommand(newConfigGenerateCmd())
 	return cmd
+}
+
+func newConfigInitCmd() *cobra.Command {
+	var yes bool
+
+	cmd := &cobra.Command{
+		Use:   "init",
+		Short: "Scaffold a new .neo.yml in the current project",
+		Long:  "Creates a .neo.yml for the current project. Prompts for name, domain, port, and HTTPS, then writes a commented template with the remaining sections stubbed for easy extension. Use --yes to accept defaults without prompting.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runConfigInit(yes)
+		},
+	}
+
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "accept defaults without prompting")
+	return cmd
+}
+
+// runConfigInit scaffolds a commented .neo.yml from a few prompted answers.
+func runConfigInit(yes bool) error {
+	if _, err := os.Stat(".neo.yml"); err == nil {
+		ui.Error(".neo.yml already exists — rename or delete it first")
+		return nil
+	}
+
+	// Defaults: name from directory, port from Dockerfile EXPOSE.
+	cwd, _ := os.Getwd()
+	name := sanitizeName(filepath.Base(cwd))
+	if name == "" {
+		name = "app"
+	}
+	port := detectPort("Dockerfile")
+	if port == 0 {
+		port = 8080
+	}
+	domain := ""
+	https := true
+
+	if !yes {
+		portStr := strconv.Itoa(port)
+		_ = huh.NewInput().Title("App name").Value(&name).Run()
+		_ = huh.NewInput().Title("Domain (optional)").Placeholder("app.example.com").Value(&domain).Run()
+		_ = huh.NewInput().Title("Container port").Value(&portStr).Run()
+		if p, err := strconv.Atoi(strings.TrimSpace(portStr)); err == nil && p > 0 {
+			port = p
+		}
+		_ = huh.NewConfirm().Title("Enable HTTPS?").Value(&https).Run()
+	}
+
+	name = sanitizeName(strings.TrimSpace(name))
+	if name == "" {
+		return fmt.Errorf("app name is required")
+	}
+	domain = strings.TrimSpace(domain)
+
+	if err := os.WriteFile(".neo.yml", []byte(neoConfigTemplate(name, domain, port, https)), 0o644); err != nil {
+		return fmt.Errorf("write .neo.yml: %w", err)
+	}
+
+	card := ui.NewCard()
+	card.Add(ui.Bold.Render("✓ .neo.yml created!"))
+	card.Blank()
+	card.Add("  Next steps:")
+	card.Add(fmt.Sprintf("    1. Review %s and uncomment sections you need", ui.Cyan.Render(".neo.yml")))
+	card.Add(fmt.Sprintf("    2. %s", ui.Cyan.Render("neo init root@<your-server-ip>")))
+	card.Add(fmt.Sprintf("    3. %s", ui.Cyan.Render("neo deploy .")))
+	card.Render()
+	return nil
+}
+
+// neoConfigTemplate builds a commented .neo.yml with the answered fields set and
+// the remaining sections stubbed as examples.
+func neoConfigTemplate(name, domain string, port int, https bool) string {
+	domainLine := "# domain: app.example.com          # set a domain (or run: neo domain " + name + " --temp)"
+	if domain != "" {
+		domainLine = "domain: " + domain
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "# .neo.yml — Neo project config. Docs: https://neo.vxero.dev/docs\n")
+	fmt.Fprintf(&b, "name: %s\n", name)
+	fmt.Fprintf(&b, "%s\n", domainLine)
+	fmt.Fprintf(&b, "port: %d                           # container port (Dockerfile EXPOSE)\n", port)
+	fmt.Fprintf(&b, "https: %t\n", https)
+	fmt.Fprintf(&b, "# restart: unless-stopped          # Docker restart policy\n")
+	b.WriteString(`
+# env:                              # non-sensitive env var defaults
+#   APP_ENV: production
+#   LOG_LEVEL: info
+
+# env_file: .env.production         # load env vars from a file
+
+# volumes:                          # persistent data
+#   uploads: /app/uploads           # named volume
+#   logs: /var/log/app:/var/log/app # host:container bind mount
+
+# workers:                          # background containers (share app image)
+#   queue:
+#     command: "node worker.js"
+#     restart: always
+
+# sidecars:                         # extra containers on the same network
+#   redis:
+#     image: redis:7-alpine
+
+# health:                           # container health check
+#   cmd: "curl -f http://localhost:PORT/health"
+#   interval: 30s
+#   retries: 3
+
+# hooks:                            # local lifecycle commands
+#   pre_build:
+#     - npm run build
+#   post_deploy:
+#     - echo "deployed"
+
+# environments:                     # per-environment overrides
+#   staging:
+#     domain: staging.example.com
+#     env:
+#       APP_ENV: staging
+#   production:
+#     domain: app.example.com
+`)
+	return strings.Replace(b.String(), "http://localhost:PORT/health", fmt.Sprintf("http://localhost:%d/health", port), 1)
 }
 
 func newConfigGenerateCmd() *cobra.Command {
