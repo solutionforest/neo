@@ -261,6 +261,21 @@ neo domain my-app --temp</pre>
         <strong>Tip</strong>
         Neo auto-reads <code>docker-compose.yml</code> and <code>.env</code> files. If your project already has these, <code>neo deploy .</code> will extract env vars, ports, and service config automatically.
     </div>
+
+    <div class="callout callout-info">
+        <strong>SSH access &amp; key files</strong>
+        Neo connects over SSH using, in order: <code>ssh-agent</code>, then <code>~/.ssh/id_ed25519</code> / <code>~/.ssh/id_rsa</code>. For a cloud <code>.pem</code> or a key at a non-standard path, pass it explicitly with <code>-i</code> (or <code>--key</code>):
+        <div class="codeblock" style="margin-top:10px;">
+            <div class="codeblock-header">Shell</div>
+            <pre>neo init ubuntu@1.2.3.4 -i ~/keys/server.pem</pre>
+        </div>
+        The key must be <strong>unencrypted</strong> (no passphrase) — if it has one, run <code>ssh-add ~/keys/server.pem</code> first, then <code>neo init</code> without <code>-i</code>. With no key available, Neo prompts for a password.
+    </div>
+
+    <div class="callout callout-info">
+        <strong>Activation (free, one-time)</strong>
+        The first time you run a command, Neo asks for your email and issues a free license key instantly, then continues. You can also run <code>neo activate</code> up front. One key works on unlimited servers and devices.
+    </div>
 </section>
 
 <!-- .NEO.YML CONFIG -->
