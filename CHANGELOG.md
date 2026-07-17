@@ -4,7 +4,7 @@ All notable changes to Neo will be documented here.
 
 ---
 
-## v0.21.0 — 2026-07-17
+## v0.21.5 — 2026-07-17
 
 ### New Features
 
