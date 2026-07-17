@@ -54,16 +54,13 @@ See the [neo-skill README](https://github.com/solutionforest/neo-skill) for per-
 
 ## Installation
 
+macOS and Linux:
+
 ```bash
-# macOS
-brew install vxero/tap/neo
-
-# Linux / macOS (curl)
 curl -fsSL https://get.vxero.dev/neo | sh
-
-# Build local binaries using Dockerized Go
-cd neo && make build
 ```
+
+Building from source? See [Build With Docker](#build-with-docker) below.
 
 ## Build With Docker
 
