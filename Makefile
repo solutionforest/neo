@@ -4,17 +4,14 @@ IMAGE   ?= vxero/neo
 GO_IMAGE ?= golang:1.24-alpine
 DEV_LICENSE_BYPASS ?= false
 
-# Staging endpoints — injected at build time for staging binaries
-STAGING_LICENSE_URL  := https://neo-staging.vxero.dev/api/license
-STAGING_API_BASE_URL := https://neo-staging.vxero.dev/api
-STAGING_INSTALL_URL  := https://neo-staging.vxero.dev/neo
+# Staging base URL — every endpoint derives from this single value.
+# Override via env: make build-staging STAGING_BASE_URL=https://your-host
+STAGING_BASE_URL ?= https://neo-staging.vxero.dev
 
-# Auto-detect staging: if VERSION contains "-staging", bake in the staging URLs.
+# Auto-detect staging: if VERSION contains "-staging", bake in the staging base URL.
 ifneq (,$(findstring -staging,$(VERSION)))
 LDFLAGS := -s -w -X main.version=$(VERSION) \
-	-X github.com/vxero/neo/internal/license.DefaultLicenseAPIURL=$(STAGING_LICENSE_URL) \
-	-X github.com/vxero/neo/internal/config.DefaultAPIBaseURL=$(STAGING_API_BASE_URL) \
-	-X github.com/vxero/neo/internal/config.DefaultInstallURL=$(STAGING_INSTALL_URL)
+	-X github.com/vxero/neo/internal/config.DefaultBaseURL=$(STAGING_BASE_URL)
 else
 LDFLAGS := -s -w -X main.version=$(VERSION) \
 	-X github.com/vxero/neo/internal/license.DevLicenseBypass=$(DEV_LICENSE_BYPASS)

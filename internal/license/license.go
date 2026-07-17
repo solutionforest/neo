@@ -11,11 +11,9 @@ import (
 	"runtime"
 	"strings"
 	"time"
-)
 
-// DefaultLicenseAPIURL is the production license validation endpoint.
-// Override at build time via: -ldflags "-X github.com/vxero/neo/internal/license.DefaultLicenseAPIURL=..."
-var DefaultLicenseAPIURL = "https://neo.vxero.dev/api/license"
+	"github.com/vxero/neo/internal/config"
+)
 
 // DevLicenseBypass allows local development builds to skip activation without
 // a live license. Intended only for local/staging testing.
@@ -46,7 +44,7 @@ func LicenseAPIURL() string {
 	if v := os.Getenv("NEO_LICENSE_URL"); v != "" {
 		return v
 	}
-	return DefaultLicenseAPIURL
+	return config.APIBaseURL() + "/license"
 }
 
 // MachineID returns a stable fingerprint for this machine (hostname + OS + arch).

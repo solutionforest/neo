@@ -99,6 +99,22 @@ YAML manifests embedded in the binary via `//go:embed`. Each template defines:
 - **styles.go** — lipgloss color constants
 - **progress.go** — progress bar + status bullets
 
+## Remote Endpoints (`internal/config/config.go`)
+
+All neo-cms endpoints derive from a **single base URL** — the only hardcoded host in `.go`:
+
+- `DefaultBaseURL = "https://neo.vxero.dev"` — override at build time with
+  `-ldflags "-X github.com/vxero/neo/internal/config.DefaultBaseURL=..."` (Makefile does this
+  automatically when `VERSION` contains `-staging`), or at runtime with the `NEO_BASE` env var.
+- Derived (each also individually overridable by env): `APIBaseURL()` = `<base>/api` (`NEO_API_BASE_URL`),
+  license = `<base>/api/license` (`NEO_LICENSE_URL`), `InstallURL()` = `<base>/neo` (`NEO_INSTALL_URL`),
+  `VersionURL()` = `<base>/api/neo/version.json` (`NEO_VERSION_URL`), `DownloadBaseURL()` =
+  `<base>/api/download` (`NEO_DOWNLOAD_URL`).
+- External hosts (own env var, not derived): `AgentInstallURL()` (`NEO_AGENT_INSTALL_URL`,
+  default `get.vxero.dev/agent`), `DockerInstallURL()` (`NEO_DOCKER_INSTALL_URL`, default `get.docker.com`).
+
+Point the whole CLI at another environment with one var: `NEO_BASE=https://neo-staging.vxero.dev neo ...`.
+
 ## Self-Update
 
 - `neo version` — shows current version, checks `version.json` on the download server for updates

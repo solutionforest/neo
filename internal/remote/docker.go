@@ -39,7 +39,7 @@ func (d *Docker) IsInstalled() bool {
 // For non-root users it also adds them to the docker group so subsequent
 // sudo docker commands work without re-login.
 func (d *Docker) Install() error {
-	if err := d.exec.RunQuiet(fmt.Sprintf("curl -fsSL %s | sh", config.DefaultDockerInstallURL)); err != nil {
+	if err := d.exec.RunQuiet(fmt.Sprintf("curl -fsSL %s | sh", config.DockerInstallURL())); err != nil {
 		return err
 	}
 	if user := d.exec.User(); user != "root" {
