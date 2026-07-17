@@ -36,6 +36,22 @@ and gotchas — instead of guessing.
 The skills teach an agent the same things a fluent neo user knows, so it can init
 servers, write `.neo.yml`, deploy, and troubleshoot as well as it knows the tool.
 
+**Quick install** (auto-detects Claude Code, Cursor, Copilot, Windsurf, Cline):
+
+```bash
+git clone https://github.com/solutionforest/neo-skill.git
+cd neo-skill
+./install.sh /path/to/your/project
+```
+
+Claude Code users can add it as a plugin instead:
+
+```bash
+claude plugin add /path/to/neo-skill
+```
+
+See the [neo-skill README](https://github.com/solutionforest/neo-skill) for per-tool manual steps.
+
 ## Installation
 
 ```bash
