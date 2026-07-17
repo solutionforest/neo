@@ -13,9 +13,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    name: Test
+    runs-on: self-hosted
+    timeout-minutes: 30
+    env:
+      BUILDER_IMAGE: neo-builder:${{ github.sha }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Build neo-builder image
+        run: docker build --tag "${BUILDER_IMAGE}" .
+
+      - name: Run tests in the builder image
+        run: docker run --rm --entrypoint go "${BUILDER_IMAGE}" test ./...
+
   release:
     name: Build and publish
-    runs-on: epar-docker-dind-gitea-ubuntu
+    needs: test
+    runs-on: self-hosted
     timeout-minutes: 30
     env:
       BUILDER_IMAGE: neo-builder:${{ github.sha }}
@@ -68,9 +88,6 @@ jobs:
 
       - name: Build neo-builder image
         run: docker build --tag "${BUILDER_IMAGE}" .
-
-      - name: Run tests in the builder image
-        run: docker run --rm --entrypoint go "${BUILDER_IMAGE}" test ./...
 
       - name: Start neo-builder
         shell: bash
