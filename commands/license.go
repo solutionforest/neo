@@ -277,7 +277,9 @@ func runLicenseDeactivate() error {
 	cfg.LicenseKey = ""
 	config.Save(cfg) //nolint:errcheck
 	ui.Success("License deactivated")
-	return nil
+	// Return to the activation screen — enter an email again to re-activate,
+	// or a different one to switch account (matches the dashboard flow).
+	return runActivate(nil)
 }
 
 // openBrowser opens a URL in the user's default browser.
