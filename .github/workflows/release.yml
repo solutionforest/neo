@@ -28,7 +28,7 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -171,10 +171,10 @@ jobs:
             fi
           done
 
-          (
-            cd "${release_dir}"
-            sha256sum neo-* > SHA256SUMS
-          )
+          for file in "${release_dir}"/neo-*; do
+            checksum="$(sha256sum "${file}" | awk '{print $1}')"
+            printf '%s  %s\n' "${checksum}" "$(basename "${file}")"
+          done > SHA256SUMS
 
       - name: Publish GitHub Release
         env:
@@ -187,7 +187,7 @@ jobs:
           set -euo pipefail
 
           release_dir="dist/${VERSION}"
-          assets=("${release_dir}"/neo-* "${release_dir}/SHA256SUMS")
+          assets=("${release_dir}"/neo-* SHA256SUMS)
 
           if gh release view "${TAG}" >/dev/null 2>&1; then
             gh release upload "${TAG}" "${assets[@]}" --clobber
