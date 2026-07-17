@@ -45,8 +45,8 @@ func BaseURL() string { return envOr("NEO_BASE", DefaultBaseURL) }
 // APIBaseURL returns the API base (<base>/api), overridable via NEO_API_BASE_URL.
 func APIBaseURL() string { return envOr("NEO_API_BASE_URL", BaseURL()+"/api") }
 
-// InstallURL returns the curl|sh install-script URL (<base>/neo), overridable via NEO_INSTALL_URL.
-func InstallURL() string { return envOr("NEO_INSTALL_URL", BaseURL()+"/neo") }
+// InstallURL returns the curl|sh install-script URL (<base>), overridable via NEO_INSTALL_URL.
+func InstallURL() string { return envOr("NEO_INSTALL_URL", BaseURL()) }
 
 // VersionURL returns the version-check URL, overridable via NEO_VERSION_URL.
 func VersionURL() string { return envOr("NEO_VERSION_URL", APIBaseURL()+"/neo/version.json") }
