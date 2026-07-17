@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"runtime"
 	"time"
 
@@ -17,9 +18,9 @@ import (
 )
 
 type remoteVersion struct {
-	Version    string            `json:"version"`
-	Released   string            `json:"released"`
-	Checksums  map[string]string `json:"checksums,omitempty"` // "darwin-arm64" → "sha256:..."
+	Version   string            `json:"version"`
+	Released  string            `json:"released"`
+	Checksums map[string]string `json:"checksums,omitempty"` // "darwin-arm64" → "sha256:..."
 }
 
 func newVersionCmd() *cobra.Command {
@@ -92,7 +93,9 @@ func runUpgrade() error {
 	// Determine download URL
 	goos := runtime.GOOS
 	goarch := runtime.GOARCH
-	downloadURL := fmt.Sprintf("%s/%s/%s", config.DownloadBaseURL(), goos, goarch)
+	// Pin the exact version we just checked so the binary always matches the
+	// checksums from version.json (the server's "latest" pointer could move).
+	downloadURL := fmt.Sprintf("%s/%s/%s?version=%s", config.DownloadBaseURL(), goos, goarch, latest.Version)
 
 	// Find current binary path
 	execPath, err := os.Executable()
@@ -203,41 +206,65 @@ func downloadBinary(url string) (string, error) {
 }
 
 func replaceBinary(target, source string) error {
-	// Read new binary
+	// Fast path: replace in place. Works when we own the install dir (Homebrew,
+	// ~/bin, or running as root).
+	err := replaceBinaryDirect(target, source)
+	if err == nil {
+		return nil
+	}
+	// A curl-installed neo usually lives in a root-owned dir like
+	// /usr/local/bin, so a non-root `neo upgrade` hits permission denied.
+	// Retry with sudo instead of failing and forcing a re-install.
+	if os.IsPermission(err) && runtime.GOOS != "windows" {
+		return replaceBinaryWithSudo(target, source)
+	}
+	return err
+}
+
+// replaceBinaryDirect atomically swaps the binary using only the current user's
+// permissions. Returns a raw (unwrapped) error so os.IsPermission can detect
+// the elevation case.
+func replaceBinaryDirect(target, source string) error {
 	data, err := os.ReadFile(source)
 	if err != nil {
-		return fmt.Errorf("read new binary: %w", err)
+		return err
 	}
-
-	// Get permissions of current binary
 	info, err := os.Stat(target)
 	if err != nil {
-		return fmt.Errorf("stat current binary: %w", err)
+		return err
 	}
 
-	// Write atomically: write to temp next to target, then rename
 	tmpPath := target + ".new"
 	if err := os.WriteFile(tmpPath, data, info.Mode()); err != nil {
-		// May need elevated permissions
-		return fmt.Errorf("write new binary (may need sudo): %w", err)
+		return err
 	}
 
-	// Rename old binary as backup
 	backupPath := target + ".old"
 	os.Remove(backupPath) // ignore error
 	if err := os.Rename(target, backupPath); err != nil {
 		os.Remove(tmpPath)
-		return fmt.Errorf("backup current binary: %w", err)
+		return err
 	}
-
-	// Move new binary into place
 	if err := os.Rename(tmpPath, target); err != nil {
-		// Try to restore backup
-		os.Rename(backupPath, target)
-		return fmt.Errorf("install new binary: %w", err)
+		os.Rename(backupPath, target) // restore
+		return err
 	}
-
-	// Clean up backup
 	os.Remove(backupPath)
+	return nil
+}
+
+// replaceBinaryWithSudo installs the new binary into a root-owned location,
+// prompting for the sudo password if needed. Uses install(1) (present on macOS
+// and Linux) to copy + set mode in one step.
+func replaceBinaryWithSudo(target, source string) error {
+	fmt.Printf("\n  %s is not writable — installing with sudo (you may be prompted for your password)...\n",
+		ui.Bold.Render(target))
+	cmd := exec.Command("sudo", "install", "-m", "0755", source, target)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("sudo install failed: %w", err)
+	}
 	return nil
 }
