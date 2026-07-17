@@ -20,6 +20,10 @@ All notable changes to Neo will be documented here.
 
 ### Bug Fixes
 
+- **License API errors surface cleanly** — The CLI now sends `Accept: application/json` on license requests, so a server-side validation error (e.g. a rejected email) comes back as JSON with the real message instead of an unparseable HTML redirect.
+
+- **Default Caddy welcome page is no longer indexable** — The "server ready" catch-all page served for un-configured domains now carries `<meta name="robots" content="noindex,nofollow">` so search engines don't index bare server IPs. (Run `neo stealth` to remove the page entirely.)
+
 - **`neo upgrade` now works for curl-installed binaries** — The self-updater wrote the new binary directly to the install path, which fails with "permission denied" when neo lives in a root-owned directory like `/usr/local/bin` (the default `curl | sh` location) — so upgrading silently failed and you had to re-run the install script. Neo now falls back to `sudo install` (prompting for your password) when the target isn't writable. It also pins the download to the exact version it just checked, so the binary can never mismatch the checksums served by a briefly-stale `version.json`.
 
 - **Ctrl+C in a menu no longer corrupts the terminal** — Pressing Ctrl+C inside any interactive menu (the dashboard and every `ui.Select` prompt) called `os.Exit` while the terminal was still in raw mode, skipping the deferred restore. The shell was left with output line-wrapping broken (each line "staircasing" to the right) until you ran `reset`. Neo now restores cooked mode before exiting, and exits `130` (128 + SIGINT) as expected.

@@ -47,6 +47,18 @@ func LicenseAPIURL() string {
 	return config.APIBaseURL() + "/license"
 }
 
+// postForm POSTs a form and sets Accept: application/json so the server returns
+// JSON errors (e.g. 422 validation) instead of an HTML redirect.
+func postForm(client *http.Client, apiURL string, form url.Values) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPost, apiURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	return client.Do(req)
+}
+
 // MachineID returns a stable fingerprint for this machine (hostname + OS + arch).
 func MachineID() string {
 	hostname, _ := os.Hostname()
@@ -64,7 +76,7 @@ func Register(email string) (*Status, error) {
 	form.Set("email", email)
 	form.Set("machine_id", MachineID())
 
-	resp, err := http.PostForm(apiURL, form)
+	resp, err := postForm(http.DefaultClient, apiURL, form)
 	if err != nil {
 		return nil, fmt.Errorf("cannot reach license server: %w", err)
 	}
@@ -107,7 +119,7 @@ func Activate(key string) (*Status, error) {
 	form.Set("license_key", key)
 	form.Set("machine_id", MachineID())
 
-	resp, err := http.PostForm(apiURL, form)
+	resp, err := postForm(http.DefaultClient, apiURL, form)
 	if err != nil {
 		return nil, fmt.Errorf("cannot reach license server: %w", err)
 	}
@@ -149,7 +161,7 @@ func Deactivate(key string) error {
 	form.Set("license_key", key)
 	form.Set("machine_id", MachineID())
 
-	resp, err := http.PostForm(apiURL, form)
+	resp, err := postForm(http.DefaultClient, apiURL, form)
 	if err != nil {
 		return fmt.Errorf("cannot reach license server: %w", err)
 	}
@@ -192,7 +204,7 @@ func Check(licenseKey string) *Status {
 	form.Set("license_key", licenseKey)
 	form.Set("machine_id", MachineID())
 
-	resp, err := client.PostForm(apiURL, form)
+	resp, err := postForm(client, apiURL, form)
 	if err != nil {
 		// Network error — fall back to any same-server cache so we don't block.
 		if cached := loadCache(); cached != nil && cached.Valid {
