@@ -3,13 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Semantic version to release (for example, 0.20.0)"
-        required: true
-        type: string
+      - "v[0-9]*"
 
 permissions:
   contents: write
@@ -21,7 +15,7 @@ concurrency:
 jobs:
   release:
     name: Build and publish
-    runs-on: ubuntu-latest
+    runs-on: epar-docker-dind-gitea-ubuntu
     timeout-minutes: 30
     env:
       BUILDER_IMAGE: neo-builder:${{ github.sha }}
@@ -34,26 +28,15 @@ jobs:
 
       - name: Resolve release metadata
         id: release
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            version="${GITHUB_REF_NAME#v}"
-          else
-            version="${INPUT_VERSION#v}"
-          fi
+          # Triggered only by a pushed tag (see `on.push.tags`).
+          version="${GITHUB_REF_NAME#v}"
 
           if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z._-]*)?$ ]]; then
-            echo "Invalid release version: ${version}" >&2
-            exit 1
-          fi
-
-          tag="v${version}"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "${tag}" ]]; then
-            echo "Release tags must use the v<semver> format; got ${GITHUB_REF_NAME}" >&2
+            echo "Release tags must be v<semver> (e.g. v0.20.0); got ${GITHUB_REF_NAME}" >&2
             exit 1
           fi
 
@@ -64,7 +47,7 @@ jobs:
 
           {
             echo "version=${version}"
-            echo "tag=${tag}"
+            echo "tag=${GITHUB_REF_NAME}"
             echo "prerelease=${prerelease}"
           } >> "${GITHUB_OUTPUT}"
 

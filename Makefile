@@ -19,7 +19,7 @@ endif
 HOSTOS ?= $(shell uname -s | sed -e 's/Darwin/darwin/' -e 's/Linux/linux/' -e 's/MINGW.*/windows/' -e 's/MSYS.*/windows/' -e 's/CYGWIN.*/windows/')
 HOSTARCH ?= $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/amd64/amd64/' -e 's/arm64/arm64/' -e 's/aarch64/arm64/')
 
-.PHONY: build build-dev build-staging build-all build-neotest build-sandbox-test install clean test fmt docker-build docker-run image-build sandbox
+.PHONY: build build-dev build-staging build-all release-local build-neotest build-sandbox-test install clean test fmt docker-build docker-run image-build sandbox
 
 DOCKER_GO = docker run --rm -v "$(CURDIR):/src" -w /src $(GO_IMAGE)
 GO_BIN = /usr/local/go/bin/go
@@ -42,6 +42,11 @@ build-all:
 		CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 $(GO_BIN) build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-linux-amd64 ./cmd/neo && \
 		CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 $(GO_BIN) build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-linux-arm64 ./cmd/neo && \
 		CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO_BIN) build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-windows-amd64.exe ./cmd/neo'
+
+# Mirror the release CI (build neo-builder image → test → build all platforms →
+# verify) locally, so failures are caught before pushing a version tag.
+release-local:
+	scripts/release-local.sh $(VERSION)
 
 clean:
 	rm -rf bin dist
