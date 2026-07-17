@@ -24,6 +24,10 @@ All notable changes to Neo will be documented here.
 
 - **`neo plus` → `neo license`.** License management moved to `neo license` (`activate`/`status`/`deactivate`); `neo plus` remains as a hidden alias. All paid-tier upsell UI (pricing, upgrade prompts, expiry banners) has been removed, and the marketing site and docs are reframed around the free model.
 
+### Bug Fixes
+
+- **`neo init` as a non-root (sudo) user no longer fails with `init state: Process exited with status 1`.** State is stored in the root-owned `/etc/neo/`, but the state write used a plain SCP with no privilege escalation, so connecting as e.g. `ubuntu` hit "permission denied". Reading and writing `/etc/neo/state.json` now elevate with `sudo` when the SSH user isn't root (via `WriteFileElevated` / the new `ReadFileElevated`), so init, deploy, and every state-reading command work as any sudo-capable user.
+
 ---
 
 ## v0.19.0 — 2026-06-05

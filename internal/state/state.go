@@ -171,9 +171,11 @@ func NewState() *State {
 	}
 }
 
-// Load reads the state from the remote server over SSH.
+// Load reads the state from the remote server over SSH. It reads with elevation
+// so it works whether we connect as root or a sudo-capable non-root user, since
+// /etc/neo/state.json is root-owned.
 func Load(exec *ssh.Executor) (*State, error) {
-	data, err := exec.ReadFile(RemotePath)
+	data, err := exec.ReadFileElevated(RemotePath)
 	if err != nil {
 		return nil, fmt.Errorf("read remote state: %w", err)
 	}
@@ -198,10 +200,19 @@ func Save(exec *ssh.Executor, st *State) error {
 		return fmt.Errorf("marshal state: %w", err)
 	}
 
-	// Ensure directory exists with restrictive permissions
-	exec.RunQuiet("mkdir -p /etc/neo && chmod 700 /etc/neo")
+	// Ensure /etc/neo exists with restrictive permissions. Elevate with sudo
+	// when connected as a non-root (but sudo-capable) user, since /etc/neo is
+	// root-owned.
+	mkdir := "mkdir -p /etc/neo && chmod 700 /etc/neo"
+	if exec.User() != "root" {
+		mkdir = "sudo " + mkdir
+	}
+	exec.RunQuiet(mkdir) //nolint:errcheck
 
-	return exec.WriteFile(RemotePath, data, 0600)
+	// WriteFileElevated stages the file in /tmp and sudo-moves it into place
+	// for non-root users; for root it writes directly. Plain WriteFile would
+	// fail with "permission denied" on the root-owned /etc/neo.
+	return exec.WriteFileElevated(RemotePath, data, 0600)
 }
 
 // Init creates a new initialized state on the remote server.
