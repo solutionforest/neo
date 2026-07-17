@@ -362,8 +362,15 @@ func resolveServer(cfg *config.Config) (*config.Server, error) {
 		return cfg.CurrentServer()
 	}
 
-	// Direct host format (e.g. root@203.0.113.10) — no config lookup needed
+	// Direct host format (e.g. root@203.0.113.10). Reuse a configured server
+	// with the same host so its stored key/port apply; otherwise fall back to
+	// an ad-hoc server that relies on default key auth.
 	if strings.Contains(name, "@") {
+		for _, s := range cfg.Servers {
+			if s.Host == name {
+				return &s, nil
+			}
+		}
 		srv := config.Server{Name: name, Host: name, Port: 22}
 		return &srv, nil
 	}
