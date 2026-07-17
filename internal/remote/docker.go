@@ -429,6 +429,49 @@ func (d *Docker) RemoveVolume(name string) error {
 	return d.exec.RunQuiet(fmt.Sprintf("%s volume rm %s", d.bin(), ssh.ShellQuote(name)))
 }
 
+// PruneVolumes removes all unused (dangling) Docker volumes. After neo's
+// containers are removed, its data volumes are dangling — used by full teardown.
+func (d *Docker) PruneVolumes() error {
+	return d.exec.RunQuiet(fmt.Sprintf("%s volume prune -f", d.bin()))
+}
+
+// RemoveNetwork removes a Docker network (best-effort; ignores "not found").
+func (d *Docker) RemoveNetwork(name string) error {
+	return d.exec.RunQuiet(fmt.Sprintf("%s network rm %s 2>/dev/null || true", d.bin(), ssh.ShellQuote(name)))
+}
+
+// RemoveNeoContainers force-removes every neo-managed container
+// (app-*, svc-*, and neo-caddy). Best-effort — a no-op if none exist.
+func (d *Docker) RemoveNeoContainers() error {
+	bin := d.bin()
+	return d.exec.RunQuiet(fmt.Sprintf(
+		"ids=$(%s ps -aq --filter name=app- --filter name=svc- --filter name=neo-caddy); [ -n \"$ids\" ] && %s rm -f $ids || true",
+		bin, bin,
+	))
+}
+
+// Uninstall removes the Docker engine via the server's package manager.
+// pkgMgr is "apt" or "dnf". Best-effort; used only by a full server teardown.
+func (d *Docker) Uninstall(pkgMgr string) error {
+	var cmd string
+	switch pkgMgr {
+	case "apt":
+		cmd = "systemctl stop docker docker.socket 2>/dev/null; " +
+			"DEBIAN_FRONTEND=noninteractive apt-get remove -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker.io 2>/dev/null; " +
+			"apt-get autoremove -y -qq 2>/dev/null; rm -rf /var/lib/docker /var/lib/containerd"
+	case "dnf":
+		cmd = "systemctl stop docker docker.socket 2>/dev/null; " +
+			"dnf remove -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null; " +
+			"rm -rf /var/lib/docker /var/lib/containerd"
+	default:
+		return fmt.Errorf("unknown package manager %q", pkgMgr)
+	}
+	if d.exec.User() != "root" {
+		cmd = "sudo sh -c " + ssh.ShellQuote(cmd)
+	}
+	return d.exec.RunQuiet(cmd)
+}
+
 // Stats returns a one-shot snapshot of container resource usage.
 func (d *Docker) Stats(format string) (string, error) {
 	cmd := fmt.Sprintf("%s stats --no-stream --format %s 2>/dev/null", d.bin(), ssh.ShellQuote(format))

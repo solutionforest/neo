@@ -99,6 +99,35 @@ func crowdsecUpdateSteps(osID string) []string {
 	)
 }
 
+// crowdsecUninstallSteps returns the shell steps to stop and remove CrowdSec +
+// the nftables bouncer for the given distro. Best-effort (each step tolerant).
+func crowdsecUninstallSteps(osID string) []string {
+	if isRPMFamily(osID) {
+		return []string{
+			"systemctl disable --now crowdsec crowdsec-firewall-bouncer 2>/dev/null || true",
+			"dnf remove -y crowdsec crowdsec-firewall-bouncer-nftables 2>/dev/null || true",
+		}
+	}
+	return []string{
+		"systemctl disable --now crowdsec crowdsec-firewall-bouncer 2>/dev/null || true",
+		"DEBIAN_FRONTEND=noninteractive apt-get remove -y -qq crowdsec crowdsec-firewall-bouncer-nftables 2>/dev/null || true",
+	}
+}
+
+// Uninstall stops and removes CrowdSec and the nftables bouncer. Best-effort;
+// elevates with sudo for non-root sessions. Used by a full server teardown.
+func (c *CrowdSec) Uninstall() error {
+	osID := c.detectOSID()
+	sudo := ""
+	if c.exec.User() != "root" {
+		sudo = "sudo "
+	}
+	for _, step := range crowdsecUninstallSteps(osID) {
+		c.exec.RunQuiet(sudo + step) //nolint:errcheck
+	}
+	return nil
+}
+
 // Update upgrades the CrowdSec engine and nftables bouncer to their latest
 // packaged versions, refreshes the hub content (community scenarios, parsers,
 // and blocklists), then restarts the services. Assumes CrowdSec is already

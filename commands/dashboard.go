@@ -431,6 +431,7 @@ func tuiServersMenu(cfg *config.Config) error {
 		if len(cfg.Servers) > 0 {
 			opts = append(opts, ui.SelectOption{"SSH into Server", "ssh"})
 			opts = append(opts, ui.SelectOption{ui.Red.Render("Remove Server"), "remove"})
+			opts = append(opts, ui.SelectOption{ui.Red.Render("Destroy Server Setup"), "destroy"})
 		}
 		opts = append(opts, ui.SelectOption{"Back", "back"})
 
@@ -457,10 +458,40 @@ func tuiServersMenu(cfg *config.Config) error {
 			if err := tuiRemoveServer(cfg); err != nil {
 				return err
 			}
+		case "destroy":
+			if err := tuiDestroyServer(cfg); err != nil {
+				ui.Error(err.Error())
+			}
 		case "back", "":
 			return nil
 		}
 	}
+}
+
+// tuiDestroyServer picks a server (when more than one) and runs the teardown.
+func tuiDestroyServer(cfg *config.Config) error {
+	name := cfg.Current
+	if len(cfg.Servers) > 1 {
+		opts := make([]ui.SelectOption, 0, len(cfg.Servers))
+		for _, srv := range cfg.Servers {
+			opts = append(opts, ui.SelectOption{Label: srv.Name + "  " + ui.Faint.Render(srv.Host), Value: srv.Name})
+		}
+		opts = append(opts, ui.SelectOption{Label: "Cancel", Value: ""})
+		name = ui.Select("  "+ui.Bold.Render("Destroy which server?"), opts)
+	}
+	if name == "" {
+		return nil
+	}
+	srv, ok := cfg.Servers[name]
+	if !ok {
+		return fmt.Errorf("server %q not found", name)
+	}
+	exec, err := connectSSH(&srv)
+	if err != nil {
+		return fmt.Errorf("connect to %s: %w", srv.Host, err)
+	}
+	defer exec.Close()
+	return runDestroy(cfg, &srv, exec)
 }
 
 // tuiAddServer prompts for host and runs the init flow.
