@@ -63,6 +63,41 @@ func (c *CrowdSec) Install(w io.Writer) error {
 	return nil
 }
 
+// Update upgrades the CrowdSec engine and nftables bouncer to their latest
+// packaged versions, refreshes the hub content (community scenarios, parsers,
+// and blocklists), then restarts the services. Assumes CrowdSec is already
+// installed and the repo added by Install is present.
+func (c *CrowdSec) Update(w io.Writer) error {
+	osID, _ := c.exec.Run("grep '^ID=' /etc/os-release | cut -d= -f2 | tr -d '\"'")
+	osID = strings.TrimSpace(strings.ToLower(osID))
+
+	var steps []string
+	switch osID {
+	case "fedora", "centos", "rhel", "almalinux", "rocky":
+		steps = []string{
+			"dnf install -y --refresh crowdsec crowdsec-firewall-bouncer-nftables",
+		}
+	default:
+		steps = []string{
+			"apt-get update",
+			"DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade crowdsec crowdsec-firewall-bouncer-nftables",
+		}
+	}
+	// Refresh community hub content, then restart to apply everything.
+	steps = append(steps,
+		"cscli hub update",
+		"cscli hub upgrade",
+		"systemctl restart crowdsec crowdsec-firewall-bouncer",
+	)
+
+	for _, step := range steps {
+		if err := c.exec.Stream(step, w); err != nil {
+			return fmt.Errorf("update step failed: %w", err)
+		}
+	}
+	return nil
+}
+
 // ServiceStatus returns the systemd active state of the crowdsec service.
 func (c *CrowdSec) ServiceStatus() string {
 	out, err := c.exec.Run("systemctl is-active crowdsec 2>/dev/null || true")

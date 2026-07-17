@@ -4,6 +4,16 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.21.0 — 2026-07-17
+
+### New Features
+
+- **`neo caddy update` — patch the reverse proxy** — Pulls the newest `caddy:2-alpine` and recreates the `neo-caddy` container so security fixes actually land on running servers (previously the Caddy image was only pulled once, at `neo init`, and never refreshed). Routes and TLS certificates are preserved through the persistent data/config volumes and `--resume`, so the only cost is a brief restart. If the proxy is a custom DNS-enabled build (from `neo caddy dns`), the image is rebuilt from the stored Dockerfile with a fresh base layer instead, and the DNS credentials env file is re-attached.
+
+- **`neo firewall update` — keep CrowdSec current** — Upgrades the CrowdSec engine and nftables bouncer via the server's package manager (`apt`/`dnf`), refreshes the community hub content (`cscli hub update && cscli hub upgrade` — scenarios, parsers, blocklists), then restarts the services. Complements `neo firewall install`; no-ops with a clear message if CrowdSec isn't installed.
+
+---
+
 ## v0.20.0 — 2026-07-07
 
 ### Breaking Changes

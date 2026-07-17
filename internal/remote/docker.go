@@ -446,6 +446,20 @@ func (d *Docker) Build(contextDir, dockerfile, tag string, w io.Writer) error {
 	return d.exec.Stream(cmd, w)
 }
 
+// BuildPull builds an image, always pulling a newer base layer if available.
+// Used for security refreshes where the cached base image must not be reused.
+func (d *Docker) BuildPull(contextDir, dockerfile, tag string, w io.Writer) error {
+	cmd := fmt.Sprintf("DOCKER_BUILDKIT=1 %s build --pull -t %s -f %s %s", d.bin(), ssh.ShellQuote(tag), ssh.ShellQuote(dockerfile), ssh.ShellQuote(contextDir))
+	return d.exec.Stream(cmd, w)
+}
+
+// ImageOf returns the image a container was created from, or "" if the
+// container does not exist.
+func (d *Docker) ImageOf(container string) string {
+	out, _ := d.exec.Run(fmt.Sprintf("%s inspect -f '{{.Config.Image}}' %s 2>/dev/null || true", d.bin(), ssh.ShellQuote(container)))
+	return strings.TrimSpace(out)
+}
+
 // LoadImage loads a Docker image by streaming a tar archive into docker load.
 func (d *Docker) LoadImage(r io.Reader) (string, error) {
 	return d.exec.StreamInput(d.bin()+" load", r)
