@@ -261,6 +261,21 @@ neo domain my-app --temp</pre>
         <strong>Tip</strong>
         Neo auto-reads <code>docker-compose.yml</code> and <code>.env</code> files. If your project already has these, <code>neo deploy .</code> will extract env vars, ports, and service config automatically.
     </div>
+
+    <div class="callout callout-info">
+        <strong>SSH access &amp; key files</strong>
+        Neo connects over SSH using, in order: <code>ssh-agent</code>, then <code>~/.ssh/id_ed25519</code> / <code>~/.ssh/id_rsa</code>. For a cloud <code>.pem</code> or a key at a non-standard path, pass it explicitly with <code>-i</code> (or <code>--key</code>):
+        <div class="codeblock" style="margin-top:10px;">
+            <div class="codeblock-header">Shell</div>
+            <pre>neo init ubuntu@1.2.3.4 -i ~/keys/server.pem</pre>
+        </div>
+        The key must be <strong>unencrypted</strong> (no passphrase) — if it has one, run <code>ssh-add ~/keys/server.pem</code> first, then <code>neo init</code> without <code>-i</code>. With no key available, Neo prompts for a password.
+    </div>
+
+    <div class="callout callout-info">
+        <strong>Activation (free, one-time)</strong>
+        The first time you run a command, Neo asks for your email and issues a free license key instantly, then continues. You can also run <code>neo activate</code> up front. One key works on unlimited servers and devices.
+    </div>
 </section>
 
 <!-- .NEO.YML CONFIG -->
@@ -947,6 +962,8 @@ neo key remove 2</pre>
         <tr><td><code>neo</code></td><td>Interactive TUI dashboard</td></tr>
         <tr><td><code>neo init &lt;host&gt;</code></td><td>Initialize a fresh server (Docker + Caddy)</td></tr>
         <tr><td><code>neo attach &lt;host&gt;</code></td><td>Add an already-initialized server to local config (no setup, no overwrite)</td></tr>
+        <tr><td><code>neo config init</code></td><td>Scaffold a new <code>.neo.yml</code> for the project (<code>--yes</code> for defaults)</td></tr>
+        <tr><td><code>neo config generate</code></td><td>Generate <code>.neo.yml</code> from <code>docker-compose.yml</code></td></tr>
         <tr><td><code>neo deploy [path]</code></td><td>Build and deploy a Dockerfile project</td></tr>
         <tr><td><code>neo list</code></td><td>List apps on the server</td></tr>
         <tr><td><code>neo logs &lt;app&gt;</code></td><td>Stream container logs</td></tr>
@@ -971,7 +988,7 @@ neo key remove 2</pre>
         <tr><td><code>neo key remove &lt;number&gt;</code></td><td>Revoke a key by its list number</td></tr>
         <tr><td><code>neo version</code></td><td>Show version, check for updates</td></tr>
         <tr><td><code>neo upgrade</code></td><td>Self-update to latest version</td></tr>
-        <tr><td><code>neo backup &lt;app&gt;</code></td><td>Backup data volumes <span class="badge badge-new">Neo+</span></td></tr>
+        <tr><td><code>neo backup &lt;app&gt;</code></td><td>Backup data volumes</td></tr>
         <tr><td><code>neo volumes</code></td><td>List Docker volumes on server</td></tr>
     </table>
 

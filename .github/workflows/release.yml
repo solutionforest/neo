@@ -1,0 +1,193 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: epar-docker-dind-gitea-ubuntu
+    timeout-minutes: 30
+    env:
+      BUILDER_IMAGE: neo-builder:${{ github.sha }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve release metadata
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Triggered only by a pushed tag (see `on.push.tags`).
+          version="${GITHUB_REF_NAME#v}"
+
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z._-]*)?$ ]]; then
+            echo "Release tags must be v<semver> (e.g. v0.20.0); got ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
+          prerelease=false
+          if [[ "${version}" == *-* ]]; then
+            prerelease=true
+          fi
+
+          {
+            echo "version=${version}"
+            echo "tag=${GITHUB_REF_NAME}"
+            echo "prerelease=${prerelease}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Guard existing release tag
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git fetch --quiet --no-tags origin "refs/tags/${TAG}:refs/tags/${TAG}" 2>/dev/null; then
+            tagged_commit="$(git rev-list --max-count=1 "${TAG}")"
+            if [[ "${tagged_commit}" != "${GITHUB_SHA}" ]]; then
+              echo "${TAG} already points to ${tagged_commit}; refusing to replace it with ${GITHUB_SHA}" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Build neo-builder image
+        run: docker build --tag "${BUILDER_IMAGE}" .
+
+      - name: Run tests in the builder image
+        run: docker run --rm --entrypoint go "${BUILDER_IMAGE}" test ./...
+
+      - name: Start neo-builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          docker run --detach --rm \
+            --name neo-builder \
+            --publish 127.0.0.1:9100:9100 \
+            --volume "${PWD}/dist:/output" \
+            "${BUILDER_IMAGE}"
+
+          for _ in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:9100/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          docker logs neo-builder
+          echo "neo-builder did not become healthy" >&2
+          exit 1
+
+      - name: Build release binaries
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          http_code="$(curl --silent --show-error \
+            --output build-response.json \
+            --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' \
+            --data "$(jq -cn --arg version "${VERSION}" '{version: $version}')" \
+            http://127.0.0.1:9100/build)"
+
+          jq -r '.log // empty' build-response.json
+          if [[ "${http_code}" != "200" ]] || [[ "$(jq -r '.status' build-response.json)" != "completed" ]]; then
+            jq . build-response.json
+            echo "neo-builder failed with HTTP ${http_code}" >&2
+            exit 1
+          fi
+
+      - name: Verify release artifacts
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_dir="dist/${VERSION}"
+          platforms=(
+            darwin-amd64
+            darwin-arm64
+            linux-amd64
+            linux-arm64
+            windows-amd64
+            windows-arm64
+          )
+
+          for platform in "${platforms[@]}"; do
+            filename="neo-${platform}"
+            if [[ "${platform}" == windows-* ]]; then
+              filename="${filename}.exe"
+            fi
+
+            file="${release_dir}/${filename}"
+            if [[ ! -s "${file}" ]]; then
+              echo "Missing release artifact: ${file}" >&2
+              exit 1
+            fi
+
+            expected="$(jq -r --arg platform "${platform}" '.checksums[$platform] // empty' build-response.json)"
+            actual="sha256:$(sha256sum "${file}" | awk '{print $1}')"
+            if [[ -z "${expected}" || "${actual}" != "${expected}" ]]; then
+              echo "Checksum mismatch for ${filename}" >&2
+              echo "Expected: ${expected:-missing}" >&2
+              echo "Actual:   ${actual}" >&2
+              exit 1
+            fi
+          done
+
+          for file in "${release_dir}"/neo-*; do
+            checksum="$(sha256sum "${file}" | awk '{print $1}')"
+            printf '%s  %s\n' "${checksum}" "$(basename "${file}")"
+          done > SHA256SUMS
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_dir="dist/${VERSION}"
+          assets=("${release_dir}"/neo-* SHA256SUMS)
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${assets[@]}" --clobber
+          else
+            args=(
+              release create "${TAG}"
+              "${assets[@]}"
+              --target "${GITHUB_SHA}"
+              --title "Neo ${VERSION}"
+              --generate-notes
+            )
+            if [[ "${PRERELEASE}" == "true" ]]; then
+              args+=(--prerelease)
+            fi
+            gh "${args[@]}"
+          fi
+
+      - name: Stop neo-builder
+        if: always()
+        run: docker rm --force neo-builder >/dev/null 2>&1 || true

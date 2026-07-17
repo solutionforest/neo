@@ -204,6 +204,21 @@ func (e *Executor) ReadFile(remotePath string) ([]byte, error) {
 	return []byte(out), nil
 }
 
+// ReadFileElevated reads a possibly root-only file, using sudo when connected
+// as a non-root (but sudo-capable) user. For root sessions it is identical to
+// ReadFile. Needed for root-owned paths such as /etc/neo/state.json.
+func (e *Executor) ReadFileElevated(remotePath string) ([]byte, error) {
+	cmd := "cat " + ShellQuote(remotePath)
+	if e.User() != "root" {
+		cmd = "sudo " + cmd
+	}
+	out, err := e.Run(cmd)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(out), nil
+}
+
 // StreamInput runs a remote command, piping the reader into its stdin and returning stdout.
 func (e *Executor) StreamInput(cmd string, stdin io.Reader) (string, error) {
 	e.debugf("stream-input: %s", cmd)

@@ -2,13 +2,14 @@ package license
 
 import "testing"
 
-func TestCurrentPlanUsesDevBypass(t *testing.T) {
+func TestIsActivatedUsesDevBypass(t *testing.T) {
 	old := DevLicenseBypass
 	DevLicenseBypass = "true"
 	defer func() { DevLicenseBypass = old }()
 
-	if got := CurrentPlan(""); got != PlanPlus {
-		t.Fatalf("expected dev bypass to return plus, got %q", got)
+	// Empty key would normally be invalid, but dev bypass activates.
+	if !IsActivated("") {
+		t.Fatal("expected dev bypass to report activated")
 	}
 }
 

@@ -25,12 +25,53 @@ Run 'neo firewall install' to set it up on your server.`,
 	}
 	cmd.AddCommand(
 		newFirewallInstallCmd(),
+		newFirewallUpdateCmd(),
 		newFirewallStatusCmd(),
 		newFirewallBlockCmd(),
 		newFirewallUnblockCmd(),
 		newFirewallListCmd(),
 	)
 	return cmd
+}
+
+// ── update ────────────────────────────────────────────────────────────────────
+
+func newFirewallUpdateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "update",
+		Short: "Update CrowdSec engine, bouncer, and community blocklists",
+		RunE:  func(cmd *cobra.Command, args []string) error { return runFirewallUpdate() },
+	}
+}
+
+func runFirewallUpdate() error {
+	_, srv, exec, err := mustResolveAndConnect()
+	if err != nil {
+		return err
+	}
+	defer exec.Close()
+
+	st, err := state.Load(exec)
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+
+	cs := remote.NewCrowdSec(exec)
+	if !st.FirewallInstalled || !cs.IsInstalled() {
+		ui.Info("CrowdSec is not installed. Run: neo firewall install")
+		return nil
+	}
+
+	fmt.Printf("\n  Updating CrowdSec on %s...\n\n", srv.Name)
+
+	if err := cs.Update(os.Stdout); err != nil {
+		return err
+	}
+
+	fmt.Println()
+	ui.Success("CrowdSec updated")
+	ui.Info("Run 'neo firewall status' to verify")
+	return nil
 }
 
 // ── install ───────────────────────────────────────────────────────────────────

@@ -802,11 +802,11 @@
             </div>
             <div class="cmd-item">
                 <code class="cmd-mono">neo backup &lt;app&gt;</code>
-                <div class="cmd-desc">Backup an app's data volumes to a compressed archive on the server. Optionally download to your local machine. <span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:0.68rem;font-weight:700;letter-spacing:0.04em;vertical-align:middle;">NEO+</span></div>
+                <div class="cmd-desc">Backup an app's data volumes to a compressed archive on the server. Optionally download to your local machine.</div>
             </div>
             <div class="cmd-item">
                 <code class="cmd-mono">neo restore &lt;app&gt; &lt;file&gt;</code>
-                <div class="cmd-desc">Restore an app from a backup archive. Overwrites current data volumes with the backup contents. <span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:0.68rem;font-weight:700;letter-spacing:0.04em;vertical-align:middle;">NEO+</span></div>
+                <div class="cmd-desc">Restore an app from a backup archive. Overwrites current data volumes with the backup contents.</div>
             </div>
             <div class="cmd-item">
                 <code class="cmd-mono">neo volumes</code>
@@ -814,7 +814,7 @@
             </div>
             <div class="cmd-item">
                 <code class="cmd-mono">neo volumes mount &lt;vol&gt; &lt;path&gt;</code>
-                <div class="cmd-desc">Mount a Docker volume to a host path (e.g. external SSD). Briefly stops the app, copies data, and remounts. <span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:0.68rem;font-weight:700;letter-spacing:0.04em;vertical-align:middle;">NEO+</span></div>
+                <div class="cmd-desc">Mount a Docker volume to a host path (e.g. external SSD). Briefly stops the app, copies data, and remounts.</div>
             </div>
             <div class="cmd-item">
                 <code class="cmd-mono">neo connect</code>
@@ -902,7 +902,6 @@
                     <th style="width: 28%;">Task</th>
                     <th>DIY (manual SSH)</th>
                     <th>Neo (Free)</th>
-                    <th>Neo+</th>
                     <th style="color: var(--accent);">Vxero</th>
                 </tr>
             </thead>
@@ -911,13 +910,11 @@
                     <td>Deploy an app</td>
                     <td>Write Dockerfile, docker build, docker run, networking...</td>
                     <td><code>neo install ghost</code></td>
-                    <td><code>neo install ghost</code></td>
                     <td>Git push or one-click template</td>
                 </tr>
                 <tr>
                     <td>SSL certificates</td>
                     <td>Install certbot, cron renewal, debug DNS...</td>
-                    <td>Automatic via Caddy</td>
                     <td>Automatic via Caddy</td>
                     <td>Automatic + dashboard</td>
                 </tr>
@@ -925,27 +922,23 @@
                     <td>Database setup</td>
                     <td>Install, secure, create user, passwords...</td>
                     <td>Bundled in templates</td>
-                    <td>Bundled in templates</td>
                     <td>Managed database service</td>
                 </tr>
                 <tr>
                     <td>Manage servers</td>
                     <td>As many as you can handle</td>
-                    <td>Up to 2</td>
                     <td style="color: var(--accent); font-weight: 600;">Unlimited</td>
                     <td style="color: var(--accent); font-weight: 600;">All at once (by plan)</td>
                 </tr>
                 <tr>
                     <td>App shell / exec</td>
                     <td><code>docker exec</code> via SSH</td>
-                    <td>&mdash;</td>
-                    <td><code>neo exec &lt;app&gt;</code></td>
+                    <td><code>neo run &lt;app&gt;</code></td>
                     <td>Web terminal</td>
                 </tr>
                 <tr>
                     <td>Backups</td>
                     <td>Write cron scripts, manage rotation</td>
-                    <td>&mdash;</td>
                     <td><code>neo backup</code></td>
                     <td>Automated with retention</td>
                 </tr>
@@ -953,13 +946,11 @@
                     <td>Monitoring</td>
                     <td>Install Prometheus/Grafana yourself</td>
                     <td>&mdash;</td>
-                    <td>&mdash;</td>
                     <td>Built-in dashboard + alerts</td>
                 </tr>
                 <tr>
                     <td>Team access</td>
                     <td>Share SSH keys (risky)</td>
-                    <td>&mdash;</td>
                     <td>&mdash;</td>
                     <td>RBAC with audit logs</td>
                 </tr>
@@ -967,14 +958,12 @@
                     <td>Rollback</td>
                     <td>Hope you tagged the old image</td>
                     <td>&mdash;</td>
-                    <td>&mdash;</td>
                     <td>One-click rollback</td>
                 </tr>
                 <tr>
                     <td>Cost</td>
                     <td>Free (your time is the cost)</td>
-                    <td>Free forever</td>
-                    <td style="font-weight: 600;">$9/mo</td>
+                    <td style="font-weight: 600;">Free forever</td>
                     <td style="color: var(--accent); font-weight: 600;">From $49/mo</td>
                 </tr>
             </tbody>
@@ -986,13 +975,13 @@
     </div>
 </section>
 
-<!-- NEO+ -->
+<!-- POWER FEATURES (free) -->
 <section class="section reveal" id="neo-plus">
     <div class="w">
         <div class="section-header">
-            <span class="section-badge">Neo+</span>
-            <h2 class="section-title">Power-user features for $79/year.</h2>
-            <p class="section-sub">Neo is free forever for the core workflow. Neo+ adds deep introspection, real-time visibility, and data protection &mdash; ~$6.58/month, less than a coffee a week.</p>
+            <span class="section-badge">Included, free</span>
+            <h2 class="section-title">Power-user features &mdash; all free.</h2>
+            <p class="section-sub">Deep introspection, real-time visibility, and data protection are built in for every user. No paid tier, no add-ons.</p>
         </div>
 
         <div class="card-grid" style="margin-top: 40px;">
@@ -1036,12 +1025,12 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
                 </div>
                 <h3>Unlimited servers</h3>
-                <p>Free tier supports up to 2 servers. Neo+ removes the cap &mdash; manage staging, production, and every side project from one config file.</p>
+                <p>No server cap &mdash; manage staging, production, and every side project from one config file, on as many servers as you want.</p>
             </div>
         </div>
 
         <div style="margin-top: 32px; text-align: center;">
-            <p style="color: var(--text-muted); font-size: 0.82rem;">Neo+ is coming soon &mdash; $79/user/year. <a href="index.html#pricing" style="color: var(--accent); font-weight: 600;">See full pricing comparison &rarr;</a></p>
+            <p style="color: var(--text-muted); font-size: 0.82rem;">All free. A one-time <code>neo activate</code> (just your email) unlocks everything. <a href="index.html#pricing" style="color: var(--accent); font-weight: 600;">See the details &rarr;</a></p>
         </div>
     </div>
 </section>

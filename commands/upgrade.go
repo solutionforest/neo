@@ -142,7 +142,7 @@ func runUpgrade() error {
 	if err := replaceBinary(execPath, tmpFile); err != nil {
 		spin.Stop()
 		fmt.Printf("  You can install manually:\n")
-		fmt.Printf("  curl -fsSL %s | sh\n\n", config.DefaultInstallURL)
+		fmt.Printf("  curl -fsSL %s | sh\n\n", config.InstallURL())
 		return fmt.Errorf("install failed: %w", err)
 	}
 	spin.Stop()

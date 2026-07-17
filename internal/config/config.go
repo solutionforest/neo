@@ -7,26 +7,21 @@ import (
 	"path/filepath"
 )
 
-// DefaultAPIBaseURL is the production API base URL served by neo-cms.
-// Override at build time via: -ldflags "-X github.com/vxero/neo/internal/config.DefaultAPIBaseURL=..."
-var DefaultAPIBaseURL = "https://neo.vxero.dev/api"
+// DefaultBaseURL is the single production base URL for all neo-cms endpoints.
+// It is the ONE place a neo-cms host is hardcoded — every other endpoint is
+// derived from it. Point the whole CLI at another environment with the NEO_BASE
+// env var, or bake it in at build time:
+//
+//	-ldflags "-X github.com/vxero/neo/internal/config.DefaultBaseURL=https://neo-staging.vxero.dev"
+var DefaultBaseURL = "https://neo.vxero.dev"
 
-// DefaultInstallURL is the web route for the curl | sh install script (no /api prefix).
-// Override at build time via: -ldflags "-X github.com/vxero/neo/internal/config.DefaultInstallURL=..."
-var DefaultInstallURL = "https://neo.vxero.dev/neo"
-
-// Derived URL vars — initialized from DefaultAPIBaseURL at startup, so they
-// automatically pick up any ldflags-stamped value.
+// External hosts (not derived from the neo-cms base).
 var (
-	DefaultVersionURL      = DefaultAPIBaseURL + "/neo/version.json" // GET /api/neo/version.json
-	DefaultDownloadBaseURL = DefaultAPIBaseURL + "/download"         // GET /api/download/{os}/{arch}
-)
-
-// Remaining defaults — not URL-based, kept as constants.
-const (
 	DefaultAgentInstallURL  = "https://get.vxero.dev/agent"
 	DefaultDockerInstallURL = "https://get.docker.com"
+)
 
+const (
 	DefaultFreeServerLimit = 1
 
 	// Container naming conventions.
@@ -36,29 +31,34 @@ const (
 	BackupDir          = "/var/backups/neo"
 )
 
-// VersionURL returns the version check URL, overridable via NEO_VERSION_URL.
-func VersionURL() string {
-	if v := os.Getenv("NEO_VERSION_URL"); v != "" {
+// envOr returns the value of env var key, or fallback when it is unset/empty.
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
 		return v
 	}
-	return DefaultVersionURL
+	return fallback
 }
 
-// DownloadBaseURL returns the download URL, overridable via NEO_DOWNLOAD_URL.
-func DownloadBaseURL() string {
-	if v := os.Getenv("NEO_DOWNLOAD_URL"); v != "" {
-		return v
-	}
-	return DefaultDownloadBaseURL
-}
+// BaseURL returns the neo-cms base URL. NEO_BASE > build-time default.
+func BaseURL() string { return envOr("NEO_BASE", DefaultBaseURL) }
+
+// APIBaseURL returns the API base (<base>/api), overridable via NEO_API_BASE_URL.
+func APIBaseURL() string { return envOr("NEO_API_BASE_URL", BaseURL()+"/api") }
+
+// InstallURL returns the curl|sh install-script URL (<base>/neo), overridable via NEO_INSTALL_URL.
+func InstallURL() string { return envOr("NEO_INSTALL_URL", BaseURL()+"/neo") }
+
+// VersionURL returns the version-check URL, overridable via NEO_VERSION_URL.
+func VersionURL() string { return envOr("NEO_VERSION_URL", APIBaseURL()+"/neo/version.json") }
+
+// DownloadBaseURL returns the download base URL, overridable via NEO_DOWNLOAD_URL.
+func DownloadBaseURL() string { return envOr("NEO_DOWNLOAD_URL", APIBaseURL()+"/download") }
 
 // AgentInstallURL returns the agent install URL, overridable via NEO_AGENT_INSTALL_URL.
-func AgentInstallURL() string {
-	if v := os.Getenv("NEO_AGENT_INSTALL_URL"); v != "" {
-		return v
-	}
-	return DefaultAgentInstallURL
-}
+func AgentInstallURL() string { return envOr("NEO_AGENT_INSTALL_URL", DefaultAgentInstallURL) }
+
+// DockerInstallURL returns the Docker install-script URL, overridable via NEO_DOCKER_INSTALL_URL.
+func DockerInstallURL() string { return envOr("NEO_DOCKER_INSTALL_URL", DefaultDockerInstallURL) }
 
 // AppContainer returns the Docker container name for an app.
 func AppContainer(appName string) string {

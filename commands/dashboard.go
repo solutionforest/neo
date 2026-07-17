@@ -39,10 +39,6 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Example:\n")
 		fmt.Printf("    %s\n", ui.Faint.Render("neo init root@159.65.100.42"))
 		fmt.Println()
-		status := license.Check(cfg.LicenseKey)
-		if !status.Valid && !status.Expired {
-			ui.PrintUpgradeHint()
-		}
 		return nil
 	}
 
@@ -103,8 +99,8 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 			if err := runConnect(); err != nil {
 				ui.Error(err.Error())
 			}
-		case "plus":
-			if err := runPlus(); err != nil {
+		case "license":
+			if err := runLicenseMenu(); err != nil {
 				ui.Error(err.Error())
 			}
 		}
@@ -284,17 +280,12 @@ func cachedDashboardSummaries(cfg *config.Config) (string, string) {
 	return app, svc
 }
 
-// plusSummary returns a short status string for the Neo+ menu item.
-func plusSummary(cfg *config.Config) string {
-	status := license.Check(cfg.LicenseKey)
-	switch {
-	case status.Valid && status.Plan == license.PlanPlus:
-		return ui.Green.Render("Plus · unlimited servers")
-	case status.Expired:
-		return ui.Yellow.Render("Plus · expired — renew at neo.vxero.dev")
-	default:
-		return ui.Yellow.Render("★ Upgrade to Neo+") + ui.Faint.Render(" · neo.vxero.dev")
+// licenseSummary returns a short status string for the License menu item.
+func licenseSummary(cfg *config.Config) string {
+	if license.IsActivated(cfg.LicenseKey) {
+		return ui.Green.Render("Activated · " + license.MaskKey(cfg.LicenseKey))
 	}
+	return ui.Yellow.Render("Not activated") + ui.Faint.Render(" · neo activate")
 }
 
 // formatCacheAge returns a human-readable duration string for cache age display.
@@ -404,7 +395,7 @@ func tuiMainMenu(cfg *config.Config, appSummary, serviceSummary string) string {
 		{fmt.Sprintf("%-22s%s", "Services", serviceSummary), "services"},
 		{fmt.Sprintf("%-22s%s", "Live Metrics", ui.Faint.Render("CPU, RAM, containers")), "metrics"},
 		{"Deploy Project", "deploy"},
-		{fmt.Sprintf("%-22s%s", "Neo+", plusSummary(cfg)), "plus"},
+		{fmt.Sprintf("%-22s%s", "License", licenseSummary(cfg)), "license"},
 	}
 
 	action := ui.Select(title, opts)

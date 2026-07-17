@@ -21,7 +21,41 @@ func newCaddyCmd() *cobra.Command {
 
 	cmd.AddCommand(newCaddyDNSCmd())
 	cmd.AddCommand(newCaddyOnDemandCmd())
+	cmd.AddCommand(newCaddyUpdateCmd())
 	return cmd
+}
+
+func newCaddyUpdateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "update",
+		Short: "Pull the latest Caddy image and recreate the proxy (security patches)",
+		Long: `Update the neo-caddy reverse proxy to the latest Caddy 2.x image.
+
+Pulls the newest caddy:2-alpine — or rebuilds the DNS-enabled image with a fresh
+base — and recreates the container. Routes and TLS certificates are preserved via
+the persistent data/config volumes and --resume, so there is no downtime cost
+beyond a quick restart.`,
+		RunE: func(cmd *cobra.Command, args []string) error { return runCaddyUpdate() },
+	}
+}
+
+func runCaddyUpdate() error {
+	_, srv, exec, err := mustResolveAndConnect()
+	if err != nil {
+		return err
+	}
+	defer exec.Close()
+
+	caddy := remote.NewCaddy(exec)
+
+	ui.Info(fmt.Sprintf("Updating Caddy on %s...", srv.Name))
+	image, err := caddy.Update(os.Stdout)
+	if err != nil {
+		return err
+	}
+
+	ui.Success(fmt.Sprintf("Caddy updated to %s and restarted", image))
+	return nil
 }
 
 func newCaddyOnDemandCmd() *cobra.Command {
