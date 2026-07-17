@@ -182,7 +182,7 @@ func (e *Executor) WriteFile(remotePath string, data []byte, mode os.FileMode) e
 func (e *Executor) WriteFileElevated(remotePath string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(remotePath)
 	if e.User() == "root" {
-		e.RunQuiet("mkdir -p '" + dir + "'") //nolint:errcheck
+		e.RunQuiet("mkdir -p " + ShellQuote(dir)) //nolint:errcheck
 		return e.WriteFile(remotePath, data, mode)
 	}
 	tmp := fmt.Sprintf("/tmp/.neo_%d", time.Now().UnixNano())
@@ -190,8 +190,8 @@ func (e *Executor) WriteFileElevated(remotePath string, data []byte, mode os.Fil
 		return err
 	}
 	return e.RunQuiet(fmt.Sprintf(
-		"sudo mkdir -p '%s' && sudo mv '%s' '%s' && sudo chmod %04o '%s'",
-		dir, tmp, remotePath, mode, remotePath,
+		"sudo mkdir -p %s && sudo mv %s %s && sudo chmod %04o %s",
+		ShellQuote(dir), ShellQuote(tmp), ShellQuote(remotePath), mode, ShellQuote(remotePath),
 	))
 }
 

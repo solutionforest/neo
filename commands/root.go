@@ -361,7 +361,7 @@ func resolveServer(cfg *config.Config) (*config.Server, error) {
 		return cfg.CurrentServer()
 	}
 
-	// Direct host format (e.g. root@167.172.249.89) — no config lookup needed
+	// Direct host format (e.g. root@203.0.113.10) — no config lookup needed
 	if strings.Contains(name, "@") {
 		srv := config.Server{Name: name, Host: name, Port: 22}
 		return &srv, nil
