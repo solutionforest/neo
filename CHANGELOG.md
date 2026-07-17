@@ -14,6 +14,10 @@ All notable changes to Neo will be documented here.
 
 - **`neo destroy` — tear down a server** — Removes everything neo installed, at two levels. *Remove neo, keep data* deletes all neo containers (apps, workers, services, `neo-caddy`), the `neo` Docker network, and `/etc/neo`, leaving data volumes and Docker intact for a clean re-deploy. *Full wipe* also prunes data volumes and uninstalls CrowdSec and the Docker engine, returning the server close to its pre-`init` state. Requires typing the server host to confirm, then removes it from local config. Also available in the dashboard under **Servers → Destroy Server Setup**.
 
+### Bug Fixes
+
+- **Ctrl+C in a menu no longer corrupts the terminal** — Pressing Ctrl+C inside any interactive menu (the dashboard and every `ui.Select` prompt) called `os.Exit` while the terminal was still in raw mode, skipping the deferred restore. The shell was left with output line-wrapping broken (each line "staircasing" to the right) until you ran `reset`. Neo now restores cooked mode before exiting, and exits `130` (128 + SIGINT) as expected.
+
 ---
 
 ## v0.20.0 — 2026-07-07

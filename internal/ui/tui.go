@@ -49,9 +49,13 @@ func ReadKey() string {
 	case b == '\r' || b == '\n':
 		return KeyEnter
 	case b == 3: // Ctrl+C
+		// os.Exit skips deferred calls, so restore the terminal out of raw mode
+		// here — otherwise the shell is left with OPOST disabled ("staircase"
+		// output). Restore cooked mode first, then show the cursor.
+		term.Restore(fd, old) //nolint:errcheck
 		ShowCursor()
 		fmt.Println()
-		os.Exit(0)
+		os.Exit(130) // 128 + SIGINT
 	case b == 27 && n == 1:
 		return KeyEsc
 	case b == 27 && n >= 3 && buf[1] == '[':
