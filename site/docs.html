@@ -170,6 +170,7 @@
         <a class="sidebar-link" href="#domains">Domain management</a>
         <a class="sidebar-link" href="#ssl-auto">Auto SSL (sslip.io)</a>
         <a class="sidebar-link" href="#ssl-custom">Custom certificates</a>
+        <a class="sidebar-link" href="#ssl-cloudflare">Cloudflare Flexible SSL</a>
     </div>
     <div class="sidebar-section">
         <div class="sidebar-title">Operations</div>
@@ -690,6 +691,36 @@ neo domain my-app --set-http     <span class="c"># disable (HTTP only)</span></p
     </div>
 
     <p>The certificate is uploaded to <code>/etc/neo/certs/{app}/</code> on the server and loaded into Caddy.</p>
+</section>
+
+<!-- CLOUDFLARE FLEXIBLE SSL -->
+<section class="doc-section" id="ssl-cloudflare">
+    <h3>Cloudflare Flexible SSL <span class="badge badge-new">New</span></h3>
+    <p>If your app sits behind Cloudflare in <strong>Flexible</strong> SSL mode — HTTPS between the browser and Cloudflare, plain HTTP from Cloudflare to your origin — serve the origin over HTTP while still telling the app it's on HTTPS. This prevents redirect loops without disabling TLS at the edge.</p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell — CLI</div>
+        <pre><span class="c"># Switch an existing app's origin route to Cloudflare Flexible mode</span>
+neo domain my-app --cloudflare-flexible</pre>
+    </div>
+
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml — Config</div>
+        <pre><span class="k">edge_https:</span> <span class="v">true</span></pre>
+    </div>
+
+    <p>Neo sets an HTTP-only origin route and injects these headers so the app generates correct <code>https://</code> URLs:</p>
+    <table class="doc-table">
+        <tr><th>Header</th><th>Value</th></tr>
+        <tr><td><code>X-Forwarded-Proto</code></td><td><code>https</code></td></tr>
+        <tr><td><code>X-Forwarded-Ssl</code></td><td><code>on</code></td></tr>
+        <tr><td><code>X-Forwarded-Port</code></td><td><code>443</code></td></tr>
+    </table>
+
+    <div class="callout callout-warn">
+        <strong>Redirect loop?</strong>
+        "Too many redirects" behind Cloudflare almost always means you're on Flexible SSL but the origin expects HTTPS. Switch the origin to HTTP with <code>--cloudflare-flexible</code> (or <code>edge_https: true</code>) — it cannot be combined with <code>--https</code>.
+    </div>
 </section>
 
 <!-- SYNC -->
