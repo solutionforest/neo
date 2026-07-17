@@ -189,15 +189,30 @@ jobs:
           release_dir="dist/${VERSION}"
           assets=("${release_dir}"/neo-* SHA256SUMS)
 
+          # Extract this version's section from CHANGELOG.md for the release notes.
+          notes_file="RELEASE_NOTES.md"
+          awk -v ver="v${VERSION}" '
+            /^## /{ if (started) exit; if ($2 == ver) { started=1; next } }
+            started { print }
+          ' CHANGELOG.md | sed -e '/^---[[:space:]]*$/d' > "${notes_file}"
+          # Trim leading/trailing blank lines.
+          sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "${notes_file}" 2>/dev/null || true
+
+          notes_args=(--generate-notes)
+          if grep -q '[^[:space:]]' "${notes_file}"; then
+            notes_args=(--notes-file "${notes_file}")
+          fi
+
           if gh release view "${TAG}" >/dev/null 2>&1; then
             gh release upload "${TAG}" "${assets[@]}" --clobber
+            gh release edit "${TAG}" --title "Neo ${VERSION}" "${notes_args[@]}" || true
           else
             args=(
               release create "${TAG}"
               "${assets[@]}"
               --target "${GITHUB_SHA}"
               --title "Neo ${VERSION}"
-              --generate-notes
+              "${notes_args[@]}"
             )
             if [[ "${PRERELEASE}" == "true" ]]; then
               args+=(--prerelease)

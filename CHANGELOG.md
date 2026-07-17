@@ -4,6 +4,14 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.21.7 — 2026-07-17
+
+### Changes
+
+- **Release notes come from the CHANGELOG** — Each GitHub release now uses this file's matching `## v<version>` section as its body (falling back to auto-generated notes if no section is found), so the release page shows the real, curated changelog instead of a raw commit list.
+
+---
+
 ## v0.21.6 — 2026-07-17
 
 ### New Features
