@@ -15,7 +15,7 @@ concurrency:
 jobs:
   test:
     name: Test
-    runs-on: epar-docker-dind-gitea-ubuntu
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       BUILDER_IMAGE: neo-builder:${{ github.sha }}
