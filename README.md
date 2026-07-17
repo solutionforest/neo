@@ -25,6 +25,17 @@ Remote VPS (any provider)
           └── ... all on "neo" Docker network
 ```
 
+## Using Neo with AI Agents (Skills)
+
+Coding with Claude, Cursor, or another AI agent? Install the **Neo skills** so your
+agent knows how to drive neo correctly — commands, `.neo.yml` config, deploy flow,
+and gotchas — instead of guessing.
+
+👉 **[github.com/solutionforest/neo-skill](https://github.com/solutionforest/neo-skill)**
+
+The skills teach an agent the same things a fluent neo user knows, so it can init
+servers, write `.neo.yml`, deploy, and troubleshoot as well as it knows the tool.
+
 ## Installation
 
 ```bash
