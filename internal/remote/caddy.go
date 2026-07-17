@@ -1040,6 +1040,7 @@ hr{border:none;border-top:1px solid var(--border);margin:24px 0}
   <div class="box blue"><code>neo deploy</code><span onclick="var e=this;navigator.clipboard.writeText('neo deploy').then(function(){e.textContent='copied';e.classList.add('copied');setTimeout(function(){e.textContent='copy';e.classList.remove('copied')},1500)})" title="Copy">copy</span></div>
   <hr>
   <div class="footer">
+    <a href="https://github.com/solutionforest/neo" target="_blank" rel="noopener">&#x2B50; Star us on GitHub</a><br>
     <a href="https://neo.vxero.dev" target="_blank">Vxero Neo</a>
     &nbsp;&middot;&nbsp; Docker &nbsp;&middot;&nbsp; Caddy &nbsp;&middot;&nbsp; auto-SSL<br>
     <a href="https://neo.vxero.dev" target="_blank">neo.vxero.dev</a>

@@ -368,7 +368,33 @@ func setupServer(exec *ssh.Executor, cfg *config.Config, name, host, keyPath str
 	card.Add("  neo deploy")
 	card.Render()
 
+	promptStar()
 	return nil
+}
+
+// promptStar invites the user to star the repo on GitHub after a successful
+// init. Best-effort — with no TTY it just prints the link.
+func promptStar() {
+	const repoURL = "https://github.com/solutionforest/neo"
+	fmt.Println()
+	fmt.Printf("  %s Enjoying neo? A GitHub star helps a lot.\n", ui.Yellow.Render("★"))
+
+	var open bool
+	if err := huh.NewConfirm().
+		Title("Star neo on GitHub?").
+		Description("Opens " + repoURL + " in your browser.").
+		Affirmative("Star ★").
+		Negative("Maybe later").
+		Value(&open).
+		Run(); err != nil {
+		fmt.Printf("  %s\n\n", ui.Cyan.Render(repoURL))
+		return
+	}
+	if open {
+		openBrowser(repoURL)
+	} else {
+		fmt.Printf("  %s\n\n", ui.Cyan.Render(repoURL))
+	}
 }
 
 // deriveServerName extracts a short name from the host string.

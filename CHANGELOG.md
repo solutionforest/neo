@@ -4,6 +4,14 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.21.6 — 2026-07-17
+
+### New Features
+
+- **Star prompt after `neo init`** — After a server is set up, neo asks if you'd like to star the project on GitHub and opens the repo in your browser (just prints the link in non-interactive shells). The default Caddy "server ready" page also carries a **★ Star us on GitHub** link.
+
+---
+
 ## v0.21.5 — 2026-07-17
 
 ### New Features
