@@ -107,7 +107,7 @@ All neo-cms endpoints derive from a **single base URL** — the only hardcoded h
   `-ldflags "-X github.com/vxero/neo/internal/config.DefaultBaseURL=..."` (Makefile does this
   automatically when `VERSION` contains `-staging`), or at runtime with the `NEO_BASE` env var.
 - Derived (each also individually overridable by env): `APIBaseURL()` = `<base>/api` (`NEO_API_BASE_URL`),
-  license = `<base>/api/license` (`NEO_LICENSE_URL`), `InstallURL()` = `<base>` (`NEO_INSTALL_URL`),
+  license = `<base>/api/license` (`NEO_LICENSE_URL`), `InstallURL()` = `<base>/neo` (`NEO_INSTALL_URL`),
   `VersionURL()` = `<base>/api/neo/version.json` (`NEO_VERSION_URL`), `DownloadBaseURL()` =
   `<base>/api/download` (`NEO_DOWNLOAD_URL`).
 - External hosts (own env var, not derived): `AgentInstallURL()` (`NEO_AGENT_INSTALL_URL`,
