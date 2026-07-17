@@ -949,6 +949,10 @@ neo key show
 <span class="c"># [Admin] Authorize a teammate's public key on the server</span>
 neo key add "ssh-ed25519 AAAAC3Nz... teammate@example.com"
 
+<span class="c"># Target a specific server (otherwise uses the current one,</span>
+<span class="c"># or asks which when you have more than one configured)</span>
+neo key add --server production "ssh-ed25519 AAAAC3Nz... teammate@example.com"
+
 <span class="c"># [Admin] List authorized keys (marks your own)</span>
 neo key list
 

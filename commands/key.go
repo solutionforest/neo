@@ -5,9 +5,34 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/vxero/neo/internal/config"
 	"github.com/vxero/neo/internal/ssh"
 	"github.com/vxero/neo/internal/ui"
 )
+
+// keyServer resolves the target server for a key command. With no --server flag
+// and more than one configured server, it asks which one instead of silently
+// using the current server.
+func keyServer(cfg *config.Config) (*config.Server, error) {
+	if serverFlag != "" || len(cfg.Servers) <= 1 {
+		return resolveServer(cfg)
+	}
+	servers := cfg.ServerList()
+	opts := make([]ui.SelectOption, len(servers))
+	for i, s := range servers {
+		suffix := ""
+		if s.Name == cfg.Current {
+			suffix = ui.Faint.Render("  (current)")
+		}
+		opts[i] = ui.SelectOption{Label: fmt.Sprintf("%-15s %s%s", s.Name, s.Host, suffix), Value: s.Name}
+	}
+	chosen := ui.Select("  "+ui.Bold.Render("Which server?"), opts)
+	if chosen == "" {
+		return nil, fmt.Errorf("no server selected")
+	}
+	s := cfg.Servers[chosen]
+	return &s, nil
+}
 
 func newKeyCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -87,9 +112,17 @@ func runKeyAdd(rawKey string) error {
 		return fmt.Errorf("invalid SSH public key — paste the full line from `neo key show`")
 	}
 
-	exec, _, err := mustResolveAndLoadState()
+	cfg, err := config.Load()
 	if err != nil {
 		return err
+	}
+	srv, err := keyServer(cfg)
+	if err != nil {
+		return err
+	}
+	exec, err := connectSSH(srv)
+	if err != nil {
+		return fmt.Errorf("connect to %s: %w", srv.Host, err)
 	}
 	defer exec.Close()
 
@@ -271,4 +304,3 @@ func isValidSSHPublicKey(s string) bool {
 	keyType := parts[0]
 	return strings.HasPrefix(keyType, "ssh-") || strings.HasPrefix(keyType, "ecdsa-")
 }
-

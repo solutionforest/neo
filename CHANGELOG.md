@@ -8,6 +8,10 @@ All notable changes to Neo will be documented here.
 
 ### New Features
 
+- **`neo key add` picks the right server** — With no `--server` flag and more than one server configured, `neo key add` now asks which server to authorize the key on instead of silently using the current one. Pass `--server <name>` to skip the prompt.
+
+- **Friendlier, stricter activation prompt** — The free-license email prompt now makes clear it's free ("we only use it to reach you about important updates"), rejects obvious throwaways like `x@abc.com` (validated on both the CLI and the server), re-prompts up to three times, and then lets you skip after a confirmation rather than trapping you.
+
 - **`neo caddy update` — patch the reverse proxy** — Pulls the newest `caddy:2-alpine` and recreates the `neo-caddy` container so security fixes actually land on running servers (previously the Caddy image was only pulled once, at `neo init`, and never refreshed). Routes and TLS certificates are preserved through the persistent data/config volumes and `--resume`, so the only cost is a brief restart. If the proxy is a custom DNS-enabled build (from `neo caddy dns`), the image is rebuilt from the stored Dockerfile with a fresh base layer instead, and the DNS credentials env file is re-attached.
 
 - **`neo firewall update` — keep CrowdSec current** — Upgrades the CrowdSec engine and nftables bouncer via the server's package manager (`apt`/`dnf`), refreshes the community hub content (`cscli hub update && cscli hub upgrade` — scenarios, parsers, blocklists), then restarts the services. Complements `neo firewall install`; no-ops with a clear message if CrowdSec isn't installed.

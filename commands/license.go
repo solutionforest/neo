@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -78,18 +79,10 @@ func runActivate(args []string) error {
 	}
 
 	// No key — register a free license by email.
-	var email string
-	if err := huh.NewInput().
-		Title("Activate neo (free)").
-		Description("Enter your email — we'll issue a free license key.").
-		Placeholder("you@example.com").
-		Value(&email).
-		Run(); err != nil {
+	email, ok := promptEmail()
+	if !ok {
+		ui.Info("No email entered — neo is not activated. Run `neo activate` when you're ready (it's free).")
 		return nil
-	}
-	email = strings.TrimSpace(email)
-	if email == "" {
-		return fmt.Errorf("email required to activate")
 	}
 
 	spin := ui.NewSpinner("Registering free license...")
@@ -112,6 +105,96 @@ func runActivate(args []string) error {
 	card.AddKV("Plan", "Free")
 	card.Render()
 	return nil
+}
+
+var emailRe = regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9\-]+(\.[a-z0-9\-]+)*\.[a-z]{2,}$`)
+
+// placeholderDomains are obviously-fake domains people type to skip a real
+// address. We reject them so the free license reaches a reachable inbox.
+var placeholderDomains = map[string]bool{
+	"example.com": true, "example.org": true, "example.net": true,
+	"test.com": true, "test.org": true, "tests.com": true,
+	"abc.com": true, "xxx.com": true, "xyz.com": true, "asdf.com": true,
+	"foo.com": true, "bar.com": true, "baz.com": true, "qwe.com": true,
+	"none.com": true, "no.com": true, "nomail.com": true, "fake.com": true,
+	"email.com": true, "mail.com": true, "domain.com": true, "sample.com": true,
+	"temp.com": true, "aaa.com": true, "a.com": true, "b.com": true, "1.com": true,
+}
+
+// isPlausibleEmail rejects malformed addresses and obvious throwaways like
+// "x@abc.com" so we don't hand a key to an unreachable inbox.
+func isPlausibleEmail(email string) bool {
+	if !emailRe.MatchString(email) {
+		return false
+	}
+	at := strings.LastIndex(email, "@")
+	local, domain := email[:at], email[at+1:]
+	if placeholderDomains[domain] {
+		return false
+	}
+	// Reject all-same-character local parts or domain roots (xxx, aaaa, 111).
+	root := strings.SplitN(domain, ".", 2)[0]
+	if len(root) < 2 || isRepeatedChar(local) || isRepeatedChar(root) {
+		return false
+	}
+	return true
+}
+
+func isRepeatedChar(s string) bool {
+	if len(s) < 3 {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if s[i] != s[0] {
+			return false
+		}
+	}
+	return true
+}
+
+// promptEmail asks for an email to register a free license. It re-prompts on an
+// obviously-invalid address (up to 3 tries), then offers to skip. Returns
+// (email, true) on success, or ("", false) if the user gives up or cancels.
+func promptEmail() (string, bool) {
+	for {
+		for attempt := 1; attempt <= 3; attempt++ {
+			desc := "Enter your email and we'll issue a free license key instantly.\n" +
+				"It's 100% free — we only use it to reach you about important updates."
+			if attempt > 1 {
+				desc = "That doesn't look like a real email address. Please enter a valid one.\n" +
+					"It's free — we just need a reachable address (no throwaways like x@abc.com)."
+			}
+			var email string
+			if err := huh.NewInput().
+				Title("Activate neo — it's free").
+				Description(desc).
+				Placeholder("you@company.com").
+				Value(&email).
+				Run(); err != nil {
+				return "", false // cancelled (Esc / no TTY)
+			}
+			email = strings.ToLower(strings.TrimSpace(email))
+			if isPlausibleEmail(email) {
+				return email, true
+			}
+		}
+
+		// Three invalid tries — confirm whether they really want to skip.
+		var skip bool
+		if err := huh.NewConfirm().
+			Title("Skip activation?").
+			Description("We couldn't get a valid email. Neo is free — activation just needs a real address. Really skip for now?").
+			Affirmative("Skip for now").
+			Negative("Try again").
+			Value(&skip).
+			Run(); err != nil {
+			return "", false
+		}
+		if skip {
+			return "", false
+		}
+		// else: loop for another round of attempts
+	}
 }
 
 // activateExistingKey validates and saves a key the user already has.
