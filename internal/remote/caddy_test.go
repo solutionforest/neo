@@ -139,3 +139,20 @@ func TestTLSConfigHasOnDemandWildcard(t *testing.T) {
 		t.Fatal("did not expect unrelated wildcard config to match")
 	}
 }
+
+func TestIsDNSCaddyImage(t *testing.T) {
+	cases := map[string]bool{
+		"neo-caddy-dns-cloudflare:latest": true,
+		"neo-caddy-dns-route53:latest":    true,
+		dnsCaddyImagePrefix + "x":         true,
+		CaddyImage:                        false,
+		"caddy:latest":                    false,
+		"":                                false,
+		"nginx:latest":                    false,
+	}
+	for image, want := range cases {
+		if got := isDNSCaddyImage(image); got != want {
+			t.Errorf("isDNSCaddyImage(%q) = %v, want %v", image, got, want)
+		}
+	}
+}

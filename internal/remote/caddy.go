@@ -217,6 +217,15 @@ func (c *Caddy) StartContainer() error {
 	return err
 }
 
+// dnsCaddyImagePrefix marks a custom Caddy image built with a DNS plugin.
+const dnsCaddyImagePrefix = "neo-caddy-dns-"
+
+// isDNSCaddyImage reports whether the given image is a custom DNS-enabled Caddy
+// build (produced by InstallDNSProvider) rather than the stock caddy:2-alpine.
+func isDNSCaddyImage(image string) bool {
+	return strings.HasPrefix(image, dnsCaddyImagePrefix)
+}
+
 // Update pulls the newest Caddy image (security patches) and recreates the
 // neo-caddy container. Routes and certificates survive because the persistent
 // data/config volumes and --resume are reused. If the running proxy is a custom
@@ -228,7 +237,7 @@ func (c *Caddy) Update(w io.Writer) (string, error) {
 
 	// Custom DNS build (e.g. neo-caddy-dns-cloudflare:latest): rebuild from the
 	// stored Dockerfile, pulling a fresh caddy base, and keep the DNS env file.
-	if strings.HasPrefix(current, "neo-caddy-dns-") {
+	if isDNSCaddyImage(current) {
 		if err := docker.BuildPull(caddyDNSBuildDir, caddyDNSBuildDir+"/Dockerfile", current, w); err != nil {
 			return "", fmt.Errorf("rebuild Caddy DNS image: %w", err)
 		}
@@ -277,7 +286,7 @@ COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 		return "", fmt.Errorf("write Caddy DNS env file: %w", err)
 	}
 
-	image := "neo-caddy-dns-" + provider.Name + ":latest"
+	image := dnsCaddyImagePrefix + provider.Name + ":latest"
 	if err := NewDocker(c.exec).Build(caddyDNSBuildDir, caddyDNSBuildDir+"/Dockerfile", image, w); err != nil {
 		return "", fmt.Errorf("build Caddy DNS image: %w", err)
 	}

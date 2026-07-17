@@ -35,27 +35,8 @@ func (c *CrowdSec) IsInstalled() bool {
 // Detects the OS and uses the appropriate package manager (apt or dnf/yum).
 // Output is streamed to w so the caller can display progress.
 func (c *CrowdSec) Install(w io.Writer) error {
-	// Detect OS family for package manager selection
-	osID, _ := c.exec.Run("grep '^ID=' /etc/os-release | cut -d= -f2 | tr -d '\"'")
-	osID = strings.TrimSpace(strings.ToLower(osID))
-
-	var steps []string
-	switch osID {
-	case "fedora", "centos", "rhel", "almalinux", "rocky":
-		steps = []string{
-			"curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.rpm.sh | bash",
-			"dnf install -y crowdsec crowdsec-firewall-bouncer-nftables",
-			"systemctl enable --now crowdsec crowdsec-firewall-bouncer",
-		}
-	default:
-		steps = []string{
-			"curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash",
-			"DEBIAN_FRONTEND=noninteractive apt-get install -y crowdsec crowdsec-firewall-bouncer-nftables",
-			"systemctl enable --now crowdsec crowdsec-firewall-bouncer",
-		}
-	}
-
-	for _, step := range steps {
+	osID := c.detectOSID()
+	for _, step := range crowdsecInstallSteps(osID) {
 		if err := c.exec.Stream(step, w); err != nil {
 			return fmt.Errorf("install step failed: %w", err)
 		}
@@ -63,34 +44,68 @@ func (c *CrowdSec) Install(w io.Writer) error {
 	return nil
 }
 
-// Update upgrades the CrowdSec engine and nftables bouncer to their latest
-// packaged versions, refreshes the hub content (community scenarios, parsers,
-// and blocklists), then restarts the services. Assumes CrowdSec is already
-// installed and the repo added by Install is present.
-func (c *CrowdSec) Update(w io.Writer) error {
+// detectOSID reads the lowercased distro ID from /etc/os-release.
+func (c *CrowdSec) detectOSID() string {
 	osID, _ := c.exec.Run("grep '^ID=' /etc/os-release | cut -d= -f2 | tr -d '\"'")
-	osID = strings.TrimSpace(strings.ToLower(osID))
+	return strings.TrimSpace(strings.ToLower(osID))
+}
 
-	var steps []string
+// isRPMFamily reports whether the distro uses dnf/rpm packaging.
+func isRPMFamily(osID string) bool {
 	switch osID {
 	case "fedora", "centos", "rhel", "almalinux", "rocky":
+		return true
+	default:
+		return false
+	}
+}
+
+// crowdsecInstallSteps returns the shell steps to install CrowdSec + the
+// nftables bouncer for the given distro (adds the repo, installs, enables).
+func crowdsecInstallSteps(osID string) []string {
+	if isRPMFamily(osID) {
+		return []string{
+			"curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.rpm.sh | bash",
+			"dnf install -y crowdsec crowdsec-firewall-bouncer-nftables",
+			"systemctl enable --now crowdsec crowdsec-firewall-bouncer",
+		}
+	}
+	return []string{
+		"curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash",
+		"DEBIAN_FRONTEND=noninteractive apt-get install -y crowdsec crowdsec-firewall-bouncer-nftables",
+		"systemctl enable --now crowdsec crowdsec-firewall-bouncer",
+	}
+}
+
+// crowdsecUpdateSteps returns the shell steps to upgrade CrowdSec + bouncer for
+// the given distro, refresh the community hub content, and restart the services.
+func crowdsecUpdateSteps(osID string) []string {
+	var steps []string
+	if isRPMFamily(osID) {
 		steps = []string{
 			"dnf install -y --refresh crowdsec crowdsec-firewall-bouncer-nftables",
 		}
-	default:
+	} else {
 		steps = []string{
 			"apt-get update",
 			"DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade crowdsec crowdsec-firewall-bouncer-nftables",
 		}
 	}
 	// Refresh community hub content, then restart to apply everything.
-	steps = append(steps,
+	return append(steps,
 		"cscli hub update",
 		"cscli hub upgrade",
 		"systemctl restart crowdsec crowdsec-firewall-bouncer",
 	)
+}
 
-	for _, step := range steps {
+// Update upgrades the CrowdSec engine and nftables bouncer to their latest
+// packaged versions, refreshes the hub content (community scenarios, parsers,
+// and blocklists), then restarts the services. Assumes CrowdSec is already
+// installed and the repo added by Install is present.
+func (c *CrowdSec) Update(w io.Writer) error {
+	osID := c.detectOSID()
+	for _, step := range crowdsecUpdateSteps(osID) {
 		if err := c.exec.Stream(step, w); err != nil {
 			return fmt.Errorf("update step failed: %w", err)
 		}
