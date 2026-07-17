@@ -824,3 +824,24 @@ neo/
 | `charmbracelet/lipgloss` | v1.1.0 | Terminal styling |
 | `golang.org/x/crypto/ssh` | v0.31.0 | SSH client |
 | `gopkg.in/yaml.v3` | v3.0.1 | YAML parsing |
+
+## License
+
+Vxero Neo is **source-available** software, licensed under the
+[Elastic License 2.0 (ELv2)](LICENSE). The source is public — read it, audit it,
+self-host it, modify it for your own use, and contribute back.
+
+Neo is **free**, but activation is **required** — every user activates a license
+key before use (`neo activate`). There is no paid tier today; all features are
+unlocked for any valid license.
+
+Under ELv2 you **may not**:
+
+- provide Neo to third parties as a hosted or managed service;
+- move, change, disable, or circumvent the license-key functionality;
+- remove or obscure the licensing, copyright, or other notices.
+
+> **Note:** "source-available" is not the same as "open source" (OSI). The code
+> is public, but usage is restricted by the terms above.
+
+Copyright © 2026 Solution Forest Limited. All rights reserved.
