@@ -2,6 +2,7 @@ bin/
 dist/
 site/neo-*
 site/*.exe
+neo-builder/neo-builder
 
 # Integration test data — only small fixtures (hello-world, laravel-app) are tracked
 testdata/test-laravel/
