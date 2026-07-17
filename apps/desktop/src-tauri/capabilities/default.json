@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Baseline capability for the popover and management windows. Grants only the core defaults plus the notification/autostart/process plugin defaults needed by the beta. No shell, fs, or generic process-spawn capability is exposed to the webview.",
+  "windows": ["popover", "management"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:event:default",
+    "notification:default",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled",
+    "process:allow-exit",
+    "process:allow-restart"
+  ]
+}
