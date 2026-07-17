@@ -208,7 +208,9 @@ func runLicenseMenu() error {
 			cfg.LicenseKey = ""
 			config.Save(cfg) //nolint:errcheck
 			ui.Success("License deactivated")
-			return nil
+			// Return to the activation screen — the user must enter an email
+			// again (same as a fresh start), or a different one to switch account.
+			return runActivate(nil)
 		case "", "back":
 			return nil
 		}
