@@ -16,6 +16,7 @@ export function ServerSelector({
   return (
     <label className="server-selector">
       <span className="server-selector__label">Server</span>
+      <span className="server-selector__control">
       <select
         className="server-selector__select"
         value={selected}
@@ -33,6 +34,8 @@ export function ServerSelector({
           ))
         )}
       </select>
+      <span className="server-selector__chevron" aria-hidden="true">⌄</span>
+      </span>
     </label>
   );
 }

@@ -1,11 +1,6 @@
 import type { Finding } from "../../lib/protocol";
 import { formatRelativeTime } from "../../lib/format";
-
-const SEVERITY_GLYPH: Record<Finding["severity"], string> = {
-  info: "ℹ",
-  warning: "▲",
-  critical: "✕",
-};
+import { Icon } from "../../components/Icon";
 
 export interface FindingsListProps {
   findings: Finding[];
@@ -20,7 +15,10 @@ export function FindingsList({ findings, limit }: FindingsListProps) {
   if (findings.length === 0) {
     return (
       <div className="findings findings--empty" aria-label="Findings">
-        No findings — everything looks healthy.
+        <span className="findings__empty-icon" aria-hidden="true">
+          <Icon name="check" size={14} />
+        </span>
+        <span>No findings — everything looks healthy.</span>
       </div>
     );
   }
@@ -30,7 +28,10 @@ export function FindingsList({ findings, limit }: FindingsListProps) {
       {shown.map((f) => (
         <li key={f.id} className={`finding finding--${f.severity}`}>
           <span className="finding__glyph" aria-hidden="true">
-            {SEVERITY_GLYPH[f.severity]}
+            <Icon
+              name={f.severity === "info" ? "info" : f.severity === "warning" ? "warning" : "close"}
+              size={15}
+            />
           </span>
           <div className="finding__body">
             <span className="finding__summary">{f.summary}</span>

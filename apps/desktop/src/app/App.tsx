@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { createDesktopAPI, type DesktopAPI } from "../lib/desktop-api";
 import { Popover } from "./Popover";
 import { Management } from "./Management";
+import { NeoLogo } from "../components/NeoLogo";
 
 export type WindowKind = "popover" | "management";
 
@@ -28,7 +29,11 @@ export function App({ window: kind, api: injected }: AppProps) {
   if (!api) {
     return (
       <div className="app-loading" role="status">
-        Loading…
+        <NeoLogo size={30} />
+        <span>
+          <strong>Neo Desktop</strong>
+          <small>Connecting to the bridge…</small>
+        </span>
       </div>
     );
   }

@@ -134,6 +134,30 @@ describe("AppActionDialog", () => {
     expect(onDismiss).not.toHaveBeenCalled();
   });
 
+  it("keeps keyboard focus inside the modal", () => {
+    render(
+      <AppActionDialog
+        server="production"
+        dialog={dialog({ action: "start", safety: "reversible", canRemember: true })}
+        onConfirm={noop}
+        onCancel={noop}
+        onDismiss={noop}
+        onRememberChange={noop}
+        onViewLogs={noop}
+      />,
+    );
+
+    const modal = screen.getByRole("dialog");
+    const closeEdge = screen.getByRole("button", { name: "Start" });
+    closeEdge.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(screen.getByRole("checkbox")).toHaveFocus();
+
+    modal.focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(closeEdge).toHaveFocus();
+  });
+
   it("shows changes on a successful result", () => {
     render(
       <AppActionDialog

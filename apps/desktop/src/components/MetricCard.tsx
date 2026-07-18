@@ -1,3 +1,5 @@
+import { Icon, type IconName } from "./Icon";
+
 export type MetricTone = "normal" | "warning" | "critical";
 
 export interface MetricCardProps {
@@ -8,6 +10,7 @@ export interface MetricCardProps {
   /** Optional 0–100 gauge. `null` (an unavailable metric) hides the gauge. */
   percent?: number | null;
   tone?: MetricTone;
+  icon?: IconName;
 }
 
 export function MetricCard({
@@ -16,10 +19,19 @@ export function MetricCard({
   detail,
   percent,
   tone = "normal",
+  icon,
 }: MetricCardProps) {
   return (
     <div className={`metric-card metric-card--${tone}`} role="group" aria-label={label}>
-      <div className="metric-card__label">{label}</div>
+      <div className="metric-card__header">
+        {icon ? <Icon name={icon} size={14} /> : null}
+        <div className="metric-card__label">{label}</div>
+        {tone !== "normal" ? (
+          <span className="metric-card__tone" aria-label={`${tone} level`}>
+            {tone === "critical" ? "!" : "▲"}
+          </span>
+        ) : null}
+      </div>
       <div className="metric-card__value">{value}</div>
       {detail ? <div className="metric-card__detail">{detail}</div> : null}
       {percent != null ? (

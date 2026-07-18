@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { ActionDialogState } from "../../lib/action-controller";
 import { actionLabel } from "../../lib/actions";
+import { Icon } from "../../components/Icon";
 
 export interface AppActionDialogProps {
   server: string;
@@ -33,20 +34,45 @@ export function AppActionDialog({
   const label = actionLabel(action);
   const title = `${label} ${app}`;
   const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   // Keyboard accessibility: Escape dismisses the dialog (except mid-run, where a
   // stray keypress must not abandon an in-flight action — Cancel is explicit),
   // and focus moves into the dialog on open so screen-reader/keyboard users land
   // on the confirmation instead of behind it.
   useEffect(() => {
-    if (phase !== "running") dialogRef.current?.focus();
-  }, [phase]);
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus();
+    return () => previousFocusRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape" && phase !== "running") {
         e.preventDefault();
         onDismiss();
+        return;
+      }
+      if (e.key === "Tab" && dialogRef.current) {
+        const focusable = Array.from(
+          dialogRef.current.querySelectorAll<HTMLElement>(
+            'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])',
+          ),
+        );
+        if (focusable.length === 0) {
+          e.preventDefault();
+          dialogRef.current.focus();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     }
     document.addEventListener("keydown", onKey);
@@ -67,11 +93,17 @@ export function AppActionDialog({
         className="action-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label={title}
+        aria-labelledby="action-dialog-title"
+        aria-describedby="action-dialog-impact"
         data-phase={phase}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="action-dialog__title">{title}</h2>
+        <header className="action-dialog__header">
+          <span className="action-dialog__eyebrow">
+            {phase === "confirm" ? "Confirm action" : phase === "running" ? "In progress" : "Action complete"}
+          </span>
+          <h2 className="action-dialog__title" id="action-dialog-title">{title}</h2>
+        </header>
 
         <dl className="action-dialog__meta">
           <div className="action-dialog__row">
@@ -88,8 +120,9 @@ export function AppActionDialog({
           </div>
         </dl>
 
-        <p className="action-dialog__impact" data-safety={safety}>
-          {dialog.impact}
+        <p className="action-dialog__impact" data-safety={safety} id="action-dialog-impact">
+          <Icon name={safety === "availability" ? "warning" : "info"} size={16} />
+          <span>{dialog.impact}</span>
         </p>
 
         {phase === "confirm" ? (
@@ -105,6 +138,7 @@ export function AppActionDialog({
         {phase === "running" ? (
           <div className="action-dialog__body">
             <p className="action-dialog__progress" role="status">
+              <span className="action-dialog__spinner" aria-hidden="true" />
               {label}ing {app}…
             </p>
             <div className="action-dialog__actions">
@@ -182,7 +216,10 @@ function DonePhase({
   return (
     <div className="action-dialog__body">
       <p className={`action-dialog__result action-dialog__result--${status}`} role="status">
-        {message}
+        <span className="action-dialog__result-icon" aria-hidden="true">
+          <Icon name={status === "succeeded" ? "check" : status === "failed" ? "close" : "info"} size={17} />
+        </span>
+        <span>{message}</span>
       </p>
 
       {dialog.result && dialog.result.changes.length > 0 ? (
