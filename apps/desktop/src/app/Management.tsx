@@ -10,6 +10,7 @@ import { NeoLogo } from "../components/NeoLogo";
 import { StatusBadge } from "../components/StatusBadge";
 import { ServerSelector } from "../features/servers/ServerSelector";
 import { FindingsList } from "../features/diagnostics/FindingsList";
+import { LogViewer } from "../features/logs/LogViewer";
 import { statusFor, useServerData } from "./useServerData";
 
 export function Management({ api }: { api: DesktopAPI }) {
@@ -139,6 +140,17 @@ export function Management({ api }: { api: DesktopAPI }) {
         <section className="panel panel--wide" aria-label="Findings">
           <h2 className="panel__title">Findings</h2>
           <FindingsList findings={data.findings} />
+        </section>
+
+        <section className="panel panel--wide" aria-label="Logs">
+          <h2 className="panel__title">Logs</h2>
+          <LogViewer
+            api={api}
+            server={data.selected}
+            targets={data.apps}
+            follow
+            variant="full"
+          />
         </section>
       </div>
     </div>

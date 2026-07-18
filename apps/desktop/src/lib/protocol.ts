@@ -197,6 +197,51 @@ export function aggregateAll(statuses: AggregateStatus[]): AggregateStatus {
   );
 }
 
+// --- Log streaming ---------------------------------------------------------
+
+/** Default recent backlog and hard tail cap, mirroring the Go bridge's
+ * `DefaultLogTail` / `MaxLogTail` (internal/operations/logs.go). Kept here so the
+ * UI can label the default and never request more than the bridge will serve. */
+export const DEFAULT_LOG_TAIL = 200 as const;
+export const MAX_LOG_TAIL = 5_000 as const;
+
+/** Apply the bridge's tail policy locally: a non-positive request means "use the
+ * default recent backlog", and anything above the cap is clamped down. Mirrors
+ * `ClampTail` in internal/operations/logs.go. */
+export function clampTail(tail: number | undefined): number {
+  if (tail === undefined || tail <= 0) return DEFAULT_LOG_TAIL;
+  return Math.min(tail, MAX_LOG_TAIL);
+}
+
+/** Parameters for a `logs.subscribe` request. `target` is an AppSummary id. */
+export interface LogSubscribeInput {
+  server: string;
+  target: string;
+  /** Recent backlog to load. Omitted → DEFAULT_LOG_TAIL; clamped to MAX_LOG_TAIL
+   * by the bridge. */
+  tail?: number;
+  /** Keep streaming new lines after the backlog (follow mode). */
+  follow?: boolean;
+}
+
+/** Why a log stream ended. `cancelled` is the normal result of unsubscribing;
+ * `error` carries a stable BridgeError code. */
+export type LogClosedReason = "eof" | "cancelled" | "error";
+
+/** Callbacks a log subscriber provides. `onLines` receives an already-batched
+ * chunk of lines (the bridge coalesces high-volume output). */
+export interface LogHandlers {
+  onLines: (lines: string[]) => void;
+  onClosed?: (reason: LogClosedReason, error?: BridgeError) => void;
+}
+
+/** A live log subscription handle. `close` cancels the bridge stream and stops
+ * delivering to the handlers. */
+export interface LogSubscription {
+  readonly id: string;
+  close: () => Promise<void>;
+}
+
 /** A transition-triggered desktop notification. `key` deduplicates repeats. */
 export interface DesktopNotification {
   /** Stable dedup/cooldown key: identifies the finding, not the occurrence. */

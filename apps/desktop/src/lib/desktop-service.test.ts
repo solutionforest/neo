@@ -183,6 +183,7 @@ function makeApi(servers: ServerSummary[]): ApiControl {
       summary: "ok",
       changes: [],
     }),
+    subscribeLogs: async () => ({ id: "noop", close: async () => {} }),
   };
 
   return ctrl;

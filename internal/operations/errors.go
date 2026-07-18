@@ -10,7 +10,9 @@ package operations
 type ErrorCode string
 
 const (
+	ErrInvalidRequest     ErrorCode = "invalid_request"
 	ErrServerNotFound     ErrorCode = "server_not_found"
+	ErrAppNotFound        ErrorCode = "app_not_found"
 	ErrSSHUnknownHost     ErrorCode = "ssh_unknown_host"
 	ErrSSHAuthFailed      ErrorCode = "ssh_auth_failed"
 	ErrSSHUnreachable     ErrorCode = "ssh_unreachable"

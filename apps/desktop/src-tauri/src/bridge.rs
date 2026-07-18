@@ -472,6 +472,31 @@ pub async fn app_action(
     state.request("app.action", input).await
 }
 
+/// Start a log stream. The response carries the subscription id; the actual log
+/// lines and the terminal close arrive as `bridge://event` stream events
+/// (`logs.line` / `logs.closed`) tagged with that id, which the frontend
+/// filters. Backpressure and cancellation are owned by the bridge, not here.
+#[tauri::command]
+pub async fn logs_subscribe(
+    state: State<'_, Arc<BridgeManager>>,
+    input: Value,
+) -> Result<Value, BridgeErrorPayload> {
+    state.request("logs.subscribe", input).await
+}
+
+/// Cancel a log stream by its subscription id. Idempotent: unsubscribing an
+/// already-gone stream is not an error, so a window-close racing an explicit
+/// cancel is harmless.
+#[tauri::command]
+pub async fn logs_unsubscribe(
+    state: State<'_, Arc<BridgeManager>>,
+    subscription: String,
+) -> Result<Value, BridgeErrorPayload> {
+    state
+        .request("logs.unsubscribe", json!({ "subscription": subscription }))
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

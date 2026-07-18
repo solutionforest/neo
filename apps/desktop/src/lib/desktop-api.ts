@@ -8,6 +8,9 @@ import type {
   AppSummary,
   BridgeHello,
   Finding,
+  LogHandlers,
+  LogSubscribeInput,
+  LogSubscription,
   OperationResult,
   ServerSnapshot,
   ServerSummary,
@@ -20,6 +23,15 @@ export interface DesktopAPI {
   listApps(server: string): Promise<AppSummary[]>;
   runAppAction(input: AppActionInput): Promise<OperationResult>;
   runDiagnostics(server: string): Promise<Finding[]>;
+  /**
+   * Start a log stream. Lines arrive (batched) via `handlers.onLines`; the
+   * returned handle's `close()` cancels the stream. The bridge owns
+   * cancellation and backpressure — the caller only decides when to stop.
+   */
+  subscribeLogs(
+    input: LogSubscribeInput,
+    handlers: LogHandlers,
+  ): Promise<LogSubscription>;
 }
 
 /**

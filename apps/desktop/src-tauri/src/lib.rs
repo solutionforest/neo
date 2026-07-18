@@ -52,6 +52,8 @@ pub fn run() {
             bridge::app_list,
             bridge::diagnostics_run,
             bridge::app_action,
+            bridge::logs_subscribe,
+            bridge::logs_unsubscribe,
         ])
         .setup(|app| {
             // macOS: behave as a menu-bar accessory (no dock icon) until a full

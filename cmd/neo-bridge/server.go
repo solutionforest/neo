@@ -52,6 +52,9 @@ type Server struct {
 	// activationFn reports the coarse activation state for bridge.hello without
 	// exposing the license key. nil → "unknown".
 	activationFn func() string
+	// subs owns live log-stream subscriptions. It is bound to the output stream
+	// at the start of Run and torn down when Run returns.
+	subs *subManager
 }
 
 // Option configures a Server at construction time. Existing callers that pass
@@ -84,6 +87,7 @@ func NewServer(bridgeVersion, coreVersion string, logger *slog.Logger, opts ...O
 	for _, opt := range opts {
 		opt(s)
 	}
+	s.subs = newSubManager(logger, s.ops)
 	return s
 }
 
@@ -94,6 +98,11 @@ func NewServer(bridgeVersion, coreVersion string, logger *slog.Logger, opts ...O
 func (s *Server) Run(ctx context.Context, in io.Reader, out io.Writer) error {
 	reader := bufio.NewReader(in)
 	w := &syncWriter{w: out}
+	// Log-stream events are written to this same stream from background
+	// goroutines; bind it now and guarantee every stream is torn down (its SSH
+	// session freed) when Run returns for any reason.
+	s.subs.bind(w)
+	defer s.subs.closeAll()
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -168,6 +177,12 @@ func (s *Server) handleLine(ctx context.Context, line []byte, w *syncWriter) (st
 		return false
 	case "app.list":
 		s.handleAppList(ctx, w, req)
+		return false
+	case "logs.subscribe":
+		s.handleLogsSubscribe(ctx, w, req)
+		return false
+	case "logs.unsubscribe":
+		s.handleLogsUnsubscribe(w, req)
 		return false
 	default:
 		// Methods beyond hello/shutdown arrive in later slices. Until then the
