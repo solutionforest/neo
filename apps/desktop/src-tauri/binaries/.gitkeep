@@ -1,0 +1,2 @@
+# Bundled neo-bridge sidecar binaries land here (slice 2+), named per target
+# triple, e.g. neo-bridge-x86_64-pc-windows-msvc.exe. Empty in slice 1.

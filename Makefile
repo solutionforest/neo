@@ -19,7 +19,7 @@ endif
 HOSTOS ?= $(shell uname -s | sed -e 's/Darwin/darwin/' -e 's/Linux/linux/' -e 's/MINGW.*/windows/' -e 's/MSYS.*/windows/' -e 's/CYGWIN.*/windows/')
 HOSTARCH ?= $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/amd64/amd64/' -e 's/arm64/arm64/' -e 's/aarch64/arm64/')
 
-.PHONY: build build-dev build-staging build-all release-local build-neotest build-sandbox-test install clean test fmt docker-build docker-run image-build sandbox
+.PHONY: build build-dev build-staging build-all release-local build-neotest build-sandbox-test install clean test fmt docker-build docker-run image-build sandbox desktop-install desktop-dev desktop-test
 
 DOCKER_GO = docker run --rm -v "$(CURDIR):/src" -w /src $(GO_IMAGE)
 GO_BIN = /usr/local/go/bin/go
@@ -104,3 +104,19 @@ docker-run:
 		-v $$PWD:/workspace \
 		-w /workspace \
 		$(IMAGE):latest
+
+# --- Neo Desktop (apps/desktop) -------------------------------------------
+# Convenience targets for the Tauri 2 tray app. These use the host's Node and
+# Rust toolchains directly — they are separate from the Dockerized CLI build
+# above and never touch the root Go module. The neo-bridge sidecar target lands
+# in the bridge slice (slice 2).
+
+desktop-install:
+	cd apps/desktop && npm ci
+
+desktop-dev:
+	cd apps/desktop && npm run tauri dev
+
+desktop-test:
+	cd apps/desktop && npm run test:run
+	cd apps/desktop/src-tauri && cargo test
