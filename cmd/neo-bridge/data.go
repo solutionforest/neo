@@ -8,8 +8,8 @@ import (
 	"github.com/vxero/neo/internal/operations"
 )
 
-// Data methods: server.list and server.snapshot. Both are read-only and are
-// backed by the shared internal/operations service over the real
+// Read-only data methods are backed by the shared internal/operations service
+// over the real
 // ~/.neo/config.json — there is no second server registry (plan "Phase 3").
 
 // handleServerList answers server.list with every configured server.
@@ -95,6 +95,37 @@ func (s *Server) handleAppList(ctx context.Context, w *syncWriter, req Request) 
 		apps = []operations.AppSummary{}
 	}
 	s.writeResult(w, req.ID, apps)
+}
+
+// handleDiagnosticsRun collects one server observation and evaluates the pure
+// diagnostic rules, including their per-server persistence state.
+func (s *Server) handleDiagnosticsRun(ctx context.Context, w *syncWriter, req Request) {
+	if s.ops == nil {
+		s.writeError(w, req.ID, newError(ErrInternal, "bridge is not configured for data methods", false, nil))
+		return
+	}
+
+	var p snapshotParams
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			s.writeError(w, req.ID, newError(ErrInvalidRequest, "invalid params for diagnostics.run", false, nil))
+			return
+		}
+	}
+	if p.Server == "" {
+		s.writeError(w, req.ID, newError(ErrInvalidRequest, "diagnostics.run requires a 'server' param", false, nil))
+		return
+	}
+
+	findings, err := s.ops.RunDiagnostics(ctx, p.Server)
+	if err != nil {
+		s.writeError(w, req.ID, rpcFromOpError(err))
+		return
+	}
+	if findings == nil {
+		findings = []operations.Finding{}
+	}
+	s.writeResult(w, req.ID, findings)
 }
 
 // rpcFromOpError converts an operation-layer error into a protocol RPCError.

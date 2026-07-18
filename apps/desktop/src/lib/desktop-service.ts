@@ -122,11 +122,8 @@ interface ServerCell extends ServerRuntime {
   /** True once this server has been polled at least once (baseline captured). */
   scanned: boolean;
   timer: TimerHandle | null;
-  /** Prior app states, keyed by app id, for transition detection. */
-  prevAppState: Map<string, string>;
-  prevReachable: boolean | null;
-  /** Findings that were active at the previous poll, keyed by finding id. */
-  prevFindingIds: Set<string>;
+  /** Findings active at the previous poll, including their prior severity. */
+  prevFindings: Map<string, Finding>;
 }
 
 type Listener = (state: ServiceState) => void;
@@ -303,14 +300,32 @@ export class DesktopService {
     this.emit();
 
     try {
-      const [snapshot, apps, findings] = await Promise.all([
+      const [snapshotResult, appsResult, findingsResult] = await Promise.allSettled([
         this.api.getSnapshot(id),
         this.api.listApps(id),
         this.api.runDiagnostics(id),
       ]);
-      this.applySuccess(cell, snapshot, apps, findings);
+
+      // Diagnostics remain useful when server.snapshot fails: the reachability
+      // rule intentionally turns two failed attempts into a finding. Preserve
+      // a previous finding set only when diagnostics itself was unavailable.
+      const findings =
+        findingsResult.status === "fulfilled" ? findingsResult.value : cell.findings;
+      if (snapshotResult.status === "fulfilled" && appsResult.status === "fulfilled") {
+        this.applySuccess(cell, snapshotResult.value, appsResult.value, findings);
+      } else {
+        const error =
+          snapshotResult.status === "rejected"
+            ? snapshotResult.reason
+            : appsResult.status === "rejected"
+              ? appsResult.reason
+              : findingsResult.status === "rejected"
+                ? findingsResult.reason
+                : new Error("poll failed");
+        this.applyFailure(cell, error, findings);
+      }
     } catch (err) {
-      this.applyFailure(cell, err);
+      this.applyFailure(cell, err, cell.findings);
     } finally {
       cell.refreshing = false;
       this.inFlight--;
@@ -343,13 +358,14 @@ export class DesktopService {
     this.markScanned(cell);
   }
 
-  private applyFailure(cell: ServerCell, err: unknown): void {
+  private applyFailure(cell: ServerCell, err: unknown, findings: Finding[]): void {
     const bridgeErr = err instanceof BridgeError ? err : null;
     // A failed poll means the server is unreachable now; detect that transition
     // (the cached snapshot, if any, stays for display but is marked stale).
-    this.detectTransitions(cell, { reachable: false, apps: cell.apps, findings: cell.findings, failed: true });
+    this.detectTransitions(cell, { reachable: false, apps: cell.apps, findings, failed: true });
 
     cell.error = bridgeErr;
+    cell.findings = findings;
     cell.stale = true;
     cell.consecutiveFailures += 1;
     cell.status = "critical"; // unreachable server
@@ -407,19 +423,32 @@ export class DesktopService {
     const notes: DesktopNotification[] = [];
     const name = cell.server.name;
 
-    // 1. Reachability transitions.
-    if (cell.prevReachable !== null && cell.prevReachable !== next.reachable) {
-      if (!next.reachable) {
+    // Finding transitions are the source of notification truth. This prevents
+    // resource/reachability alerts from firing before their rule persistence
+    // is satisfied and catches warning→critical escalation for a stable ID.
+    const current = new Map(next.findings.map((finding) => [finding.id, finding]));
+    for (const f of next.findings) {
+      const previous = cell.prevFindings.get(f.id);
+      const newlyCritical =
+        f.severity === "critical" && previous?.severity !== "critical";
+      const newlyBadWorkload =
+        (f.rule === "app_state" || f.rule === "service_state") && previous === undefined;
+      if (newlyCritical || newlyBadWorkload) {
         notes.push({
-          key: `${cell.server.id}:reachability`,
-          title: `${name} is unreachable`,
-          body: `Neo can no longer reach ${name}.`,
-          severity: "critical",
+          key: `${cell.server.id}:finding:${f.id}`,
+          title: `${name}: ${f.summary}`,
+          body: findingEvidence(f),
+          severity: f.severity,
           server: cell.server.id,
         });
-      } else {
+      }
+    }
+
+    // A reachability finding disappearing is the persisted recovery transition.
+    for (const previous of cell.prevFindings.values()) {
+      if (previous.rule === "server_reachability" && !current.has(previous.id)) {
         notes.push({
-          key: `${cell.server.id}:reachability`,
+          key: `${cell.server.id}:finding:${previous.id}`,
           title: `${name} recovered`,
           body: `${name} is reachable again.`,
           severity: "info",
@@ -428,40 +457,8 @@ export class DesktopService {
       }
     }
 
-    // 2. Application state transitions into an unexpected stopped/unhealthy state.
-    for (const app of next.apps) {
-      const prev = cell.prevAppState.get(app.id);
-      const bad = app.state === "stopped" || app.state === "unhealthy";
-      const wasBad = prev === "stopped" || prev === "unhealthy";
-      if (prev !== undefined && bad && !wasBad) {
-        notes.push({
-          key: `${cell.server.id}:app:${app.id}`,
-          title: `${app.name} ${app.state} on ${name}`,
-          body: `${labelKind(app.kind)} “${app.name}” is ${app.state}.`,
-          severity: app.state === "unhealthy" ? "critical" : "warning",
-          server: cell.server.id,
-        });
-      }
-    }
-
-    // 3. Newly appearing critical findings (e.g. a persisted resource threshold).
-    const nextCritical = next.findings.filter((f) => f.severity === "critical");
-    for (const f of nextCritical) {
-      if (!cell.prevFindingIds.has(f.id)) {
-        notes.push({
-          key: `${cell.server.id}:finding:${f.id}`,
-          title: `${name}: ${f.summary}`,
-          body: f.summary,
-          severity: "critical",
-          server: cell.server.id,
-        });
-      }
-    }
-
     // Update baselines for the next comparison.
-    cell.prevReachable = next.reachable;
-    cell.prevAppState = new Map(next.apps.map((a) => [a.id, a.state]));
-    cell.prevFindingIds = new Set(next.findings.map((f) => f.id));
+    cell.prevFindings = current;
 
     // Suppress everything until the initial scan of ALL servers has completed:
     // the first observation only establishes the baseline.
@@ -545,9 +542,7 @@ function newCell(server: ServerSummary): ServerCell {
     consecutiveFailures: 0,
     scanned: false,
     timer: null,
-    prevAppState: new Map(),
-    prevReachable: null,
-    prevFindingIds: new Set(),
+    prevFindings: new Map(),
   };
 }
 
@@ -565,17 +560,9 @@ function toRuntime(cell: ServerCell): ServerRuntime {
   };
 }
 
-function labelKind(kind: AppSummary["kind"]): string {
-  switch (kind) {
-    case "worker":
-      return "Worker";
-    case "sidecar":
-      return "Sidecar";
-    case "service":
-      return "Service";
-    default:
-      return "Application";
-  }
+function findingEvidence(finding: Finding): string {
+  if (finding.evidence.length === 0) return finding.summary;
+  return finding.evidence.map((item) => `${item.label}: ${item.value}`).join(" · ");
 }
 
 function traySummary(aggregate: AggregateStatus, reachable: number, total: number): string {

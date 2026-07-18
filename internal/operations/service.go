@@ -19,12 +19,13 @@ const (
 )
 
 // Service is the shared operation surface. It is constructed once with its
-// dependencies and is safe to reuse across requests; it holds no per-request
-// state.
+// dependencies and is safe to reuse across requests. Diagnostic persistence is
+// retained per server behind an internal mutex; request-local SSH state is not.
 type Service struct {
-	cfg       ConfigStore
-	connector Connector
-	clock     Clock
+	cfg         ConfigStore
+	connector   Connector
+	clock       Clock
+	diagnostics *diagnosticTracker
 
 	connectTimeout  time.Duration
 	snapshotTimeout time.Duration
@@ -51,6 +52,7 @@ func NewService(cfg ConfigStore, connector Connector, clock Clock, opts Options)
 		cfg:             cfg,
 		connector:       connector,
 		clock:           clock,
+		diagnostics:     newDiagnosticTracker(),
 		connectTimeout:  opts.ConnectTimeout,
 		snapshotTimeout: opts.SnapshotTimeout,
 	}

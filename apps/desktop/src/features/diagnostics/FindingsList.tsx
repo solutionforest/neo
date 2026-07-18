@@ -1,4 +1,5 @@
 import type { Finding } from "../../lib/protocol";
+import { formatRelativeTime } from "../../lib/format";
 
 const SEVERITY_GLYPH: Record<Finding["severity"], string> = {
   info: "ℹ",
@@ -38,6 +39,9 @@ export function FindingsList({ findings, limit }: FindingsListProps) {
                 {f.evidence.map((e) => `${e.label}: ${e.value}`).join(" · ")}
               </span>
             ) : null}
+            <time className="finding__observed" dateTime={f.lastObservedAt}>
+              Last observed {formatRelativeTime(f.lastObservedAt)}
+            </time>
           </div>
         </li>
       ))}
