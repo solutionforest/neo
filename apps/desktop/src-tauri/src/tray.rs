@@ -9,15 +9,11 @@ use tauri::{
 /// Build the tray icon with its menu and click behavior.
 pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let open_i = MenuItem::with_id(app, "open", "Open Neo", true, None::<&str>)?;
-    let dashboard_i =
-        MenuItem::with_id(app, "dashboard", "Open Dashboard", true, None::<&str>)?;
+    let dashboard_i = MenuItem::with_id(app, "dashboard", "Open Dashboard", true, None::<&str>)?;
     let settings_i = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit Neo Desktop", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(
-        app,
-        &[&open_i, &dashboard_i, &sep, &settings_i, &quit_i],
-    )?;
+    let menu = Menu::with_items(app, &[&open_i, &dashboard_i, &sep, &settings_i, &quit_i])?;
 
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("Neo Desktop")

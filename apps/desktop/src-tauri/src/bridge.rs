@@ -192,7 +192,9 @@ impl BridgeManager {
         }
     }
 
-    fn spawn_once(&self) -> Result<(tauri::async_runtime::Receiver<CommandEvent>, CommandChild), String> {
+    fn spawn_once(
+        &self,
+    ) -> Result<(tauri::async_runtime::Receiver<CommandEvent>, CommandChild), String> {
         let command = self
             .app
             .shell()
@@ -401,7 +403,10 @@ fn parse_error(err: &Value) -> BridgeErrorPayload {
         .and_then(Value::as_str)
         .unwrap_or("bridge error")
         .to_string();
-    let retryable = err.get("retryable").and_then(Value::as_bool).unwrap_or(false);
+    let retryable = err
+        .get("retryable")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let details = err
         .get("details")
         .and_then(Value::as_object)
@@ -422,7 +427,9 @@ fn parse_error(err: &Value) -> BridgeErrorPayload {
 // error code, which the frontend maps to a `BridgeError`.
 
 #[tauri::command]
-pub async fn bridge_hello(state: State<'_, Arc<BridgeManager>>) -> Result<Value, BridgeErrorPayload> {
+pub async fn bridge_hello(
+    state: State<'_, Arc<BridgeManager>>,
+) -> Result<Value, BridgeErrorPayload> {
     let mut hello = state.request("bridge.hello", Value::Null).await?;
     // The desktop app version is known only here in the shell; inject it so the
     // frontend's BridgeHello is complete.
@@ -436,7 +443,9 @@ pub async fn bridge_hello(state: State<'_, Arc<BridgeManager>>) -> Result<Value,
 }
 
 #[tauri::command]
-pub async fn server_list(state: State<'_, Arc<BridgeManager>>) -> Result<Value, BridgeErrorPayload> {
+pub async fn server_list(
+    state: State<'_, Arc<BridgeManager>>,
+) -> Result<Value, BridgeErrorPayload> {
     state.request("server.list", Value::Null).await
 }
 
@@ -445,7 +454,9 @@ pub async fn server_snapshot(
     state: State<'_, Arc<BridgeManager>>,
     server: String,
 ) -> Result<Value, BridgeErrorPayload> {
-    state.request("server.snapshot", json!({ "server": server })).await
+    state
+        .request("server.snapshot", json!({ "server": server }))
+        .await
 }
 
 #[tauri::command]
@@ -461,7 +472,9 @@ pub async fn diagnostics_run(
     state: State<'_, Arc<BridgeManager>>,
     server: String,
 ) -> Result<Value, BridgeErrorPayload> {
-    state.request("diagnostics.run", json!({ "server": server })).await
+    state
+        .request("diagnostics.run", json!({ "server": server }))
+        .await
 }
 
 #[tauri::command]

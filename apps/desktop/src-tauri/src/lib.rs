@@ -61,7 +61,7 @@ pub fn run() {
             // management window is opened. Slice-1 approximation of the plan's
             // "no dock icon when only the popover is open" requirement.
             #[cfg(target_os = "macos")]
-            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             // Start supervising the single neo-bridge sidecar. The manager is
             // shared state so the typed commands can issue requests.

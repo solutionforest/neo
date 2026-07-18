@@ -19,7 +19,10 @@ fn build_bridge_sidecar() {
     let repo_root = repo_root();
     let bridge_dir = repo_root.join("cmd").join("neo-bridge");
     println!("cargo:rerun-if-changed={}", bridge_dir.display());
-    println!("cargo:rerun-if-changed={}", repo_root.join("go.mod").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        repo_root.join("go.mod").display()
+    );
     if let Ok(entries) = std::fs::read_dir(&bridge_dir) {
         for entry in entries.flatten() {
             println!("cargo:rerun-if-changed={}", entry.path().display());
