@@ -45,4 +45,28 @@ describe("fixture DesktopAPI", () => {
     const b = await api.listServers();
     expect(b[0].name).not.toBe("mutated");
   });
+
+  it("streams recent log lines and closes a non-follow subscription", async () => {
+    const lines: string[] = [];
+    let closedReason = "";
+    const sub = await api.subscribeLogs(
+      { server: "production", target: "ghost", follow: false },
+      { onLines: (l) => lines.push(...l), onClosed: (reason) => (closedReason = reason) },
+    );
+    await new Promise((r) => setTimeout(r, 5));
+    expect(lines.some((l) => l.includes("Ghost"))).toBe(true);
+    expect(closedReason).toBe("eof");
+    await sub.close();
+  });
+
+  it("caps the requested tail at the loaded backlog", async () => {
+    const lines: string[] = [];
+    const sub = await api.subscribeLogs(
+      { server: "production", target: "ghost", tail: 1 },
+      { onLines: (l) => lines.push(...l) },
+    );
+    await new Promise((r) => setTimeout(r, 5));
+    expect(lines).toHaveLength(1); // only the most recent line
+    await sub.close();
+  });
 });

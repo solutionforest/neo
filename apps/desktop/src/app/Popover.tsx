@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { DesktopAPI } from "../lib/desktop-api";
 import { openManagementWindow } from "../lib/host";
 import {
@@ -12,6 +13,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { MetricCard, type MetricTone } from "../components/MetricCard";
 import { ServerSelector } from "../features/servers/ServerSelector";
 import { FindingsList } from "../features/diagnostics/FindingsList";
+import { LogViewer } from "../features/logs/LogViewer";
 import { statusFor, useServerData } from "./useServerData";
 
 function tone(
@@ -29,6 +31,9 @@ export function Popover({ api }: { api: DesktopAPI }) {
   // The popover is the always-alive menu-bar window: it owns the polling timers
   // and drives the native tray state + notifications (plan Phase 4).
   const data = useServerData(api, { ownsTray: true });
+  // Recent logs are collapsed by default so the popover opens no SSH log stream
+  // until the user asks — LogViewer only subscribes while mounted.
+  const [logsOpen, setLogsOpen] = useState(false);
   const status = statusFor(data);
   const { snapshot } = data;
   const reachable = snapshot?.reachable ?? false;
@@ -137,6 +142,27 @@ export function Popover({ api }: { api: DesktopAPI }) {
 
       <section className="popover__findings" aria-label="Findings">
         <FindingsList findings={data.findings} limit={3} />
+      </section>
+
+      <section className="popover__logs" aria-label="Recent logs">
+        <button
+          type="button"
+          className="popover__logs-toggle"
+          onClick={() => setLogsOpen((v) => !v)}
+          aria-expanded={logsOpen}
+          disabled={data.apps.length === 0}
+        >
+          <span>Recent logs</span>
+          <span aria-hidden="true">{logsOpen ? "▾" : "▸"}</span>
+        </button>
+        {logsOpen && data.apps.length > 0 ? (
+          <LogViewer
+            api={api}
+            server={data.selected}
+            targets={data.apps}
+            variant="compact"
+          />
+        ) : null}
       </section>
 
       <footer className="popover__actions">

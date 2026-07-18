@@ -415,3 +415,117 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---- Logs ---- */
+.logs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.logs__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+.logs__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.logs__field-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.logs__select,
+.logs__search {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.logs__search {
+  flex: 1 1 140px;
+  min-width: 120px;
+}
+.logs__actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.logs__status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  min-height: 18px;
+}
+.logs__pending {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: transparent;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.logs__error {
+  color: var(--crit);
+  font-weight: 600;
+}
+.logs__ended {
+  font-style: italic;
+}
+.logs__body {
+  margin: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: flex;
+  flex-direction: column;
+}
+.logs--full .logs__body {
+  height: 320px;
+}
+.logs--compact .logs__body {
+  height: 150px;
+}
+.logs__line {
+  display: block;
+}
+.logs__empty {
+  color: var(--text-muted);
+}
+
+/* Recent-logs disclosure in the popover */
+.popover__logs {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.popover__logs-toggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.popover__logs-toggle:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}

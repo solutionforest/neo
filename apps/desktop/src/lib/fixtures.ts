@@ -3,14 +3,18 @@
 // Production builds must not use this; see createDesktopAPI() in desktop-api.ts.
 
 import type { DesktopAPI } from "./desktop-api";
-import type {
-  AppActionInput,
-  AppSummary,
-  BridgeHello,
-  Finding,
-  OperationResult,
-  ServerSnapshot,
-  ServerSummary,
+import {
+  clampTail,
+  type AppActionInput,
+  type AppSummary,
+  type BridgeHello,
+  type Finding,
+  type LogHandlers,
+  type LogSubscribeInput,
+  type LogSubscription,
+  type OperationResult,
+  type ServerSnapshot,
+  type ServerSummary,
 } from "./protocol";
 
 const GiB = 1024 * 1024 * 1024;
@@ -140,6 +144,24 @@ const FINDINGS: Record<string, Finding[]> = {
   ],
 };
 
+/** Deterministic recent-log lines per workload id, for the log viewer's fixture
+ * mode. A target with no fixture gets a short generic backlog. */
+const LOG_LINES: Record<string, string[]> = {
+  ghost: [
+    "[ghost] Booting Ghost 5.x in production",
+    "[ghost] Database is connected",
+    "[ghost] Ghost is running on http://0.0.0.0:2368",
+    "[ghost] GET /  200  12ms",
+    "[ghost] GET /assets/built/screen.css  200  3ms",
+    "[ghost] GET /ghost/  200  41ms",
+  ],
+  web: [
+    "[web] listening on :3000",
+    "[web] GET /health  200  1ms",
+    "[web] GET /  200  8ms",
+  ],
+};
+
 /** Options let tests inject latency or a fixed clock without touching data. */
 export interface FixtureOptions {
   /** Artificial per-call delay in ms (default 0 for synchronous tests). */
@@ -184,6 +206,56 @@ export function createFixtureDesktopAPI(options: FixtureOptions = {}): DesktopAP
         ],
       };
       return delay(result);
+    },
+    subscribeLogs: (
+      input: LogSubscribeInput,
+      handlers: LogHandlers,
+    ): Promise<LogSubscription> => {
+      const tail = clampTail(input.tail);
+      const backlog = (LOG_LINES[input.target] ?? [
+        `[${input.target}] no fixture logs; showing a placeholder line`,
+      ]).slice(-tail);
+
+      let closed = false;
+      const timers: ReturnType<typeof setTimeout>[] = [];
+
+      // Deliver the recent backlog on the next tick so subscribers can attach
+      // handlers exactly as they would against the real async bridge.
+      timers.push(
+        setTimeout(() => {
+          if (closed) return;
+          handlers.onLines(backlog);
+          if (!input.follow) {
+            handlers.onClosed?.("eof");
+          }
+        }, 0),
+      );
+
+      // Follow mode: emit a couple of synthetic lines so the live view is not
+      // frozen. Bounded and cleared on close so tests never leak timers.
+      if (input.follow) {
+        for (let i = 1; i <= 2; i++) {
+          timers.push(
+            setTimeout(() => {
+              if (closed) return;
+              handlers.onLines([`[${input.target}] heartbeat ${i}`]);
+            }, i),
+          );
+        }
+      }
+
+      const sub: LogSubscription = {
+        id: `fixture-${input.target}`,
+        close: () => {
+          if (!closed) {
+            closed = true;
+            for (const t of timers) clearTimeout(t);
+            handlers.onClosed?.("cancelled");
+          }
+          return Promise.resolve();
+        },
+      };
+      return Promise.resolve(sub);
     },
   };
 }
