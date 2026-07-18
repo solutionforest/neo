@@ -184,6 +184,9 @@ func (s *Server) handleLine(ctx context.Context, line []byte, w *syncWriter) (st
 	case "logs.unsubscribe":
 		s.handleLogsUnsubscribe(w, req)
 		return false
+	case "diagnostics.run":
+		s.handleDiagnosticsRun(ctx, w, req)
+		return false
 	default:
 		// Methods beyond hello/shutdown arrive in later slices. Until then the
 		// bridge answers with a stable code so the UI can react without parsing

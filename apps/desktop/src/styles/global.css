@@ -301,6 +301,7 @@ button {
 }
 .finding__summary { font-weight: 600; }
 .finding__evidence { font-size: 11px; color: var(--text-muted); }
+.finding__observed { font-size: 11px; color: var(--text-muted); }
 .finding--more {
   justify-content: center;
   color: var(--text-muted);

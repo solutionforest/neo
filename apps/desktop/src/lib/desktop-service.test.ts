@@ -85,12 +85,19 @@ function app(id: string, state: AppSummary["state"]): AppSummary {
   return { id, name: id, image: "img:1", state, kind: "app" };
 }
 
-function finding(id: string, severity: Finding["severity"]): Finding {
+function finding(
+  id: string,
+  severity: Finding["severity"],
+  rule = "test",
+): Finding {
   return {
     id,
-    rule: "test",
+    rule,
     severity,
-    summary: `${id} finding`,
+    summary:
+      rule === "server_reachability"
+        ? "Server was unreachable"
+        : `${id} finding`,
     evidence: [],
     firstObservedAt: "2026-07-18T09:00:00Z",
     lastObservedAt: "2026-07-18T09:00:00Z",
@@ -392,6 +399,9 @@ describe("DesktopService notifications", () => {
   it("stays silent during the initial scan", async () => {
     const h = makeService(servers("a"));
     h.ctrl.setReachable("a", false); // unreachable from the very first observation
+    h.ctrl.setFindings("a", [
+      finding("server_reachability", "critical", "server_reachability"),
+    ]);
     await h.service.start();
     await flush();
     expect(h.notes).toHaveLength(0); // first observation is baseline only
@@ -403,6 +413,9 @@ describe("DesktopService notifications", () => {
     await flush(); // baseline: reachable
 
     h.ctrl.setReachable("a", false);
+    h.ctrl.setFindings("a", [
+      finding("server_reachability", "critical", "server_reachability"),
+    ]);
     h.service.manualRefresh("a");
     await flush();
     expect(h.notes).toHaveLength(1);
@@ -415,9 +428,13 @@ describe("DesktopService notifications", () => {
     await h.service.start();
     await flush();
     h.ctrl.setReachable("a", false);
+    h.ctrl.setFindings("a", [
+      finding("server_reachability", "critical", "server_reachability"),
+    ]);
     h.service.manualRefresh("a");
     await flush();
     h.ctrl.setReachable("a", true);
+    h.ctrl.setFindings("a", []);
     h.sched.now += 400_000; // outside the reachability cooldown
     h.service.manualRefresh("a");
     await flush();
@@ -430,9 +447,10 @@ describe("DesktopService notifications", () => {
     await h.service.start();
     await flush();
     h.ctrl.setApps("a", [app("web", "stopped")]);
+    h.ctrl.setFindings("a", [finding("app_state:web", "warning", "app_state")]);
     h.service.manualRefresh("a");
     await flush();
-    const appNote = h.notes.find((n) => n.key.includes(":app:web"));
+    const appNote = h.notes.find((n) => n.key.includes("app_state:web"));
     expect(appNote).toBeDefined();
     expect(appNote!.severity).toBe("warning");
   });
@@ -442,6 +460,9 @@ describe("DesktopService notifications", () => {
     await h.service.start();
     await flush();
     h.ctrl.setReachable("a", false);
+    h.ctrl.setFindings("a", [
+      finding("server_reachability", "critical", "server_reachability"),
+    ]);
     h.service.manualRefresh("a");
     await flush();
     expect(h.notes).toHaveLength(1);
@@ -449,10 +470,14 @@ describe("DesktopService notifications", () => {
     // Still unreachable on the next poll — no NEW transition, and even a
     // re-transition inside the 5-min window would be suppressed by cooldown.
     h.ctrl.setReachable("a", true);
+    h.ctrl.setFindings("a", []);
     h.sched.now += 2_000;
     h.service.manualRefresh("a"); // recovery transition, but within cooldown
     await flush();
     h.ctrl.setReachable("a", false);
+    h.ctrl.setFindings("a", [
+      finding("server_reachability", "critical", "server_reachability"),
+    ]);
     h.sched.now += 2_000;
     h.service.manualRefresh("a"); // unreachable again, still within cooldown
     await flush();
@@ -464,15 +489,34 @@ describe("DesktopService notifications", () => {
     await h.service.start();
     await flush();
     h.ctrl.setReachable("a", false);
+    h.ctrl.setFindings("a", [
+      finding("server_reachability", "critical", "server_reachability"),
+    ]);
     h.service.manualRefresh("a");
     await flush();
     expect(h.notes).toHaveLength(1);
 
     h.ctrl.setReachable("a", true);
+    h.ctrl.setFindings("a", []);
     h.sched.now += 301_000; // past the 5-min cooldown
     h.service.manualRefresh("a");
     await flush();
     expect(h.notes).toHaveLength(2); // recovery allowed after cooldown
+  });
+
+  it("notifies when a persisted finding escalates from warning to critical", async () => {
+    const h = makeService(servers("a"), undefined, 0);
+    h.ctrl.setFindings("a", [finding("cpu_usage", "warning", "cpu_usage")]);
+    await h.service.start();
+    await flush(); // warning is the initial baseline and is silent
+
+    h.ctrl.setFindings("a", [finding("cpu_usage", "critical", "cpu_usage")]);
+    h.service.manualRefresh("a");
+    await flush();
+
+    expect(h.notes).toHaveLength(1);
+    expect(h.notes[0].key).toContain("cpu_usage");
+    expect(h.notes[0].severity).toBe("critical");
   });
 });
 

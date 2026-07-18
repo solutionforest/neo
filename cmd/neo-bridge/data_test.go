@@ -185,6 +185,58 @@ func TestAppListUnknownServerMapsToCode(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsRunMethodAppliesPersistence(t *testing.T) {
+	cfg := &config.Config{
+		Current: "production",
+		Servers: map[string]config.Server{"production": {Name: "production", Host: "root@10.0.0.1", Port: 22}},
+	}
+	srv := serverWithOps(t, stubConfigStore{cfg: cfg}, stubConnector{exec: stubExecutor{user: "root"}})
+	input := `{"version":1,"id":"d1","method":"diagnostics.run","params":{"server":"production"}}` + "\n" +
+		`{"version":1,"id":"d2","method":"diagnostics.run","params":{"server":"production"}}` + "\n" +
+		`{"version":1,"id":"d3","method":"diagnostics.run","params":{"server":"production"}}` + "\n"
+	resp := drive(t, srv, input)
+	if len(resp) != 3 {
+		t.Fatalf("want 3 responses, got %+v", resp)
+	}
+	var findings []operations.Finding
+	remarshal(t, resp[2].Result, &findings)
+	if len(findings) != 0 {
+		t.Fatalf("healthy diagnostic observation produced findings: %+v", findings)
+	}
+}
+
+func TestDiagnosticsRunMissingParam(t *testing.T) {
+	srv := serverWithOps(t, stubConfigStore{cfg: &config.Config{Servers: map[string]config.Server{}}}, stubConnector{})
+	resp := drive(t, srv, `{"version":1,"id":"d1","method":"diagnostics.run"}`+"\n")
+	if len(resp) != 1 || resp[0].Error == nil || resp[0].Error.Code != ErrInvalidRequest {
+		t.Fatalf("want invalid_request for missing server, got %+v", resp)
+	}
+}
+
+func TestDiagnosticsRunReportsSecondUnreachableAttempt(t *testing.T) {
+	cfg := &config.Config{
+		Servers: map[string]config.Server{"production": {Name: "production", Host: "root@10.0.0.1", Port: 22}},
+	}
+	srv := serverWithOps(t, stubConfigStore{cfg: cfg}, stubConnector{
+		err: errors.New("dial tcp 10.0.0.1:22: connect: connection refused"),
+	})
+	input := `{"version":1,"id":"d1","method":"diagnostics.run","params":{"server":"production"}}` + "\n" +
+		`{"version":1,"id":"d2","method":"diagnostics.run","params":{"server":"production"}}` + "\n"
+	resp := drive(t, srv, input)
+	if len(resp) != 2 || resp[0].Error != nil || resp[1].Error != nil {
+		t.Fatalf("unexpected diagnostics responses: %+v", resp)
+	}
+	var first, second []operations.Finding
+	remarshal(t, resp[0].Result, &first)
+	remarshal(t, resp[1].Result, &second)
+	if len(first) != 0 {
+		t.Fatalf("first unreachable attempt must establish persistence only: %+v", first)
+	}
+	if len(second) != 1 || second[0].Rule != "server_reachability" || second[0].Severity != operations.SeverityCritical {
+		t.Fatalf("second attempt must return critical reachability finding: %+v", second)
+	}
+}
+
 func TestDataMethodsUnconfigured(t *testing.T) {
 	// A server with no operations service must fail cleanly, not panic.
 	srv := NewServer("1", "1", slog.New(slog.NewTextHandler(io.Discard, nil)))
