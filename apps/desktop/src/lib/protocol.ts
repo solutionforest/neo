@@ -99,15 +99,28 @@ export interface ServerSnapshot {
   server: ServerSummary;
   reachable: boolean;
   observedAt: string;
+  /** A metric that the server could not report (a missing platform command)
+   * arrives as `null`, never a misleading `0` — mirrors the nil pointers in the
+   * Go `internal/operations.Snapshot`. The UI must treat `null` as "unavailable". */
   latencyMs: number;
-  cpuPercent: number;
-  ramUsedBytes: number;
-  ramTotalBytes: number;
-  diskUsedBytes: number;
-  diskTotalBytes: number;
-  uptimeSeconds: number;
+  cpuPercent: number | null;
+  ramUsedBytes: number | null;
+  ramTotalBytes: number | null;
+  diskUsedBytes: number | null;
+  diskTotalBytes: number | null;
+  uptimeSeconds: number | null;
   apps: WorkloadCounts;
   services: WorkloadCounts;
+  containers?: ContainerStat[];
+}
+
+/** Live per-container resource usage. Each numeric field is nullable for the
+ * same "unavailable, not zero" reason as ServerSnapshot's metrics. */
+export interface ContainerStat {
+  name: string;
+  cpuPercent: number | null;
+  memUsedBytes: number | null;
+  memLimitBytes: number | null;
 }
 
 export type AppState = "running" | "stopped" | "restarting" | "unhealthy";

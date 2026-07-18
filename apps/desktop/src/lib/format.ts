@@ -2,9 +2,14 @@
 
 const KiB = 1024;
 
+// Metric values are nullable: the bridge sends `null` for a metric the server
+// could not report (never a misleading 0). Every helper treats null/undefined
+// like a non-finite value and renders the "unavailable" fallback.
+type Metric = number | null | undefined;
+
 /** Human-readable bytes, e.g. 6.1 GB. Binary units, one decimal above KB. */
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+export function formatBytes(bytes: Metric): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB", "PB"];
   let value = bytes;
   let unit = 0;
@@ -16,19 +21,19 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(digits)} ${units[unit]}`;
 }
 
-/** Percentage of used/total, clamped to [0, 100]; 0 when total is 0. */
-export function usagePercent(used: number, total: number): number {
-  if (!Number.isFinite(total) || total <= 0) return 0;
+/** Percentage of used/total, clamped to [0, 100]; 0 when total is missing/0. */
+export function usagePercent(used: Metric, total: Metric): number {
+  if (used == null || total == null || !Number.isFinite(total) || total <= 0) return 0;
   return Math.min(100, Math.max(0, (used / total) * 100));
 }
 
-export function formatPercent(value: number): string {
-  if (!Number.isFinite(value)) return "—";
+export function formatPercent(value: Metric): string {
+  if (value == null || !Number.isFinite(value)) return "—";
   return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
 }
 
-export function formatLatency(ms: number): string {
-  if (!Number.isFinite(ms) || ms <= 0) return "—";
+export function formatLatency(ms: Metric): string {
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return "—";
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)} s`;
   return `${Math.round(ms)} ms`;
 }

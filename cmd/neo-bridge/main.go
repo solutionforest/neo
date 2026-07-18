@@ -22,6 +22,10 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+
+	"github.com/vxero/neo/internal/config"
+	"github.com/vxero/neo/internal/license"
+	"github.com/vxero/neo/internal/operations"
 )
 
 // Stamped at build time via -ldflags (see the Makefile's build-bridge target).
@@ -46,7 +50,30 @@ func main() {
 		"bridgeVersion", bridgeVersion,
 		"coreVersion", coreVersion)
 
-	srv := NewServer(bridgeVersion, coreVersion, logger)
+	// The shared operation service backs the data methods over the real
+	// ~/.neo/config.json via SSH. Deadlines default to the plan's 12s connect /
+	// 15s snapshot budgets.
+	ops := operations.NewService(
+		operations.ConfigLoader(config.Load),
+		operations.NewSSHConnector(),
+		operations.SystemClock(),
+		operations.Options{},
+	)
+
+	// bridge.hello reports activation without ever exposing the license key.
+	// Activation() is cache-only, so hello never blocks on the license server.
+	activation := func() string {
+		cfg, err := config.Load()
+		if err != nil {
+			return string(license.ActivationUnknown)
+		}
+		return string(license.Activation(cfg.LicenseKey))
+	}
+
+	srv := NewServer(bridgeVersion, coreVersion, logger,
+		WithOperations(ops),
+		WithActivation(activation),
+	)
 
 	done := make(chan error, 1)
 	go func() { done <- srv.Run(ctx, os.Stdin, os.Stdout) }()

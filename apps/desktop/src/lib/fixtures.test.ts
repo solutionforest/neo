@@ -13,7 +13,9 @@ describe("fixture DesktopAPI", () => {
   it("returns a reachable production snapshot", async () => {
     const snap = await api.getSnapshot("production");
     expect(snap.reachable).toBe(true);
-    expect(snap.ramTotalBytes).toBeGreaterThan(snap.ramUsedBytes);
+    // Metrics are nullable (unavailable → null); the production fixture reports them.
+    expect(snap.ramTotalBytes).not.toBeNull();
+    expect(snap.ramTotalBytes!).toBeGreaterThan(snap.ramUsedBytes!);
   });
 
   it("models an unreachable edge server", async () => {

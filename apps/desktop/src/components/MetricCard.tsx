@@ -5,8 +5,8 @@ export interface MetricCardProps {
   value: string;
   /** Optional secondary line, e.g. "6.1 GB / 16 GB". */
   detail?: string;
-  /** Optional 0–100 gauge. */
-  percent?: number;
+  /** Optional 0–100 gauge. `null` (an unavailable metric) hides the gauge. */
+  percent?: number | null;
   tone?: MetricTone;
 }
 
@@ -22,7 +22,7 @@ export function MetricCard({
       <div className="metric-card__label">{label}</div>
       <div className="metric-card__value">{value}</div>
       {detail ? <div className="metric-card__detail">{detail}</div> : null}
-      {percent !== undefined ? (
+      {percent != null ? (
         <div
           className="metric-card__gauge"
           role="meter"

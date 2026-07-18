@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"runtime"
 	"sync"
+
+	"github.com/vxero/neo/internal/operations"
 )
 
 // HelloResult is the payload of a successful bridge.hello. It reports the
@@ -42,20 +44,47 @@ type Server struct {
 	log           *slog.Logger
 
 	seen map[string]struct{} // request ids observed this session (must be unique)
+
+	// ops backs the data methods (server.list, server.snapshot). It is nil in
+	// the walking-skeleton tests that only exercise hello/shutdown; data
+	// handlers report internal_error until it is wired via WithOperations.
+	ops *operations.Service
+	// activationFn reports the coarse activation state for bridge.hello without
+	// exposing the license key. nil → "unknown".
+	activationFn func() string
+}
+
+// Option configures a Server at construction time. Existing callers that pass
+// no options (the protocol/walking-skeleton tests) keep working unchanged.
+type Option func(*Server)
+
+// WithOperations injects the shared operation service that backs the data
+// methods.
+func WithOperations(ops *operations.Service) Option {
+	return func(s *Server) { s.ops = ops }
+}
+
+// WithActivation injects the activation-status provider used by bridge.hello.
+func WithActivation(fn func() string) Option {
+	return func(s *Server) { s.activationFn = fn }
 }
 
 // NewServer builds a Server. A nil logger is replaced with a no-op logger so the
 // protocol stream on stdout is never contaminated by fallback logging.
-func NewServer(bridgeVersion, coreVersion string, logger *slog.Logger) *Server {
+func NewServer(bridgeVersion, coreVersion string, logger *slog.Logger, opts ...Option) *Server {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	return &Server{
+	s := &Server{
 		bridgeVersion: bridgeVersion,
 		coreVersion:   coreVersion,
 		log:           logger,
 		seen:          map[string]struct{}{},
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Run reads requests from in and writes responses/events to out until in is
@@ -131,6 +160,12 @@ func (s *Server) handleLine(ctx context.Context, line []byte, w *syncWriter) (st
 		s.writeResult(w, req.ID, ShutdownResult{OK: true})
 		s.log.Info("bridge.shutdown received")
 		return true
+	case "server.list":
+		s.handleServerList(ctx, w, req)
+		return false
+	case "server.snapshot":
+		s.handleServerSnapshot(ctx, w, req)
+		return false
 	default:
 		// Methods beyond hello/shutdown arrive in later slices. Until then the
 		// bridge answers with a stable code so the UI can react without parsing
@@ -142,13 +177,19 @@ func (s *Server) handleLine(ctx context.Context, line []byte, w *syncWriter) (st
 }
 
 func (s *Server) hello() HelloResult {
+	activation := "unknown"
+	if s.activationFn != nil {
+		if v := s.activationFn(); v != "" {
+			activation = v
+		}
+	}
 	return HelloResult{
 		ProtocolVersion: ProtocolVersion,
 		BridgeVersion:   s.bridgeVersion,
 		CoreVersion:     s.coreVersion,
 		Platform:        runtime.GOOS,
 		Arch:            runtime.GOARCH,
-		Activation:      "unknown",
+		Activation:      activation,
 	}
 }
 
