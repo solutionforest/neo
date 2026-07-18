@@ -195,4 +195,29 @@ describe("UpdateController", () => {
     resolveCheck(null);
     await flush();
   });
+
+  it("reports checks and flags signature failures to the observer", async () => {
+    const observer = { recordUpdateCheck: vi.fn(), recordUpdateFailure: vi.fn() };
+    const badSignature = makeUpdate("0.3.0", {
+      downloadAndInstall: vi
+        .fn()
+        .mockRejectedValue(new Error("signature verification failed")),
+    });
+    const backend = makeBackend([badSignature]);
+    const c = new UpdateController(backend, {
+      startupDelayMs: STARTUP,
+      intervalMs: INTERVAL,
+      observer,
+    });
+
+    await c.checkSilently();
+    expect(observer.recordUpdateCheck).toHaveBeenCalledWith(true, "0.3.0");
+
+    await c.install();
+    expect(observer.recordUpdateFailure).toHaveBeenCalledWith(
+      "signature verification failed",
+    );
+    expect(c.getState().phase).toBe("error");
+    c.stop();
+  });
 });

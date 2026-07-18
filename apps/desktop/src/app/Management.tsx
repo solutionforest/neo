@@ -17,6 +17,7 @@ import { FindingsList } from "../features/diagnostics/FindingsList";
 import { LogViewer } from "../features/logs/LogViewer";
 import { AppActionDialog } from "../features/actions/AppActionDialog";
 import { ActionHistoryList } from "../features/actions/ActionHistoryList";
+import { DiagnosticBundlePanel } from "../features/diagnostics/DiagnosticBundlePanel";
 import { statusFor, useServerData } from "./useServerData";
 import { useAppActions } from "./useAppActions";
 
@@ -177,6 +178,8 @@ export function Management({ api }: { api: DesktopAPI }) {
         </section>
 
         <AboutPanel api={api} />
+
+        <DiagnosticBundlePanel servers={data.servers} />
 
         <section className="panel panel--wide" aria-label="Logs">
           <h2 className="panel__title">Logs</h2>

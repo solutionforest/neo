@@ -161,3 +161,54 @@ with sidecar-handshake smoke tests); `bridge.hello` now reports the build
 commit alongside versions, shown in the management window's About panel; and
 in-app update behavior per the plan (silent 6-hourly checks, prompt before
 download, session-scoped deferral, signature-verified installs).
+
+Slice 9 (beta hardening): laptop-lifecycle resilience, accessibility, local
+observability, and a redacted diagnostic bundle.
+
+- **Sleep/wake & network transitions** — a `LifecycleMonitor`
+  (`src/lib/lifecycle-monitor.ts`) infers wake from a frozen-timer gap and
+  listens for `online`/focus; each transition collapses (debounced) into one
+  `DesktopService.refreshAll()` that re-checks every server and bypasses backoff.
+  Only the always-alive popover runs it, so opening the management window never
+  adds a second reconnect-refresh loop.
+- **Accessibility** — a single visible focus ring across all controls; the action
+  dialog takes focus on open and closes on `Escape` (never mid-run); and
+  `prefers-reduced-motion`, `prefers-reduced-transparency`, and
+  `prefers-contrast` are all honored in `global.css`. Status stays distinguishable
+  by shape/text, not color alone.
+- **Local observability** (`src/lib/observability.ts`) — a bounded ring buffer
+  recording versions, bridge lifecycle (`bridge://ready|error|unavailable`),
+  request method/duration/error-code (never parameters), poll scheduling and
+  cache age, notification transitions, and update checks + signature failures.
+- **Export Diagnostic Bundle** — the management window's Support panel previews a
+  fully redacted bundle (`src/lib/diagnostic-bundle.ts`) before writing it; it
+  excludes private keys, passwords/passphrases, license keys, app env values, and
+  full server logs unless explicitly opted in after preview. The Rust
+  `export_diagnostic_bundle` command chooses the directory and writes the bytes
+  (the webview never picks a path).
+- **Performance** — the log viewer paints only the most recent
+  `MAX_RENDERED_LINES` window (full history stays searchable) to bound DOM work
+  on a live follow stream.
+
+### SSH edge cases (strict, no accept-all)
+
+The bridge connector dials **non-interactively** (`internal/operations/deps.go`),
+so unknown hosts are **rejected**, changed host keys are **always rejected**, and
+there is no "accept all host keys" option anywhere in the desktop/bridge path
+(`ssh.InsecureIgnoreHostKey` is reachable only via the test-only
+`SetInsecureHostKey`). Every SSH failure — agent key, configured key file,
+encrypted key the bridge cannot unlock, missing key, unknown host — is mapped to
+a stable code (`ssh_unknown_host` / `ssh_auth_failed` / `ssh_unreachable` /
+`operation_timeout`) the UI branches on; see
+`TestSnapshotConnectErrorsAreClassified`.
+
+### Manual platform matrix (verify before public beta)
+
+Automated tests cover the deterministic logic; these require real hardware/OSes:
+
+- [ ] macOS current + previous major (Apple Silicon); macOS Intel before claiming Intel support.
+- [ ] Windows 11 x64; Windows 10 x64 while the WebView2 baseline supports it.
+- [ ] Light, dark, scaled displays, and multiple displays.
+- [ ] Laptop sleep/wake, offline↔online, and VPN up/down each trigger one debounced refresh.
+- [ ] SSH: agent key, configured key file, encrypted key, missing key, and unknown host.
+- [ ] Keyboard-only navigation and a screen reader across the popover and management window.

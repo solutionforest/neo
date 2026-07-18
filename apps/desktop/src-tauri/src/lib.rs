@@ -46,6 +46,7 @@ pub fn run() {
             commands::quit_app,
             commands::set_tray_state,
             commands::notify,
+            commands::export_diagnostic_bundle,
             bridge::bridge_hello,
             bridge::server_list,
             bridge::server_snapshot,

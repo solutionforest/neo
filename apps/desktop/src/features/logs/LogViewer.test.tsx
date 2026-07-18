@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { LogViewer } from "./LogViewer";
+import { LogViewer, MAX_RENDERED_LINES } from "./LogViewer";
 import { createFixtureDesktopAPI } from "../../lib/fixtures";
+import type { DesktopAPI } from "../../lib/desktop-api";
 import type { AppSummary } from "../../lib/protocol";
 
 const targets: AppSummary[] = [
@@ -53,6 +54,30 @@ describe("LogViewer", () => {
     const pause = screen.getByRole("button", { name: "Pause" });
     await user.click(pause);
     expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
+  });
+
+  it("caps rendered lines to the visible window while keeping the full count", async () => {
+    // A stub that dumps far more than the render cap in one batch, so we exercise
+    // the DOM-node bound (Slice 9 performance pass) rather than fixture timing.
+    const total = MAX_RENDERED_LINES + 500;
+    const api: DesktopAPI = {
+      ...createFixtureDesktopAPI(),
+      subscribeLogs: async (_input, handlers) => {
+        handlers.onLines(Array.from({ length: total }, (_v, i) => `line ${i}`));
+        return { id: "sub", close: async () => {} };
+      },
+    };
+    render(<LogViewer api={api} server="production" targets={targets} />);
+
+    const body = screen.getByLabelText("Log output");
+    await waitFor(() =>
+      expect(body.querySelectorAll(".logs__line").length).toBe(MAX_RENDERED_LINES),
+    );
+    // The newest line is painted; the oldest is not, but is counted.
+    expect(body).toHaveTextContent(`line ${total - 1}`);
+    expect(body).not.toHaveTextContent(/\bline 0\b/);
+    expect(screen.getByText(/500 earlier lines hidden/)).toBeInTheDocument();
+    expect(screen.getByText(`${total} lines`)).toBeInTheDocument();
   });
 
   it("shows an empty state when the server has no workloads", async () => {

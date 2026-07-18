@@ -4,6 +4,7 @@ import {
   createTauriUpdateBackend,
   type UpdateControllerState,
 } from "../lib/update-controller";
+import { getObservability } from "../lib/observability";
 
 export interface UpdatesHook {
   state: UpdateControllerState;
@@ -22,7 +23,11 @@ export interface UpdatesHook {
  */
 export function useUpdates(controller?: UpdateController): UpdatesHook {
   const owned = useMemo(
-    () => controller ?? new UpdateController(createTauriUpdateBackend()),
+    () =>
+      controller ??
+      new UpdateController(createTauriUpdateBackend(), {
+        observer: getObservability(),
+      }),
     [controller],
   );
 

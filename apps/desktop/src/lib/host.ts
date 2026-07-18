@@ -18,6 +18,23 @@ async function tryInvoke(command: string, args?: Record<string, unknown>): Promi
   }
 }
 
+/**
+ * Persist an exported diagnostic bundle to disk via the trusted shell, returning
+ * the file path it was written to. Unlike the fire-and-forget window actions
+ * above this must surface success/failure, so it does not swallow errors. The
+ * body is already redacted by the frontend (see diagnostic-bundle.ts); Rust only
+ * chooses the directory and writes the bytes. Outside Tauri it returns null so
+ * browser dev/tests exercise the flow without a native filesystem.
+ */
+export async function exportDiagnosticBundle(
+  filename: string,
+  content: string,
+): Promise<string | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<string>("export_diagnostic_bundle", { filename, content });
+}
+
 /** Open (and focus) the larger management window. */
 export function openManagementWindow(): Promise<void> {
   return tryInvoke("open_management_window");

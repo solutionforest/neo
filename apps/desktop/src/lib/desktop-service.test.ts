@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DesktopService, type ServiceDeps, type TimerHandle } from "./desktop-service";
+import { ObservabilityLog } from "./observability";
 import {
   BridgeError,
   type AggregateStatus,
@@ -213,6 +214,7 @@ interface Harness {
   ctrl: ApiControl;
   trayStates: AggregateStatus[];
   notes: DesktopNotification[];
+  obs: ObservabilityLog;
 }
 
 function makeService(list: ServerSummary[], cfg?: ServiceDeps["config"], randomValue = 0): Harness {
@@ -220,6 +222,7 @@ function makeService(list: ServerSummary[], cfg?: ServiceDeps["config"], randomV
   const ctrl = makeApi(list);
   const trayStates: AggregateStatus[] = [];
   const notes: DesktopNotification[] = [];
+  const obs = new ObservabilityLog({ clock: sched.clock });
   const service = new DesktopService({
     api: ctrl.api,
     clock: sched.clock,
@@ -229,8 +232,9 @@ function makeService(list: ServerSummary[], cfg?: ServiceDeps["config"], randomV
     onTray: (s) => trayStates.push(s),
     onNotify: (n) => notes.push(n),
     config: cfg,
+    obs,
   });
-  return { service, sched, ctrl, trayStates, notes };
+  return { service, sched, ctrl, trayStates, notes, obs };
 }
 
 // --- tests -----------------------------------------------------------------
@@ -538,6 +542,46 @@ describe("DesktopService single-instance", () => {
     unsub1();
     unsub2();
     unsub3();
+  });
+});
+
+describe("DesktopService wake/reconnect refresh", () => {
+  it("refreshAll re-checks every server and bypasses backoff", async () => {
+    const h = makeService(servers("a", "b"));
+    await h.service.start();
+    await flush();
+    expect(h.ctrl.snapshotCalls).toEqual({ a: 1, b: 1 });
+
+    // Drive server "a" unreachable so it is in backoff, then wake: refreshAll
+    // must re-poll it immediately rather than waiting out the backoff ladder.
+    h.ctrl.setReachable("a", false);
+    await h.sched.advance(30_000); // "a" fails, enters backoff
+    const before = { ...h.ctrl.snapshotCalls };
+
+    h.service.refreshAll("wake");
+    await flush();
+
+    expect(h.ctrl.snapshotCalls.a).toBeGreaterThan(before.a);
+    expect(h.ctrl.snapshotCalls.b).toBeGreaterThan(before.b);
+  });
+
+  it("records lifecycle, poll scheduling, and cache age in observability", async () => {
+    const h = makeService(servers("a"));
+    await h.service.start();
+    await flush();
+
+    h.service.refreshAll("online");
+    await flush();
+
+    const events = h.obs.snapshot();
+    const cats = new Set(events.map((e) => e.category));
+    expect(cats.has("poll")).toBe(true); // scheduling + results recorded
+    expect(cats.has("lifecycle")).toBe(true);
+    const lifecycle = events.find((e) => e.category === "lifecycle");
+    expect(lifecycle?.fields.trigger).toBe("online");
+    // A poll result carries a (numeric or null) cache age — never a secret.
+    const pollResult = events.find((e) => e.message.startsWith("poll ") && "ok" in e.fields);
+    expect(pollResult).toBeDefined();
   });
 });
 
