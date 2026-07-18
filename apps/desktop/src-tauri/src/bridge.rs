@@ -472,6 +472,19 @@ pub async fn app_action(
     state.request("app.action", input).await
 }
 
+/// Cancel an in-flight lifecycle action by its client-supplied operation id.
+/// Idempotent: cancelling an already-finished operation reports `found: false`
+/// and is not an error.
+#[tauri::command]
+pub async fn operation_cancel(
+    state: State<'_, Arc<BridgeManager>>,
+    operation_id: String,
+) -> Result<Value, BridgeErrorPayload> {
+    state
+        .request("operation.cancel", json!({ "operationId": operation_id }))
+        .await
+}
+
 /// Start a log stream. The response carries the subscription id; the actual log
 /// lines and the terminal close arrive as `bridge://event` stream events
 /// (`logs.line` / `logs.closed`) tagged with that id, which the frontend

@@ -18,6 +18,10 @@ type Executor interface {
 	Run(ctx context.Context, command string) (string, error)
 	Stream(ctx context.Context, command string, output io.Writer) error
 	ReadFileElevated(ctx context.Context, path string) ([]byte, error)
+	// WriteFileElevated installs data at a possibly root-only path (e.g.
+	// /etc/neo/state.json) under ctx's deadline. Lifecycle actions need it to
+	// persist the new workload status after start/stop/restart.
+	WriteFileElevated(ctx context.Context, path string, data []byte, mode os.FileMode) error
 	// User is the remote SSH username; the collector needs it to decide whether
 	// Docker requires a sudo prefix.
 	User() string
@@ -79,6 +83,10 @@ func (x *sshExecutor) Stream(ctx context.Context, cmd string, w io.Writer) error
 
 func (x *sshExecutor) ReadFileElevated(ctx context.Context, path string) ([]byte, error) {
 	return x.e.ReadFileElevatedContext(ctx, path)
+}
+
+func (x *sshExecutor) WriteFileElevated(ctx context.Context, path string, data []byte, mode os.FileMode) error {
+	return x.e.WriteFileElevatedContext(ctx, path, data, mode)
 }
 
 func (x *sshExecutor) User() string { return x.e.User() }

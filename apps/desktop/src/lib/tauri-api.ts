@@ -78,6 +78,8 @@ export function createTauriDesktopAPI(): DesktopAPI {
     runDiagnostics: (server) => call<Finding[]>("diagnostics_run", { server }),
     runAppAction: (input: AppActionInput) =>
       call<OperationResult>("app_action", { input }),
+    cancelOperation: (operationId: string) =>
+      call<{ found: boolean }>("operation_cancel", { operationId }),
     subscribeLogs: (input, handlers) => subscribeLogs(input, handlers),
   };
 }

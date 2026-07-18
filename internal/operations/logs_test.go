@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -71,6 +72,10 @@ func (e *logExecutor) Stream(ctx context.Context, cmd string, w io.Writer) error
 
 func (e *logExecutor) ReadFileElevated(context.Context, string) ([]byte, error) {
 	return e.stateData, e.stateErr
+}
+
+func (e *logExecutor) WriteFileElevated(context.Context, string, []byte, os.FileMode) error {
+	return nil
 }
 
 func (e *logExecutor) User() string { return e.user }

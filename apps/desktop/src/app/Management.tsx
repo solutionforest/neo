@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { DesktopAPI } from "../lib/desktop-api";
 import {
   formatBytes,
@@ -6,17 +7,40 @@ import {
   formatRelativeTime,
   usagePercent,
 } from "../lib/format";
+import { actionLabel } from "../lib/actions";
+import type { AppAction, AppState, AppSummary } from "../lib/protocol";
 import { NeoLogo } from "../components/NeoLogo";
 import { StatusBadge } from "../components/StatusBadge";
 import { ServerSelector } from "../features/servers/ServerSelector";
 import { FindingsList } from "../features/diagnostics/FindingsList";
 import { LogViewer } from "../features/logs/LogViewer";
+import { AppActionDialog } from "../features/actions/AppActionDialog";
+import { ActionHistoryList } from "../features/actions/ActionHistoryList";
 import { statusFor, useServerData } from "./useServerData";
+import { useAppActions } from "./useAppActions";
+
+/** Which lifecycle buttons to offer for a workload's current state. A stopped
+ * app can only be started; a running one can be restarted or stopped. */
+function actionsForState(state: AppState): AppAction[] {
+  return state === "stopped" ? ["start"] : ["restart", "stop"];
+}
 
 export function Management({ api }: { api: DesktopAPI }) {
   const data = useServerData(api);
   const status = statusFor(data);
   const { snapshot } = data;
+
+  // The action controller refreshes the selected server immediately after any
+  // action settles (plan: "The app refreshes server state immediately").
+  const actions = useAppActions({
+    api,
+    server: data.selected,
+    onSettled: () => data.refresh(),
+  });
+  const { dialog } = actions.state;
+
+  // The failure "View logs" link selects that workload in the viewer below.
+  const [logsTarget, setLogsTarget] = useState<string | undefined>(undefined);
 
   return (
     <div className="management" data-status={status}>
@@ -117,6 +141,7 @@ export function Management({ api }: { api: DesktopAPI }) {
                   <th scope="col">Kind</th>
                   <th scope="col">Image</th>
                   <th scope="col">State</th>
+                  <th scope="col">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -130,6 +155,9 @@ export function Management({ api }: { api: DesktopAPI }) {
                         {app.state}
                       </span>
                     </td>
+                    <td>
+                      <AppActionButtons app={app} actions={actions} />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -142,17 +170,73 @@ export function Management({ api }: { api: DesktopAPI }) {
           <FindingsList findings={data.findings} />
         </section>
 
+        <section className="panel" aria-label="Action history">
+          <h2 className="panel__title">Action history</h2>
+          <ActionHistoryList entries={actions.state.history} limit={10} />
+        </section>
+
         <section className="panel panel--wide" aria-label="Logs">
           <h2 className="panel__title">Logs</h2>
           <LogViewer
+            // Remount when a failure asks to show a specific workload's logs, so
+            // the viewer re-selects that target.
+            key={logsTarget ?? "default"}
             api={api}
             server={data.selected}
             targets={data.apps}
             follow
             variant="full"
+            initialTarget={logsTarget}
           />
         </section>
       </div>
+
+      {dialog ? (
+        <AppActionDialog
+          server={data.selected}
+          dialog={dialog}
+          onConfirm={actions.confirm}
+          onCancel={actions.cancel}
+          onDismiss={actions.dismiss}
+          onRememberChange={actions.setRemember}
+          onViewLogs={(app) => {
+            setLogsTarget(app);
+            actions.dismiss();
+          }}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/** The per-row lifecycle buttons. All of a workload's buttons are disabled while
+ * one of its actions is in flight, so a duplicate click cannot start a second
+ * concurrent action (plan "Phase 5 acceptance criteria"). Only applications are
+ * actionable; workers/sidecars/services are managed via the CLI in this beta. */
+function AppActionButtons({
+  app,
+  actions,
+}: {
+  app: AppSummary;
+  actions: ReturnType<typeof useAppActions>;
+}) {
+  if (app.kind !== "app") {
+    return <span className="apps-table__no-action">—</span>;
+  }
+  const running = actions.isRunning(app.id);
+  return (
+    <span className="apps-table__actions">
+      {actionsForState(app.state).map((action) => (
+        <button
+          key={action}
+          type="button"
+          className="btn btn--small"
+          disabled={running}
+          onClick={() => actions.request(app.id, action)}
+        >
+          {actionLabel(action)}
+        </button>
+      ))}
+    </span>
   );
 }

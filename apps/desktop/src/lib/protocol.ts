@@ -133,14 +133,36 @@ export interface AppSummary {
   kind: "app" | "worker" | "sidecar" | "service";
 }
 
-/** Allowlisted lifecycle actions for slice 1's fixture surface. Destructive
- * operations are intentionally absent (see plan "Fix safety classes"). */
+/** Allowlisted lifecycle actions. This union is the ENTIRE allowlist —
+ * destructive operations (remove, update, restore, firewall, database changes)
+ * are intentionally absent and can never be requested (plan "Fix safety
+ * classes"). Mirrors the Go allowlist in internal/operations/actions.go. */
 export type AppAction = "start" | "stop" | "restart";
+
+/** Every allowlisted action, ordered — the single source of truth the UI maps
+ * over. Kept in lockstep with the Go `allowedActions` map. */
+export const APP_ACTIONS = ["start", "stop", "restart"] as const;
+
+/** Safety class of an action (plan "Fix safety classes"). Drives the
+ * confirmation UX. Mirrors SafetyClass in internal/operations/actions.go. */
+export type SafetyClass = "reversible" | "availability";
+
+/** Action → safety class. `start`/`restart` are reversible (one confirmation,
+ * optionally remembered); `stop` is availability-affecting (confirm every
+ * time). */
+export const ACTION_SAFETY: Record<AppAction, SafetyClass> = {
+  start: "reversible",
+  restart: "reversible",
+  stop: "availability",
+};
 
 export interface AppActionInput {
   server: string;
   app: string;
   action: AppAction;
+  /** Client-generated id so the caller can `operation.cancel` this action while
+   * it is still in flight. Optional: the bridge generates one when omitted. */
+  operationId?: string;
 }
 
 export interface Change {

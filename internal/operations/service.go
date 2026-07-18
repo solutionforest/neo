@@ -29,12 +29,14 @@ type Service struct {
 
 	connectTimeout  time.Duration
 	snapshotTimeout time.Duration
+	actionTimeout   time.Duration
 }
 
 // Options tunes a Service. Zero values fall back to the Default* deadlines.
 type Options struct {
 	ConnectTimeout  time.Duration
 	SnapshotTimeout time.Duration
+	ActionTimeout   time.Duration
 }
 
 // NewService wires a Service. A nil clock defaults to the system clock.
@@ -48,6 +50,9 @@ func NewService(cfg ConfigStore, connector Connector, clock Clock, opts Options)
 	if opts.SnapshotTimeout <= 0 {
 		opts.SnapshotTimeout = DefaultSnapshotTimeout
 	}
+	if opts.ActionTimeout <= 0 {
+		opts.ActionTimeout = DefaultActionTimeout
+	}
 	return &Service{
 		cfg:             cfg,
 		connector:       connector,
@@ -55,6 +60,7 @@ func NewService(cfg ConfigStore, connector Connector, clock Clock, opts Options)
 		diagnostics:     newDiagnosticTracker(),
 		connectTimeout:  opts.ConnectTimeout,
 		snapshotTimeout: opts.SnapshotTimeout,
+		actionTimeout:   opts.ActionTimeout,
 	}
 }
 

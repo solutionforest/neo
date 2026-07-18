@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +75,10 @@ func (f *fakeExecutor) Stream(_ context.Context, _ string, _ io.Writer) error { 
 
 func (f *fakeExecutor) ReadFileElevated(_ context.Context, _ string) ([]byte, error) {
 	return f.stateData, f.stateErr
+}
+
+func (f *fakeExecutor) WriteFileElevated(_ context.Context, _ string, _ []byte, _ os.FileMode) error {
+	return nil
 }
 
 func (f *fakeExecutor) User() string { return f.user }

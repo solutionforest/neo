@@ -15,6 +15,9 @@ export interface LogViewerProps {
   tail?: number;
   /** "full" (management) or "compact" (popover). */
   variant?: "full" | "compact";
+  /** Initial workload to select (e.g. the app whose action just failed).
+   * Defaults to the first target. */
+  initialTarget?: string;
 }
 
 /**
@@ -30,8 +33,11 @@ export function LogViewer({
   follow = false,
   tail,
   variant = "full",
+  initialTarget,
 }: LogViewerProps) {
-  const [target, setTarget] = useState<string>(() => targets[0]?.id ?? "");
+  const [target, setTarget] = useState<string>(
+    () => initialTarget ?? targets[0]?.id ?? "",
+  );
   const [query, setQuery] = useState("");
 
   // Keep a valid selection as the workload list changes across server switches.
