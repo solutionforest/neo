@@ -1,0 +1,371 @@
+name: Desktop Release
+
+# Neo Desktop release pipeline (plan Phase 6), triggered by `desktop-v*` tags —
+# independent of the CLI's `v*` releases. Per target it:
+#   1. builds the target-specific neo-bridge from the tag commit,
+#   2. places it under the Tauri sidecar filename for the target triple,
+#   3. builds the frontend,
+#   4. builds and packages the Tauri application,
+#   5. signs the app/bridge/installer when signing secrets are configured,
+#   6. generates signed updater artifacts when the updater key is configured,
+#   7. smoke tests the packaged app (bridge handshake + version check),
+#   8. publishes all artifacts and checksums atomically (draft release with all
+#      assets attached, undrafted in one final step).
+#
+# Signing material lives ONLY in CI secrets (never in the repo):
+#   TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD — updater key
+#   TAURI_UPDATER_PUBKEY — updater public key (until committed to tauri.conf.json)
+#   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY —
+#     Developer ID Application cert (base64 .p12)
+#   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID — notarization credentials
+#   WINDOWS_CERTIFICATE / WINDOWS_CERTIFICATE_PASSWORD — Authenticode .pfx (base64)
+# Missing secrets do NOT block the release: the affected step degrades to an
+# unsigned build and the gap is flagged in warnings and the release summary.
+on:
+  push:
+    tags:
+      - "desktop-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify tag and CLI health
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve and validate release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#desktop-v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z._-]*)?$ ]]; then
+            echo "Desktop release tags must be desktop-v<semver>; got ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+          conf_version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          pkg_version=$(node -p "require('./apps/desktop/package.json').version")
+          if [[ "$conf_version" != "$version" || "$pkg_version" != "$version" ]]; then
+            echo "Version mismatch: tag=$version tauri.conf.json=$conf_version package.json=$pkg_version" >&2
+            echo "Bump apps/desktop versions before tagging." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Root Go tests from the tag commit (CLI stays green)
+        run: go test ./...
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            triple: aarch64-apple-darwin
+            platform: darwin-aarch64
+          - os: macos-13
+            triple: x86_64-apple-darwin
+            platform: darwin-x86_64
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - name: Signing preflight (flag missing credentials, never block)
+        id: signing
+        shell: bash
+        env:
+          HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          HAS_UPDATER_PUB: ${{ secrets.TAURI_UPDATER_PUBKEY != '' }}
+          HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+          HAS_NOTARY: ${{ secrets.APPLE_ID != '' }}
+          HAS_WIN_CERT: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
+        run: |
+          set -euo pipefail
+          {
+            echo "updater_key=$HAS_UPDATER_KEY"
+            echo "apple_cert=$HAS_APPLE_CERT"
+            echo "notary=$HAS_NOTARY"
+            echo "win_cert=$HAS_WIN_CERT"
+          } >> "$GITHUB_OUTPUT"
+          [ "$HAS_UPDATER_KEY" = "true" ] || echo "::warning::TAURI_SIGNING_PRIVATE_KEY missing — updater artifacts will NOT be generated for ${{ matrix.platform }}"
+          [ "$HAS_UPDATER_KEY" != "true" ] || [ "$HAS_UPDATER_PUB" = "true" ] || echo "::warning::TAURI_UPDATER_PUBKEY missing — shipped app keeps the pubkey baked into tauri.conf.json"
+          case "${{ matrix.platform }}" in
+            darwin-*)
+              [ "$HAS_APPLE_CERT" = "true" ] || echo "::warning::APPLE_CERTIFICATE missing — macOS app will be unsigned"
+              [ "$HAS_NOTARY" = "true" ] || echo "::warning::APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID missing — macOS app will not be notarized" ;;
+            windows-*)
+              [ "$HAS_WIN_CERT" = "true" ] || echo "::warning::WINDOWS_CERTIFICATE missing — Windows installer will be unsigned" ;;
+          esac
+
+      - run: npm ci
+
+      # Step 1–2 of the plan's build order: the target-specific bridge from the
+      # tag commit, under the sidecar filename. build.rs rebuilds the same
+      # output later with identical stamps (env below), so the two never drift.
+      - name: Build neo-bridge sidecar (target-specific, from tag commit)
+        shell: bash
+        run: VERSION="$VERSION" COMMIT="$GITHUB_SHA" ../../scripts/desktop-bridge.sh ${{ matrix.triple }}
+
+      - name: Import Windows Authenticode certificate
+        if: matrix.platform == 'windows-x86_64' && steps.signing.outputs.win_cert == 'true'
+        id: wincert
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "authenticode.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $pwd = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pwd
+          Remove-Item $pfx
+          "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
+
+      - name: Compose Tauri config overlay (updater artifacts, pubkey, signing)
+        shell: bash
+        env:
+          UPDATER_KEY: ${{ steps.signing.outputs.updater_key }}
+          UPDATER_PUB: ${{ secrets.TAURI_UPDATER_PUBKEY }}
+          WIN_THUMBPRINT: ${{ steps.wincert.outputs.thumbprint }}
+        run: |
+          set -euo pipefail
+          node - <<'EOF'
+          const overlay = { bundle: {}, plugins: {} };
+          if (process.env.UPDATER_KEY === "true") {
+            overlay.bundle.createUpdaterArtifacts = true;
+          }
+          if (process.env.UPDATER_PUB) {
+            overlay.plugins.updater = { pubkey: process.env.UPDATER_PUB };
+          }
+          if (process.env.WIN_THUMBPRINT) {
+            overlay.bundle.windows = {
+              certificateThumbprint: process.env.WIN_THUMBPRINT,
+              digestAlgorithm: "sha256",
+              timestampUrl: "http://timestamp.digicert.com",
+            };
+          }
+          require("fs").writeFileSync("tauri.release.json", JSON.stringify(overlay, null, 2));
+          console.log(JSON.stringify(overlay, null, 2));
+          EOF
+
+      # Steps 3–6: frontend, package, sign, updater artifacts. Tauri's bundler
+      # consumes APPLE_* env natively (keychain import, codesign of the app AND
+      # the embedded sidecar, notarization); the updater key env makes it emit
+      # signed updater artifacts.
+      - name: Build, package, and sign
+        shell: bash
+        env:
+          NEO_DESKTOP_VERSION: ${{ needs.verify.outputs.version }}
+          NEO_DESKTOP_COMMIT: ${{ github.sha }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run tauri build -- --target ${{ matrix.triple }} --config tauri.release.json
+
+      # Step 7: smoke test on the native runner. The embedded bridge must speak
+      # protocol v1 and report exactly the tag version (acceptance: "the
+      # embedded bridge is the expected version").
+      - name: Smoke test packaged app (macOS)
+        if: startsWith(matrix.platform, 'darwin')
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Neo Desktop.app"
+          bridge="$app/Contents/MacOS/neo-bridge"
+          test -x "$bridge" || { echo "bundled neo-bridge missing"; exit 1; }
+          printf '{"version":1,"id":"rel-smoke","method":"bridge.hello"}\n' | "$bridge" > hello.json
+          cat hello.json
+          grep -q '"protocolVersion":1' hello.json
+          grep -q "\"bridgeVersion\":\"$VERSION\"" hello.json
+          if [ "${{ steps.signing.outputs.apple_cert }}" = "true" ]; then
+            codesign --verify --deep --strict "$app"
+            codesign --verify "$bridge"
+          fi
+          open -g "$app"
+          sleep 8
+          pgrep -f "Neo Desktop.app/Contents/MacOS/" >/dev/null || { echo "app did not stay running"; exit 1; }
+          pkill -f "Neo Desktop.app/Contents/MacOS/" || true
+
+      - name: Smoke test packaged app (Windows)
+        if: matrix.platform == 'windows-x86_64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bridge="src-tauri/binaries/neo-bridge-x86_64-pc-windows-msvc.exe"
+          printf '{"version":1,"id":"rel-smoke","method":"bridge.hello"}\n' | "$bridge" > hello.json
+          cat hello.json
+          grep -q '"protocolVersion":1' hello.json
+          grep -q "\"bridgeVersion\":\"$VERSION\"" hello.json
+          ls "src-tauri/target/${{ matrix.triple }}/release/bundle/nsis/"*.exe
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/upload"
+          mkdir -p "$out"
+          bundle="src-tauri/target/${{ matrix.triple }}/release/bundle"
+          case "${{ matrix.platform }}" in
+            darwin-*)
+              # DMG for humans; .app.tar.gz (+ .sig when signed) for the updater.
+              find "$bundle/dmg" -name '*.dmg' -exec cp {} "$out/NeoDesktop_${VERSION}_${{ matrix.platform }}.dmg" \;
+              if compgen -G "$bundle/macos/*.app.tar.gz" > /dev/null; then
+                cp "$bundle"/macos/*.app.tar.gz "$out/NeoDesktop_${VERSION}_${{ matrix.platform }}.app.tar.gz"
+              fi
+              if compgen -G "$bundle/macos/*.app.tar.gz.sig" > /dev/null; then
+                cp "$bundle"/macos/*.app.tar.gz.sig "$out/NeoDesktop_${VERSION}_${{ matrix.platform }}.app.tar.gz.sig"
+              fi ;;
+            windows-*)
+              # NSIS installer doubles as the updater artifact on Windows.
+              cp "$bundle"/nsis/*-setup.exe "$out/NeoDesktop_${VERSION}_${{ matrix.platform }}-setup.exe"
+              if compgen -G "$bundle/nsis/*-setup.exe.sig" > /dev/null; then
+                cp "$bundle"/nsis/*-setup.exe.sig "$out/NeoDesktop_${VERSION}_${{ matrix.platform }}-setup.exe.sig"
+              fi ;;
+          esac
+          ls -la "$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}
+          path: ${{ runner.temp }}/upload/*
+          if-no-files-found: error
+
+  # Step 8: atomic publish. Assets are attached to a DRAFT release first; the
+  # release only becomes visible (and the updater feed only advances) in the
+  # final undraft + feed update, after every target built and uploaded.
+  publish:
+    name: Publish release and updater feed
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Generate checksums and updater manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd assets
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+          node - <<'EOF'
+          const fs = require("fs");
+          const version = process.env.VERSION;
+          const tag = `desktop-v${version}`;
+          const base = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${tag}`;
+          const platforms = {};
+          const map = {
+            "darwin-aarch64": `NeoDesktop_${version}_darwin-aarch64.app.tar.gz`,
+            "darwin-x86_64": `NeoDesktop_${version}_darwin-x86_64.app.tar.gz`,
+            "windows-x86_64": `NeoDesktop_${version}_windows-x86_64-setup.exe`,
+          };
+          const missing = [];
+          for (const [platform, file] of Object.entries(map)) {
+            const sig = `${file}.sig`;
+            if (fs.existsSync(file) && fs.existsSync(sig)) {
+              platforms[platform] = {
+                url: `${base}/${file}`,
+                signature: fs.readFileSync(sig, "utf8").trim(),
+              };
+            } else {
+              missing.push(platform);
+            }
+          }
+          if (missing.length) {
+            console.log(`::warning::No signed updater artifact for: ${missing.join(", ")} — ` +
+              "these platforms will not see this release via the in-app updater.");
+          }
+          if (Object.keys(platforms).length) {
+            const manifest = {
+              version,
+              notes: `Neo Desktop ${version} — release notes: ${base.replace("/releases/download/" + tag, "/releases/tag/" + tag)}`,
+              pub_date: new Date().toISOString(),
+              platforms,
+            };
+            fs.writeFileSync("latest.json", JSON.stringify(manifest, null, 2));
+            console.log(JSON.stringify(manifest, null, 2));
+          } else {
+            console.log("::warning::No signed updater artifacts at all — skipping latest.json (updater feed unchanged).");
+          }
+          EOF
+
+      - name: Create draft release with all assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="desktop-v${VERSION}"
+          notes=$(git tag -l --format='%(contents)' "$tag")
+          [ -n "$notes" ] || notes="Neo Desktop ${VERSION}"
+          gh release create "$tag" --draft --prerelease=false --latest=false \
+            --title "Neo Desktop ${VERSION}" --notes "$notes" assets/*
+
+      - name: Publish (undraft) release
+        shell: bash
+        run: gh release edit "desktop-v${VERSION}" --draft=false
+
+      - name: Advance the updater feed (desktop-latest)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f assets/latest.json ]; then
+            echo "No latest.json — updater feed not advanced."
+            exit 0
+          fi
+          # Rolling prerelease holding only latest.json, so the endpoint in
+          # tauri.conf.json is stable and never shadowed by CLI releases.
+          if ! gh release view desktop-latest > /dev/null 2>&1; then
+            git tag -f desktop-latest
+            git push -f origin desktop-latest
+            gh release create desktop-latest --prerelease --latest=false \
+              --title "Neo Desktop updater feed" \
+              --notes "Rolling release consumed by the in-app updater. See desktop-v* releases for artifacts."
+          fi
+          gh release upload desktop-latest assets/latest.json --clobber

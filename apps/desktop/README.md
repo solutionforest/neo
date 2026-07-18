@@ -74,7 +74,50 @@ cd src-tauri && cargo test   # Rust tests
 ```
 
 From the repo root, `make desktop-test` runs the Go suite plus the frontend and
-Rust tests together.
+Rust tests together, and `make desktop-bridge [TRIPLE=<target-triple>]` builds a
+version-stamped sidecar under the Tauri `externalBin` filename
+(`scripts/desktop-bridge.sh`).
+
+## Release
+
+Desktop releases are tagged independently of the CLI:
+
+```text
+v0.22.0          # Neo CLI release      → .github/workflows/release.yml
+desktop-v0.1.0   # Neo Desktop release  → .github/workflows/desktop-release.yml
+```
+
+To cut a release: bump `version` in `package.json` **and**
+`src-tauri/tauri.conf.json` to match, merge, then push the `desktop-v<version>`
+tag. The release workflow verifies the versions match, builds macOS ARM64,
+macOS Intel, and Windows x64 on native runners (bridge from the tag commit →
+sidecar filename → frontend → package → sign → signed updater artifacts →
+smoke test), and publishes all artifacts and a `SHA256SUMS` atomically via a
+draft release that is undrafted only after every target succeeds. The in-app
+updater reads `latest.json` from the rolling `desktop-latest` prerelease, so
+`bridge.hello` version info, artifacts, and the update feed always move as one
+unit — the bridge is never updated separately from the desktop app.
+
+Update behavior (see `src/lib/update-controller.ts`): silent check ~20s after
+startup and every 6 hours; the user is prompted (version + release notes)
+before anything downloads; "Later" defers without re-prompting that session;
+the Tauri updater verifies the artifact signature against the public key in
+`tauri.conf.json` before install and fails closed on mismatch.
+
+Signing material lives **only in GitHub Actions secrets** — never in this
+repository:
+
+| Secret | Purpose |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Updater artifact signing key |
+| `TAURI_UPDATER_PUBKEY` | Updater public key, injected at build until committed to `tauri.conf.json` |
+| `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` / `APPLE_SIGNING_IDENTITY` | Developer ID Application cert (base64 `.p12`) |
+| `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | Notarization credentials |
+| `WINDOWS_CERTIFICATE` / `WINDOWS_CERTIFICATE_PASSWORD` | Authenticode cert (base64 `.pfx`) |
+
+Missing secrets never block a release: the workflow emits warnings, ships the
+affected target unsigned, and leaves the updater feed untouched for platforms
+without a signed artifact.
 
 ## Scope so far
 
@@ -106,5 +149,15 @@ not color alone); and transition-only notifications with per-finding dedup, a
 management window loads once instead of starting a second poller, so opening it
 never multiplies polling.
 
-Not yet: log streaming, deterministic diagnostics rules, lifecycle actions, and
-signed release packaging.
+Slices 5–7 added log streaming, deterministic diagnostics, and safe lifecycle
+actions (see the plan and PRs #10–#12).
+
+Slice 8 (release engineering): independent `desktop-v*` tagging with a release
+pipeline (`desktop-release.yml`) that builds/signs/packages macOS ARM64 + Intel
+and Windows x64 and publishes artifacts + checksums + a signed updater feed
+atomically; the finalized desktop CI matrix (root Go tests, bridge contract
+tests, frontend checks, Rust fmt/clippy/tests, native macOS and Windows builds
+with sidecar-handshake smoke tests); `bridge.hello` now reports the build
+commit alongside versions, shown in the management window's About panel; and
+in-app update behavior per the plan (silent 6-hourly checks, prompt before
+download, session-scoped deferral, signature-verified installs).

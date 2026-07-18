@@ -24,6 +24,7 @@ export const FIXTURE_HELLO: BridgeHello = {
   bridgeVersion: "0.1.0-fixture",
   desktopVersion: "0.1.0",
   coreVersion: "0.0.0-dev",
+  commit: "fixture0000",
   platform: "fixture",
   arch: "unknown",
   activation: "active",

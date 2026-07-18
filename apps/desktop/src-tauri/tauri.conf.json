@@ -66,5 +66,12 @@
       }
     }
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/solutionforest/neo/releases/download/desktop-latest/latest.json"
+      ],
+      "pubkey": ""
+    }
+  }
 }

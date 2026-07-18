@@ -65,6 +65,28 @@ func TestHello(t *testing.T) {
 	if hello.Activation == "" {
 		t.Errorf("activation must be populated")
 	}
+	// Un-stamped builds must still report a commit so About never shows blank.
+	if hello.Commit != "unknown" {
+		t.Errorf("commit = %q, want %q for an un-stamped server", hello.Commit, "unknown")
+	}
+}
+
+func TestHelloReportsStampedCommit(t *testing.T) {
+	var out bytes.Buffer
+	srv := NewServer("1.2.3", "4.5.6", nil, WithCommit("abc1234"))
+	input := `{"version":1,"id":"h1","method":"bridge.hello"}` + "\n"
+	if err := srv.Run(context.Background(), strings.NewReader(input), &out); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	resp := decodeResponses(t, out.Bytes())
+	if len(resp) != 1 || resp[0].Error != nil {
+		t.Fatalf("want one successful hello, got %+v", resp)
+	}
+	var hello HelloResult
+	remarshal(t, resp[0].Result, &hello)
+	if hello.Commit != "abc1234" {
+		t.Errorf("commit = %q, want %q", hello.Commit, "abc1234")
+	}
 }
 
 func TestShutdownStopsTheLoop(t *testing.T) {

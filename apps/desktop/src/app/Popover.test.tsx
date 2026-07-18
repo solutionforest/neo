@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Popover } from "./Popover";
 import { createFixtureDesktopAPI } from "../lib/fixtures";
 import type { DesktopAPI } from "../lib/desktop-api";
+import { UpdateController, type UpdateBackend } from "../lib/update-controller";
 
 function renderPopover(api: DesktopAPI = createFixtureDesktopAPI()) {
   return render(<Popover api={api} />);
@@ -93,5 +94,29 @@ describe("Popover", () => {
 
     await user.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(snapshotCalls).toBeGreaterThan(initial));
+  });
+
+  it("prompts for an available update and defers on Later", async () => {
+    const user = userEvent.setup();
+    const backend: UpdateBackend = {
+      check: vi.fn().mockResolvedValue({
+        version: "0.2.0",
+        notes: "Adds things.",
+        downloadAndInstall: vi.fn(),
+      }),
+      relaunch: vi.fn(),
+    };
+    // Immediate first check so the test doesn't wait out the startup delay.
+    const controller = new UpdateController(backend, { startupDelayMs: 0 });
+    render(<Popover api={createFixtureDesktopAPI()} updater={controller} />);
+
+    const banner = await screen.findByRole("status", { name: "Update available" });
+    expect(within(banner).getByText(/0\.2\.0 is available/)).toBeInTheDocument();
+    expect(within(banner).getByText("Adds things.")).toBeInTheDocument();
+
+    await user.click(within(banner).getByRole("button", { name: "Later" }));
+    expect(
+      screen.queryByRole("status", { name: "Update available" }),
+    ).not.toBeInTheDocument();
   });
 });

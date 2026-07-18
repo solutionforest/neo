@@ -37,10 +37,21 @@ fn build_bridge_sidecar() {
     }
     let out_path = out_dir.join(&out_name);
 
-    // Stamp bridge and core versions from the desktop package version. The
-    // release slice can override these with a real version.
-    let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "dev".into());
-    let ldflags = format!("-s -w -X main.bridgeVersion={version} -X main.coreVersion={version}");
+    // Stamp bridge/core versions and the build commit. Defaults come from the
+    // desktop package version and `git rev-parse`; the release workflow
+    // overrides both via env so tag builds are stamped exactly.
+    println!("cargo:rerun-if-env-changed=NEO_DESKTOP_VERSION");
+    println!("cargo:rerun-if-env-changed=NEO_DESKTOP_COMMIT");
+    let version = std::env::var("NEO_DESKTOP_VERSION")
+        .or_else(|_| std::env::var("CARGO_PKG_VERSION"))
+        .unwrap_or_else(|_| "dev".into());
+    let commit = std::env::var("NEO_DESKTOP_COMMIT")
+        .ok()
+        .filter(|c| !c.is_empty())
+        .unwrap_or_else(|| git_commit(&repo_root));
+    let ldflags = format!(
+        "-s -w -X main.bridgeVersion={version} -X main.coreVersion={version} -X main.buildCommit={commit}"
+    );
 
     let go = std::env::var("GO").unwrap_or_else(|_| "go".into());
     let mut cmd = Command::new(&go);
@@ -70,6 +81,21 @@ fn build_bridge_sidecar() {
     if !status.success() {
         panic!("`go build ./cmd/neo-bridge` failed (status {status})");
     }
+}
+
+/// Short commit hash of the repo HEAD, or "unknown" outside a git checkout.
+fn git_commit(repo_root: &std::path::Path) -> String {
+    Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["rev-parse", "--short=12", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".into())
 }
 
 fn manifest_dir() -> PathBuf {
