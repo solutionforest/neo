@@ -9,7 +9,11 @@ pub mod bridge;
 mod commands;
 mod tray;
 
-use tauri::{Manager, WindowEvent};
+use std::sync::Arc;
+
+use tauri::{Manager, RunEvent, WindowEvent};
+
+use bridge::BridgeManager;
 
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -24,7 +28,7 @@ pub fn run() {
         }));
     }
 
-    builder
+    let app = builder
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None::<Vec<&str>>,
@@ -32,10 +36,20 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // The shell plugin is registered so Rust can spawn the bundled sidecar.
+        // No shell/sidecar permission is granted to the webview (see
+        // capabilities/default.json) — spawning happens only in bridge.rs.
+        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             commands::open_management_window,
             commands::hide_popover,
             commands::quit_app,
+            bridge::bridge_hello,
+            bridge::server_list,
+            bridge::server_snapshot,
+            bridge::app_list,
+            bridge::diagnostics_run,
+            bridge::app_action,
         ])
         .setup(|app| {
             // macOS: behave as a menu-bar accessory (no dock icon) until a full
@@ -43,6 +57,12 @@ pub fn run() {
             // "no dock icon when only the popover is open" requirement.
             #[cfg(target_os = "macos")]
             let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            // Start supervising the single neo-bridge sidecar. The manager is
+            // shared state so the typed commands can issue requests.
+            let manager = Arc::new(BridgeManager::new(app.handle().clone()));
+            app.manage(manager.clone());
+            manager.start();
 
             tray::create_tray(app.handle())?;
 
@@ -71,6 +91,16 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Neo Desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building Neo Desktop");
+
+    // Terminate the bridge child when the desktop process exits so no sidecar is
+    // left orphaned.
+    app.run(|app_handle, event| {
+        if let RunEvent::Exit = event {
+            if let Some(manager) = app_handle.try_state::<Arc<BridgeManager>>() {
+                manager.shutdown();
+            }
+        }
+    });
 }

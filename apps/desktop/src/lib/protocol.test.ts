@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { aggregateStatus, BridgeError, type Finding, type ServerSnapshot } from "./protocol";
+import {
+  aggregateStatus,
+  BridgeError,
+  ERROR_CODES,
+  PROTOCOL_VERSION,
+  type Finding,
+  type ServerSnapshot,
+} from "./protocol";
 
 function snapshot(reachable: boolean): ServerSnapshot {
   return {
@@ -55,6 +62,32 @@ describe("aggregateStatus", () => {
   it("is healthy when reachable with only info findings", () => {
     expect(aggregateStatus(snapshot(true), [])).toBe("healthy");
     expect(aggregateStatus(snapshot(true), [finding("info")])).toBe("healthy");
+  });
+});
+
+describe("protocol contract", () => {
+  // These must stay in lockstep with the Go bridge (cmd/neo-bridge/protocol.go)
+  // and the Rust shell (src-tauri/src/bridge.rs). See TestErrorCodesContract.
+  it("pins the protocol version", () => {
+    expect(PROTOCOL_VERSION).toBe(1);
+  });
+
+  it("mirrors the Go error-code set exactly", () => {
+    expect([...ERROR_CODES]).toEqual([
+      "invalid_request",
+      "protocol_mismatch",
+      "not_activated",
+      "server_not_found",
+      "app_not_found",
+      "ssh_unknown_host",
+      "ssh_auth_failed",
+      "ssh_unreachable",
+      "remote_state_invalid",
+      "operation_timeout",
+      "operation_cancelled",
+      "action_not_allowed",
+      "internal_error",
+    ]);
   });
 });
 

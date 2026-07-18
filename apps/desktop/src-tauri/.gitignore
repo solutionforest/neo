@@ -3,3 +3,6 @@
 
 # Tauri codegen (schemas regenerated on build)
 /gen/schemas
+
+# neo-bridge sidecars are built by build.rs into binaries/ per target triple.
+/binaries/neo-bridge-*

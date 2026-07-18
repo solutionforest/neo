@@ -51,6 +51,7 @@
     "category": "DeveloperTool",
     "shortDescription": "Neo Desktop tray app",
     "longDescription": "Menu-bar / notification-area companion for the Neo CLI: monitor remote servers, view status, and run safe actions.",
+    "externalBin": ["binaries/neo-bridge"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

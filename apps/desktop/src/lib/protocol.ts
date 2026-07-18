@@ -55,8 +55,10 @@ export interface BridgeHello {
   coreVersion: string;
   platform: string;
   arch: string;
-  /** Activation status. The key itself is never exposed to the frontend. */
-  activation: "active" | "inactive" | "grace";
+  /** Activation status. The key itself is never exposed to the frontend.
+   * "unknown" is reported by the walking-skeleton bridge until real license
+   * state is wired in a later slice. */
+  activation: "active" | "inactive" | "grace" | "unknown";
 }
 
 export interface ServerSummary {

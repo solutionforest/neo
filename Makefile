@@ -19,7 +19,7 @@ endif
 HOSTOS ?= $(shell uname -s | sed -e 's/Darwin/darwin/' -e 's/Linux/linux/' -e 's/MINGW.*/windows/' -e 's/MSYS.*/windows/' -e 's/CYGWIN.*/windows/')
 HOSTARCH ?= $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/amd64/amd64/' -e 's/arm64/arm64/' -e 's/aarch64/arm64/')
 
-.PHONY: build build-dev build-staging build-all release-local build-neotest build-sandbox-test install clean test fmt docker-build docker-run image-build sandbox desktop-install desktop-dev desktop-test
+.PHONY: build build-dev build-staging build-all release-local build-neotest build-sandbox-test build-bridge install clean test fmt docker-build docker-run image-build sandbox desktop-install desktop-dev desktop-test
 
 DOCKER_GO = docker run --rm -v "$(CURDIR):/src" -w /src $(GO_IMAGE)
 GO_BIN = /usr/local/go/bin/go
@@ -73,6 +73,13 @@ build-neotest:
 build-sandbox-test:
 	@mkdir -p bin
 	$(DOCKER_GO) sh -c '$(GO_BIN) mod download && CGO_ENABLED=0 GOOS=$(HOSTOS) GOARCH=$(HOSTARCH) $(GO_BIN) build -ldflags "$(LDFLAGS)" -o bin/neo-sandbox-test ./cmd/neosandbox'
+
+# Build the neo-bridge desktop sidecar via the same Dockerized path as the CLI.
+# The Tauri desktop build also produces this automatically (apps/desktop's
+# build.rs), so this target is only for standalone/CI use.
+build-bridge:
+	@mkdir -p bin
+	$(DOCKER_GO) sh -c '$(GO_BIN) mod download && CGO_ENABLED=0 GOOS=$(HOSTOS) GOARCH=$(HOSTARCH) $(GO_BIN) build -ldflags "-s -w -X main.bridgeVersion=$(VERSION) -X main.coreVersion=$(VERSION)" -o bin/neo-bridge ./cmd/neo-bridge'
 
 sandbox: build build-sandbox-test
 	./test/sandbox/run-tests.sh
