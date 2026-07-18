@@ -3,10 +3,38 @@
 Menu-bar (macOS) / notification-area (Windows) tray application for the
 [Neo CLI](../../README.md), built with **Tauri 2 + React + TypeScript + Vite**.
 
-Through **slice 4 — live tray behavior**: the runnable tray shell, the bundled
-`neo-bridge` Go sidecar (`../../cmd/neo-bridge`) reading the real Neo config over
-SSH, and a single desktop application service that polls every configured server,
-rolls their health into one tray state, and fires transition notifications. See
+## Why Neo Desktop exists
+
+The Neo CLI is how you *change* servers — init, deploy, env, lifecycle. But most
+of the day you are not deploying; you just want to know your servers are still
+healthy without opening a terminal, SSHing in, and running `neo status` against
+each one.
+
+Neo Desktop fills that gap. It is a lightweight, always-there monitor — think
+Laravel Herd for your remote fleet — that lives in the macOS menu bar / Windows
+notification area and answers "is everything OK?" at a glance:
+
+- **Ambient health, zero effort** — one tray icon rolls every configured server's
+  reachability, CPU/RAM/disk/latency, apps, and services into a single
+  at-a-glance state, polled for you in the background.
+- **Tells you when something breaks** — low-noise, transition-only notifications
+  when a server or app crosses into a warning/critical/offline state, so you find
+  out before your users do instead of by chance.
+- **Logs without a terminal** — recent and live-streaming application logs from
+  the popover or a larger management window.
+- **A few safe actions** — a strict allowlist of corrective actions (start / stop
+  / restart) with confirmation; nothing destructive.
+
+It deliberately stays a **read-only-plus-safe-actions monitor**: no deploys, no
+env editing, no secrets shown, no backups, no arbitrary remote shell — those stay
+in the CLI. And it keeps Neo's **agentless** model: it reads your existing
+`~/.neo/config.json` and connects over SSH, so there is no new agent to install on
+any server.
+
+The app is built and feature-complete through the plan's ten implementation
+slices — tray shell, bridge sidecar, live polling, logs, diagnostics,
+notifications, safe actions, release engineering, beta hardening, and UI/UX
+refinement. See
 [`plans/2026-07-18-neo-desktop-tray-application.md`](../../plans/2026-07-18-neo-desktop-tray-application.md).
 
 ## Layout
@@ -189,6 +217,13 @@ observability, and a redacted diagnostic bundle.
 - **Performance** — the log viewer paints only the most recent
   `MAX_RENDERED_LINES` window (full history stays searchable) to bound DOM work
   on a live follow stream.
+
+Slice 10 (UI/UX refinement): Apple-style visual polish across the popover and
+management window — consistent spacing, typography, and healthy / warning /
+critical / offline state treatments — with accessibility (visible focus,
+reduced-motion / reduced-transparency / contrast preferences, and
+color-independent status) preserved throughout. Final visual sign-off is recorded
+in [`VISUAL_SIGNOFF.md`](VISUAL_SIGNOFF.md).
 
 ### SSH edge cases (strict, no accept-all)
 

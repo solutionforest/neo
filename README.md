@@ -25,6 +25,24 @@ Remote VPS (any provider)
           └── ... all on "neo" Docker network
 ```
 
+## Neo Desktop (menu bar / tray app)
+
+Neo also ships a companion **desktop tray app** — a lightweight menu-bar (macOS) /
+notification-area (Windows) monitor for the same servers the CLI manages.
+
+**Why it exists:** the CLI is what you reach for to *change* things (init, deploy,
+lifecycle). Neo Desktop is for the rest of the day, when you just want to know your
+fleet is healthy without opening a terminal. It sits in the tray, quietly polls
+every server in your `~/.neo/config.json` over SSH, rolls their reachability,
+metrics, apps, and services into one at-a-glance icon, streams logs, and raises
+low-noise notifications only when something crosses into a warning / critical /
+offline state. It stays a read-only-plus-safe-actions monitor (start / stop /
+restart only — no deploys, no secrets, no shell) and keeps Neo's agentless model:
+nothing new to install on your servers.
+
+Built with Tauri 2 + React/TypeScript, with all Neo logic running in a bundled Go
+`neo-bridge` sidecar. Source and full docs: [`apps/desktop/`](apps/desktop/README.md).
+
 ## Using Neo with AI Agents (Skills)
 
 Coding with Claude, Cursor, or another AI agent? Install the **Neo skills** so your
