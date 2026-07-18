@@ -1,12 +1,14 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/vxero/neo/internal/config"
+	"github.com/vxero/neo/internal/operations"
 	"github.com/vxero/neo/internal/remote"
 	"github.com/vxero/neo/internal/state"
 	"github.com/vxero/neo/internal/ui"
@@ -77,116 +79,23 @@ func runManage(appName, action string) error {
 	}
 	defer exec.Close()
 
-	app, ok := st.Apps[appName]
-	if !ok {
+	if _, ok := st.Apps[appName]; !ok {
 		return fmt.Errorf("app %q not found", appName)
-	}
-
-	docker := remote.NewDocker(exec)
-	containerName := config.AppContainer(appName)
-
-	// Collect related containers
-	var serviceContainers []string
-	for svcName := range app.Services {
-		serviceContainers = append(serviceContainers, config.SvcContainer(appName, svcName))
-	}
-	var workerContainers []string
-	for wName := range app.Workers {
-		workerContainers = append(workerContainers, config.WorkerContainer(appName, wName))
-	}
-	var sidecarContainers []string
-	for scName := range app.Sidecars {
-		sidecarContainers = append(sidecarContainers, config.SvcContainer(appName, scName))
-	}
-
-	// Collect replica containers (scale > 1) or the single main container (scale <= 1)
-	var appContainers []string
-	if app.Scale > 1 {
-		for i := 0; i < app.Scale; i++ {
-			appContainers = append(appContainers, config.ReplicaContainer(appName, i))
-		}
-	} else {
-		appContainers = []string{containerName}
 	}
 
 	spin := ui.NewSpinner(fmt.Sprintf("%sing %s...", action, appName))
 	spin.Start()
 
-	var actionErr error
-	switch action {
-	case "start":
-		for _, sc := range serviceContainers {
-			docker.Start(sc)
-		}
-		for _, sc := range sidecarContainers {
-			docker.Start(sc)
-		}
-		for _, ac := range appContainers {
-			if err := docker.Start(ac); err != nil && actionErr == nil {
-				actionErr = err
-			}
-		}
-		for _, wc := range workerContainers {
-			docker.Start(wc)
-		}
-		app.Status = "running"
-		for wName, w := range app.Workers {
-			w.Status = "running"
-			app.Workers[wName] = w
-		}
-		for scName, sc := range app.Sidecars {
-			sc.Status = "running"
-			app.Sidecars[scName] = sc
-		}
-	case "stop":
-		for _, wc := range workerContainers {
-			docker.Stop(wc)
-		}
-		for _, ac := range appContainers {
-			if err := docker.Stop(ac); err != nil && actionErr == nil {
-				actionErr = err
-			}
-		}
-		for _, sc := range sidecarContainers {
-			docker.Stop(sc)
-		}
-		for _, sc := range serviceContainers {
-			docker.Stop(sc)
-		}
-		app.Status = "stopped"
-		for wName, w := range app.Workers {
-			w.Status = "stopped"
-			app.Workers[wName] = w
-		}
-		for scName, sc := range app.Sidecars {
-			sc.Status = "stopped"
-			app.Sidecars[scName] = sc
-		}
-	case "restart":
-		for _, sc := range serviceContainers {
-			docker.Restart(sc)
-		}
-		for _, sc := range sidecarContainers {
-			docker.Restart(sc)
-		}
-		for _, ac := range appContainers {
-			if err := docker.Restart(ac); err != nil && actionErr == nil {
-				actionErr = err
-			}
-		}
-		for _, wc := range workerContainers {
-			docker.Restart(wc)
-		}
-		app.Status = "running"
-		for wName, w := range app.Workers {
-			w.Status = "running"
-			app.Workers[wName] = w
-		}
-		for scName, sc := range app.Sidecars {
-			sc.Status = "running"
-			app.Sidecars[scName] = sc
-		}
-	}
+	// Reuse the shared lifecycle logic so the CLI and the neo-bridge sidecar run
+	// start/stop/restart through ONE implementation (internal/operations). The
+	// CLI keeps its own presentation (spinner + success card) and state save.
+	_, actionErr := operations.ApplyAppAction(
+		context.Background(),
+		operations.NewSSHExecutor(exec),
+		st,
+		appName,
+		operations.AppAction(action),
+	)
 
 	spin.Stop()
 
@@ -194,7 +103,6 @@ func runManage(appName, action string) error {
 		return fmt.Errorf("failed to %s %s: %w", action, appName, actionErr)
 	}
 
-	st.Apps[appName] = app
 	state.Save(exec, st)
 
 	ui.Success(fmt.Sprintf("%s %sed", appName, action))

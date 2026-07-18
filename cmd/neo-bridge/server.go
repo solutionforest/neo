@@ -55,6 +55,10 @@ type Server struct {
 	// subs owns live log-stream subscriptions. It is bound to the output stream
 	// at the start of Run and torn down when Run returns.
 	subs *subManager
+	// opsMgr tracks in-flight lifecycle operations (app.action) so they can be
+	// cancelled by operation.cancel and so duplicate concurrent actions on one
+	// application are refused. Torn down when Run returns.
+	opsMgr *opManager
 }
 
 // Option configures a Server at construction time. Existing callers that pass
@@ -88,6 +92,7 @@ func NewServer(bridgeVersion, coreVersion string, logger *slog.Logger, opts ...O
 		opt(s)
 	}
 	s.subs = newSubManager(logger, s.ops)
+	s.opsMgr = newOpManager()
 	return s
 }
 
@@ -103,6 +108,9 @@ func (s *Server) Run(ctx context.Context, in io.Reader, out io.Writer) error {
 	// session freed) when Run returns for any reason.
 	s.subs.bind(w)
 	defer s.subs.closeAll()
+	// Cancel and wait for any in-flight lifecycle action so none outlives the
+	// bridge (its SSH connection freed) once Run returns.
+	defer s.opsMgr.cancelAll()
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -186,6 +194,12 @@ func (s *Server) handleLine(ctx context.Context, line []byte, w *syncWriter) (st
 		return false
 	case "diagnostics.run":
 		s.handleDiagnosticsRun(ctx, w, req)
+		return false
+	case "app.action":
+		s.handleAppAction(ctx, w, req)
+		return false
+	case "operation.cancel":
+		s.handleOperationCancel(w, req)
 		return false
 	default:
 		// Methods beyond hello/shutdown arrive in later slices. Until then the

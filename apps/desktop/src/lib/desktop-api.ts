@@ -22,6 +22,12 @@ export interface DesktopAPI {
   getSnapshot(server: string): Promise<ServerSnapshot>;
   listApps(server: string): Promise<AppSummary[]>;
   runAppAction(input: AppActionInput): Promise<OperationResult>;
+  /**
+   * Cancel an in-flight lifecycle action by its operation id. Idempotent:
+   * cancelling an already-finished operation resolves harmlessly. Returns
+   * whether a live operation was found.
+   */
+  cancelOperation(operationId: string): Promise<{ found: boolean }>;
   runDiagnostics(server: string): Promise<Finding[]>;
   /**
    * Start a log stream. Lines arrive (batched) via `handlers.onLines`; the

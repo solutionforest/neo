@@ -52,6 +52,7 @@ pub fn run() {
             bridge::app_list,
             bridge::diagnostics_run,
             bridge::app_action,
+            bridge::operation_cancel,
             bridge::logs_subscribe,
             bridge::logs_unsubscribe,
         ])

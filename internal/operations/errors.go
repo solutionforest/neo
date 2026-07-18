@@ -19,6 +19,7 @@ const (
 	ErrRemoteStateInvalid ErrorCode = "remote_state_invalid"
 	ErrOperationTimeout   ErrorCode = "operation_timeout"
 	ErrOperationCancelled ErrorCode = "operation_cancelled"
+	ErrActionNotAllowed   ErrorCode = "action_not_allowed"
 	ErrNotActivated       ErrorCode = "not_activated"
 	ErrInternal           ErrorCode = "internal_error"
 )

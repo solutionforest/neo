@@ -192,7 +192,7 @@ export function createFixtureDesktopAPI(options: FixtureOptions = {}): DesktopAP
     runAppAction: (input: AppActionInput): Promise<OperationResult> => {
       const started = now();
       const result: OperationResult = {
-        operationId: `fixture-${input.app}-${input.action}`,
+        operationId: input.operationId ?? `fixture-${input.app}-${input.action}`,
         status: "succeeded",
         startedAt: started,
         finishedAt: started,
@@ -207,6 +207,10 @@ export function createFixtureDesktopAPI(options: FixtureOptions = {}): DesktopAP
       };
       return delay(result);
     },
+    // Fixture actions resolve immediately, so by the time a cancel could arrive
+    // the operation is already gone — report found=false, matching the bridge's
+    // idempotent behavior.
+    cancelOperation: (_operationId: string) => delay({ found: false }),
     subscribeLogs: (
       input: LogSubscribeInput,
       handlers: LogHandlers,

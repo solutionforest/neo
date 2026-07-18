@@ -530,3 +530,138 @@ button {
   color: var(--text-muted);
   cursor: default;
 }
+
+/* --- Lifecycle actions ---------------------------------------------------- */
+
+.apps-table__actions {
+  display: inline-flex;
+  gap: 6px;
+}
+.apps-table__no-action {
+  color: var(--text-muted);
+}
+.btn--small {
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+
+/* Confirmation / progress / result dialog. */
+.action-dialog__scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(9, 11, 17, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 50;
+}
+.action-dialog {
+  width: min(420px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  padding: 20px;
+}
+.action-dialog__title {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+.action-dialog__meta {
+  margin: 0 0 12px;
+  display: grid;
+  gap: 4px;
+}
+.action-dialog__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+.action-dialog__row dt {
+  color: var(--text-muted);
+}
+.action-dialog__impact {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--text);
+}
+.action-dialog__impact[data-safety="availability"] {
+  color: var(--warn);
+}
+.action-dialog__note {
+  margin: 0 0 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.action-dialog__remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+.action-dialog__progress {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.action-dialog__result {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+.action-dialog__result--succeeded { color: var(--ok); }
+.action-dialog__result--failed { color: var(--crit); }
+.action-dialog__result--cancelled { color: var(--text-muted); }
+.action-dialog__changes {
+  margin: 0 0 14px;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.action-dialog__change-target {
+  color: var(--text);
+}
+.action-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Local action history. */
+.action-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.action-history__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.action-history__status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-muted);
+}
+.action-history__status--succeeded { background: var(--ok); }
+.action-history__status--failed { background: var(--crit); }
+.action-history__status--cancelled { background: var(--text-muted); }
+.action-history__summary {
+  font-weight: 600;
+}
+.action-history__server {
+  color: var(--text-muted);
+}
+.action-history__time {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 12px;
+}

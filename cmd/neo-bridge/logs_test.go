@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -43,6 +44,9 @@ func (e *streamStubExecutor) Stream(ctx context.Context, cmd string, w io.Writer
 
 func (e *streamStubExecutor) ReadFileElevated(context.Context, string) ([]byte, error) {
 	return []byte(e.state), nil
+}
+func (e *streamStubExecutor) WriteFileElevated(context.Context, string, []byte, os.FileMode) error {
+	return nil
 }
 func (e *streamStubExecutor) User() string { return e.user }
 func (e *streamStubExecutor) Close() error { return nil }

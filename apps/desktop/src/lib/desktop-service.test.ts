@@ -190,6 +190,7 @@ function makeApi(servers: ServerSummary[]): ApiControl {
       summary: "ok",
       changes: [],
     }),
+    cancelOperation: async () => ({ found: false }),
     subscribeLogs: async () => ({ id: "noop", close: async () => {} }),
   };
 

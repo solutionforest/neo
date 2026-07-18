@@ -3,9 +3,12 @@ package ssh
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -152,4 +155,29 @@ func (e *Executor) ReadFileElevatedContext(ctx context.Context, remotePath strin
 		return nil, err
 	}
 	return []byte(out), nil
+}
+
+// WriteFileElevatedContext is the cancellable counterpart of WriteFileElevated.
+// It installs data at a possibly root-only path (using sudo for non-root
+// sessions) under ctx's deadline. Rather than SCP (which has no context hook),
+// it inlines a base64 payload and pipes it through `base64 -d | tee` over
+// RunContext, so the whole write honours cancellation. The payload is small
+// (Neo's state.json) and base64 sidesteps any quoting hazard from the contents,
+// so embedding it in the command stays well within ARG_MAX.
+func (e *Executor) WriteFileElevatedContext(ctx context.Context, remotePath string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(remotePath)
+	b64 := base64.StdEncoding.EncodeToString(data)
+	sudo := ""
+	if e.User() != "root" {
+		sudo = "sudo "
+	}
+	cmd := fmt.Sprintf(
+		"%smkdir -p %s && printf %%s %s | base64 -d | %stee %s >/dev/null && %schmod %04o %s",
+		sudo, ShellQuote(dir),
+		ShellQuote(b64),
+		sudo, ShellQuote(remotePath),
+		sudo, mode.Perm(), ShellQuote(remotePath),
+	)
+	_, err := e.RunContext(ctx, cmd)
+	return err
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 
@@ -53,6 +54,9 @@ func (e stubExecutor) Run(_ context.Context, cmd string) (string, error) {
 func (e stubExecutor) Stream(_ context.Context, _ string, _ io.Writer) error { return nil }
 func (e stubExecutor) ReadFileElevated(_ context.Context, _ string) ([]byte, error) {
 	return []byte(`{"apps":{"ghost":{"status":"running"}},"services":{}}`), nil
+}
+func (e stubExecutor) WriteFileElevated(_ context.Context, _ string, _ []byte, _ os.FileMode) error {
+	return nil
 }
 func (e stubExecutor) User() string { return e.user }
 func (e stubExecutor) Close() error { return nil }
