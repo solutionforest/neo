@@ -42,4 +42,16 @@ describe("Management window", () => {
       expect(within(history).getAllByText("Start listmonk").length).toBeGreaterThan(0),
     );
   });
+
+  it("shows the bridge.hello version surface in the About panel", async () => {
+    render(<Management api={createFixtureDesktopAPI()} />);
+
+    const about = screen.getByRole("region", { name: "About" });
+    // Fixture hello: desktop 0.1.0, bridge 0.1.0-fixture / core 0.0.0-dev,
+    // commit fixture0000, protocol v1.
+    await waitFor(() => expect(within(about).getByText("0.1.0")).toBeInTheDocument());
+    expect(within(about).getByText("0.1.0-fixture (core 0.0.0-dev)")).toBeInTheDocument();
+    expect(within(about).getByText("fixture0000")).toBeInTheDocument();
+    expect(within(about).getByText("v1")).toBeInTheDocument();
+  });
 });

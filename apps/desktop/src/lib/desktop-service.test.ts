@@ -162,6 +162,7 @@ function makeApi(servers: ServerSummary[]): ApiControl {
       bridgeVersion: "t",
       desktopVersion: "t",
       coreVersion: "t",
+      commit: "t",
       platform: "test",
       arch: "test",
       activation: "active",

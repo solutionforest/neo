@@ -1,4 +1,5 @@
 VERSION ?= dev
+COMMIT  ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
 BINARY  := neo
 IMAGE   ?= vxero/neo
 GO_IMAGE ?= golang:1.24-alpine
@@ -19,7 +20,7 @@ endif
 HOSTOS ?= $(shell uname -s | sed -e 's/Darwin/darwin/' -e 's/Linux/linux/' -e 's/MINGW.*/windows/' -e 's/MSYS.*/windows/' -e 's/CYGWIN.*/windows/')
 HOSTARCH ?= $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/amd64/amd64/' -e 's/arm64/arm64/' -e 's/aarch64/arm64/')
 
-.PHONY: build build-dev build-staging build-all release-local build-neotest build-sandbox-test build-bridge install clean test fmt docker-build docker-run image-build sandbox desktop-install desktop-dev desktop-test
+.PHONY: build build-dev build-staging build-all release-local build-neotest build-sandbox-test build-bridge install clean test fmt docker-build docker-run image-build sandbox desktop-install desktop-bridge desktop-dev desktop-test
 
 DOCKER_GO = docker run --rm -v "$(CURDIR):/src" -w /src $(GO_IMAGE)
 GO_BIN = /usr/local/go/bin/go
@@ -79,7 +80,7 @@ build-sandbox-test:
 # build.rs), so this target is only for standalone/CI use.
 build-bridge:
 	@mkdir -p bin
-	$(DOCKER_GO) sh -c '$(GO_BIN) mod download && CGO_ENABLED=0 GOOS=$(HOSTOS) GOARCH=$(HOSTARCH) $(GO_BIN) build -ldflags "-s -w -X main.bridgeVersion=$(VERSION) -X main.coreVersion=$(VERSION)" -o bin/neo-bridge ./cmd/neo-bridge'
+	$(DOCKER_GO) sh -c '$(GO_BIN) mod download && CGO_ENABLED=0 GOOS=$(HOSTOS) GOARCH=$(HOSTARCH) $(GO_BIN) build -ldflags "-s -w -X main.bridgeVersion=$(VERSION) -X main.coreVersion=$(VERSION) -X main.buildCommit=$(COMMIT)" -o bin/neo-bridge ./cmd/neo-bridge'
 
 sandbox: build build-sandbox-test
 	./test/sandbox/run-tests.sh
@@ -113,13 +114,18 @@ docker-run:
 		$(IMAGE):latest
 
 # --- Neo Desktop (apps/desktop) -------------------------------------------
-# Convenience targets for the Tauri 2 tray app. These use the host's Node and
-# Rust toolchains directly — they are separate from the Dockerized CLI build
-# above and never touch the root Go module. The neo-bridge sidecar target lands
-# in the bridge slice (slice 2).
+# Convenience targets for the Tauri 2 tray app. These use the host's Node, Go,
+# and Rust toolchains directly — they are separate from the Dockerized CLI build
+# above and never touch the root Go module.
 
 desktop-install:
 	cd apps/desktop && npm ci
+
+# Build the neo-bridge sidecar under the Tauri externalBin filename for a
+# target triple (host triple when TRIPLE is unset). Stamp with VERSION/COMMIT:
+#   make desktop-bridge TRIPLE=aarch64-apple-darwin VERSION=0.1.0
+desktop-bridge:
+	VERSION=$(VERSION) COMMIT=$(COMMIT) scripts/desktop-bridge.sh $(TRIPLE)
 
 desktop-dev:
 	cd apps/desktop && npm run tauri dev

@@ -28,12 +28,14 @@ import (
 	"github.com/vxero/neo/internal/operations"
 )
 
-// Stamped at build time via -ldflags (see the Makefile's build-bridge target).
-// bridgeVersion is this sidecar's version; coreVersion is the Neo CLI core it is
-// built from. Both default to "dev" for un-stamped local builds.
+// Stamped at build time via -ldflags (see the Makefile's build-bridge target
+// and scripts/desktop-bridge.sh). bridgeVersion is this sidecar's version;
+// coreVersion is the Neo CLI core it is built from; buildCommit is the Git
+// commit it was built at. All default to dev values for un-stamped builds.
 var (
 	bridgeVersion = "dev"
 	coreVersion   = "dev"
+	buildCommit   = "unknown"
 )
 
 func main() {
@@ -48,7 +50,8 @@ func main() {
 	logger.Info("neo-bridge starting",
 		"protocolVersion", ProtocolVersion,
 		"bridgeVersion", bridgeVersion,
-		"coreVersion", coreVersion)
+		"coreVersion", coreVersion,
+		"commit", buildCommit)
 
 	// The shared operation service backs the data methods over the real
 	// ~/.neo/config.json via SSH. Deadlines default to the plan's 12s connect /
@@ -73,6 +76,7 @@ func main() {
 	srv := NewServer(bridgeVersion, coreVersion, logger,
 		WithOperations(ops),
 		WithActivation(activation),
+		WithCommit(buildCommit),
 	)
 
 	done := make(chan error, 1)

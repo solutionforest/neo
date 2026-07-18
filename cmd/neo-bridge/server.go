@@ -23,8 +23,11 @@ type HelloResult struct {
 	ProtocolVersion int    `json:"protocolVersion"`
 	BridgeVersion   string `json:"bridgeVersion"`
 	CoreVersion     string `json:"coreVersion"`
-	Platform        string `json:"platform"`
-	Arch            string `json:"arch"`
+	// Commit is the Git commit the bridge was built from, stamped at build time
+	// (release builds); "unknown" for un-stamped local builds.
+	Commit   string `json:"commit"`
+	Platform string `json:"platform"`
+	Arch     string `json:"arch"`
 	// Activation is "active", "inactive", "grace", or "unknown". Real license
 	// state is wired in a later slice; the walking skeleton reports "unknown".
 	Activation string `json:"activation"`
@@ -41,6 +44,7 @@ type ShutdownResult struct {
 type Server struct {
 	bridgeVersion string
 	coreVersion   string
+	commit        string
 	log           *slog.Logger
 
 	seen map[string]struct{} // request ids observed this session (must be unique)
@@ -74,6 +78,12 @@ func WithOperations(ops *operations.Service) Option {
 // WithActivation injects the activation-status provider used by bridge.hello.
 func WithActivation(fn func() string) Option {
 	return func(s *Server) { s.activationFn = fn }
+}
+
+// WithCommit injects the Git commit the bridge was built from, reported by
+// bridge.hello. An empty value is reported as "unknown".
+func WithCommit(commit string) Option {
+	return func(s *Server) { s.commit = commit }
 }
 
 // NewServer builds a Server. A nil logger is replaced with a no-op logger so the
@@ -218,10 +228,15 @@ func (s *Server) hello() HelloResult {
 			activation = v
 		}
 	}
+	commit := s.commit
+	if commit == "" {
+		commit = "unknown"
+	}
 	return HelloResult{
 		ProtocolVersion: ProtocolVersion,
 		BridgeVersion:   s.bridgeVersion,
 		CoreVersion:     s.coreVersion,
+		Commit:          commit,
 		Platform:        runtime.GOOS,
 		Arch:            runtime.GOARCH,
 		Activation:      activation,

@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { DesktopAPI } from "../lib/desktop-api";
+import type { BridgeHello } from "../lib/protocol";
 import {
   formatBytes,
   formatLatency,
@@ -175,6 +176,8 @@ export function Management({ api }: { api: DesktopAPI }) {
           <ActionHistoryList entries={actions.state.history} limit={10} />
         </section>
 
+        <AboutPanel api={api} />
+
         <section className="panel panel--wide" aria-label="Logs">
           <h2 className="panel__title">Logs</h2>
           <LogViewer
@@ -206,6 +209,60 @@ export function Management({ api }: { api: DesktopAPI }) {
         />
       ) : null}
     </div>
+  );
+}
+
+/** About: the version surface required by the plan's Phase 6 — desktop version,
+ * bridge build, Git commit, and protocol version, all reported by
+ * `bridge.hello` (the desktop version is injected by the Rust shell). */
+function AboutPanel({ api }: { api: DesktopAPI }) {
+  const [hello, setHello] = useState<BridgeHello | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .hello()
+      .then((h) => {
+        if (!cancelled) setHello(h);
+      })
+      .catch(() => {
+        // Best-effort: the panel shows placeholders until the bridge answers.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  return (
+    <section className="panel" aria-label="About">
+      <h2 className="panel__title">About</h2>
+      <dl className="kv">
+        <div className="kv__row">
+          <dt>Desktop</dt>
+          <dd>{hello?.desktopVersion ?? "—"}</dd>
+        </div>
+        <div className="kv__row">
+          <dt>Bridge build</dt>
+          <dd>{hello ? `${hello.bridgeVersion} (core ${hello.coreVersion})` : "—"}</dd>
+        </div>
+        <div className="kv__row">
+          <dt>Commit</dt>
+          <dd>{hello?.commit ?? "—"}</dd>
+        </div>
+        <div className="kv__row">
+          <dt>Protocol</dt>
+          <dd>{hello ? `v${hello.protocolVersion}` : "—"}</dd>
+        </div>
+        <div className="kv__row">
+          <dt>Platform</dt>
+          <dd>{hello ? `${hello.platform}/${hello.arch}` : "—"}</dd>
+        </div>
+        <div className="kv__row">
+          <dt>Activation</dt>
+          <dd>{hello?.activation ?? "—"}</dd>
+        </div>
+      </dl>
+    </section>
   );
 }
 

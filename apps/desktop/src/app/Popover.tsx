@@ -14,7 +14,10 @@ import { MetricCard, type MetricTone } from "../components/MetricCard";
 import { ServerSelector } from "../features/servers/ServerSelector";
 import { FindingsList } from "../features/diagnostics/FindingsList";
 import { LogViewer } from "../features/logs/LogViewer";
+import { UpdateBanner } from "../features/updates/UpdateBanner";
+import type { UpdateController } from "../lib/update-controller";
 import { statusFor, useServerData } from "./useServerData";
+import { useUpdates } from "./useUpdates";
 
 function tone(
   value: number | null | undefined,
@@ -27,10 +30,19 @@ function tone(
   return "normal";
 }
 
-export function Popover({ api }: { api: DesktopAPI }) {
+export function Popover({
+  api,
+  updater,
+}: {
+  api: DesktopAPI;
+  /** Test seam: inject an UpdateController; production uses the Tauri backend. */
+  updater?: UpdateController;
+}) {
   // The popover is the always-alive menu-bar window: it owns the polling timers
-  // and drives the native tray state + notifications (plan Phase 4).
+  // and drives the native tray state + notifications (plan Phase 4), and it
+  // owns the silent update-check schedule (plan Phase 6).
   const data = useServerData(api, { ownsTray: true });
+  const updates = useUpdates(updater);
   // Recent logs are collapsed by default so the popover opens no SSH log stream
   // until the user asks — LogViewer only subscribes while mounted.
   const [logsOpen, setLogsOpen] = useState(false);
@@ -50,6 +62,13 @@ export function Popover({ api }: { api: DesktopAPI }) {
         </div>
         <StatusBadge status={status} />
       </header>
+
+      <UpdateBanner
+        state={updates.state}
+        onInstall={updates.install}
+        onDefer={updates.defer}
+        onDismissError={updates.dismissError}
+      />
 
       <div className="popover__controls">
         <ServerSelector

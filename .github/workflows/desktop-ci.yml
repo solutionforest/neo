@@ -1,8 +1,16 @@
 name: Desktop CI
 
-# Slice 1 scope: prove the Tauri scaffold's frontend and Rust shell build. The
-# full cross-platform matrix (macOS build, native smoke tests, signing) arrives
-# with the release-engineering slice. Path filters keep this off CLI-only PRs.
+# Release-engineering slice (Phase 6): the full desktop check matrix.
+#   1. Root Go unit tests (the CLI must stay green on every desktop change).
+#   2. Bridge protocol/contract tests, called out explicitly.
+#   3. Frontend typecheck (static lint), unit tests, and production build.
+#   4. Rust formatting, clippy lint, and tests.
+#   5. macOS application build on a native macOS runner.
+#   6. Windows x64 application build on a native Windows runner.
+# Native-runner smoke tests: on both desktop platforms the bundled neo-bridge
+# sidecar is driven through a real bridge.hello handshake over stdio, and on
+# macOS the packaged app is launched and checked for liveness. Cross-compiled
+# artifacts are never the only verification for their target OS.
 on:
   push:
     branches: [plan/neo-desktop-tray-app, main]
@@ -10,26 +18,52 @@ on:
       - "apps/desktop/**"
       - "cmd/neo-bridge/**"
       - "internal/operations/**"
+      - "internal/config/**"
+      - "internal/license/**"
+      - "internal/ssh/**"
+      - "go.mod"
+      - "go.sum"
+      - "scripts/desktop-bridge.sh"
       - ".github/workflows/desktop-ci.yml"
   pull_request:
     paths:
       - "apps/desktop/**"
       - "cmd/neo-bridge/**"
       - "internal/operations/**"
+      - "internal/config/**"
+      - "internal/license/**"
+      - "internal/ssh/**"
+      - "go.mod"
+      - "go.sum"
+      - "scripts/desktop-bridge.sh"
       - ".github/workflows/desktop-ci.yml"
 
 concurrency:
   group: desktop-ci-${{ github.ref }}
   cancel-in-progress: true
 
-defaults:
-  run:
-    working-directory: apps/desktop
-
 jobs:
-  frontend:
-    name: Frontend (lint, typecheck, test, build)
+  go-tests:
+    name: Go (root unit tests + bridge contract tests)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Root Go unit tests
+        run: go test ./...
+      - name: Bridge protocol and contract tests
+        run: go test -count=1 -v ./cmd/neo-bridge/... ./internal/operations/...
+
+  frontend:
+    name: Frontend (typecheck, test, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/desktop
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -42,9 +76,13 @@ jobs:
       - run: npm run test:run
       - run: npm run build
 
-  windows-build:
-    name: Windows x64 compile
-    runs-on: windows-latest
+  macos-build:
+    name: macOS build (rust fmt, clippy, tests, bundle, smoke)
+    runs-on: macos-14
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/desktop
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,6 +90,60 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: npm ci
+      # generate_context!() embeds the built frontend at compile time.
+      - run: npm run build
+      - name: Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
+      - name: Rust lint (clippy)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Build macOS app bundle (unsigned CI build)
+        run: npm run tauri build -- --bundles app
+      - name: Smoke test — sidecar bridge.hello handshake (native)
+        run: |
+          set -euo pipefail
+          bridge="src-tauri/target/release/bundle/macos/Neo Desktop.app/Contents/MacOS/neo-bridge"
+          test -x "$bridge" || { echo "bundled neo-bridge missing"; exit 1; }
+          printf '{"version":1,"id":"ci-smoke","method":"bridge.hello"}\n' | "$bridge" | tee hello.json
+          grep -q '"protocolVersion":1' hello.json
+      - name: Smoke test — launch packaged tray app (native)
+        run: |
+          set -euo pipefail
+          app="src-tauri/target/release/bundle/macos/Neo Desktop.app"
+          open -g "$app"
+          sleep 8
+          pgrep -f "Neo Desktop.app/Contents/MacOS/" >/dev/null || {
+            echo "Neo Desktop did not stay running"; exit 1; }
+          pkill -f "Neo Desktop.app/Contents/MacOS/" || true
+
+  windows-build:
+    name: Windows x64 build (tests, bundle, smoke)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
@@ -59,10 +151,16 @@ jobs:
         with:
           workspaces: apps/desktop/src-tauri
       - run: npm ci
-      # generate_context!() embeds the built frontend at compile time, so the
-      # dist bundle must exist before the Rust build.
       - run: npm run build
-      - name: Compile Tauri shell (x86_64-pc-windows-msvc)
-        run: cargo build --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+      - name: Build Windows app (unsigned CI build)
+        run: npm run tauri build -- --target x86_64-pc-windows-msvc --bundles nsis
+      - name: Smoke test — sidecar bridge.hello handshake (native)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bridge="src-tauri/binaries/neo-bridge-x86_64-pc-windows-msvc.exe"
+          test -f "$bridge" || { echo "neo-bridge sidecar missing"; exit 1; }
+          printf '{"version":1,"id":"ci-smoke","method":"bridge.hello"}\n' | "$bridge" | tee hello.json
+          grep -q '"protocolVersion":1' hello.json

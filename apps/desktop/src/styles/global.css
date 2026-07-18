@@ -198,6 +198,41 @@ button {
   font-size: 12px;
 }
 
+.update-banner {
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.update-banner--error {
+  border-color: var(--crit);
+  background: var(--crit-bg);
+  color: var(--crit);
+}
+.update-banner__title {
+  margin: 0;
+  font-weight: 600;
+}
+.update-banner__notes {
+  margin: 0;
+  max-height: 72px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  color: var(--text-muted);
+}
+.update-banner--error .update-banner__notes {
+  color: inherit;
+}
+.update-banner__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .popover__metrics {
   display: grid;
   grid-template-columns: 1fr 1fr;

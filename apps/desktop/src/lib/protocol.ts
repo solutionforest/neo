@@ -53,6 +53,9 @@ export interface BridgeHello {
   bridgeVersion: string;
   desktopVersion: string;
   coreVersion: string;
+  /** Git commit the bridge was built from ("unknown" for un-stamped builds).
+   * Mirrors HelloResult.Commit in cmd/neo-bridge/server.go. */
+  commit: string;
   platform: string;
   arch: string;
   /** Activation status. The key itself is never exposed to the frontend.
