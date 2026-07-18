@@ -61,6 +61,42 @@ func (s *Server) handleServerSnapshot(ctx context.Context, w *syncWriter, req Re
 	s.writeResult(w, req.ID, snap)
 }
 
+// appListParams is the params payload of an app.list request.
+type appListParams struct {
+	Server string `json:"server"`
+}
+
+// handleAppList answers app.list for one named server with the flattened set of
+// applications, workers, sidecars, and shared services.
+func (s *Server) handleAppList(ctx context.Context, w *syncWriter, req Request) {
+	if s.ops == nil {
+		s.writeError(w, req.ID, newError(ErrInternal, "bridge is not configured for data methods", false, nil))
+		return
+	}
+
+	var p appListParams
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			s.writeError(w, req.ID, newError(ErrInvalidRequest, "invalid params for app.list", false, nil))
+			return
+		}
+	}
+	if p.Server == "" {
+		s.writeError(w, req.ID, newError(ErrInvalidRequest, "app.list requires a 'server' param", false, nil))
+		return
+	}
+
+	apps, err := s.ops.ListApps(ctx, p.Server)
+	if err != nil {
+		s.writeError(w, req.ID, rpcFromOpError(err))
+		return
+	}
+	if apps == nil {
+		apps = []operations.AppSummary{}
+	}
+	s.writeResult(w, req.ID, apps)
+}
+
 // rpcFromOpError converts an operation-layer error into a protocol RPCError.
 // A typed *operations.Error carries a stable code that maps 1:1 onto the wire
 // codes (same string values); anything else is sanitised to internal_error so

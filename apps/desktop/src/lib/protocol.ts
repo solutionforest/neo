@@ -173,3 +173,36 @@ export function aggregateStatus(
   if (findings.some((f) => f.severity === "warning")) return "warning";
   return "healthy";
 }
+
+/** Severity order used to combine many servers' statuses; higher wins. */
+const AGGREGATE_RANK: Record<AggregateStatus, number> = {
+  critical: 3,
+  warning: 2,
+  unknown: 1,
+  healthy: 0,
+};
+
+/**
+ * Combine every configured server's status into the single value shown on the
+ * tray. The worst status wins (plan "Tray state"): any critical → critical, else
+ * any warning → warning, else any unknown (a server still starting up, mid-refresh,
+ * or with a stale cache) → unknown, otherwise healthy. With no configured servers
+ * the tray is unknown, not healthy — there is nothing to vouch for.
+ */
+export function aggregateAll(statuses: AggregateStatus[]): AggregateStatus {
+  if (statuses.length === 0) return "unknown";
+  return statuses.reduce<AggregateStatus>(
+    (worst, s) => (AGGREGATE_RANK[s] > AGGREGATE_RANK[worst] ? s : worst),
+    "healthy",
+  );
+}
+
+/** A transition-triggered desktop notification. `key` deduplicates repeats. */
+export interface DesktopNotification {
+  /** Stable dedup/cooldown key: identifies the finding, not the occurrence. */
+  key: string;
+  title: string;
+  body: string;
+  severity: FindingSeverity;
+  server: string;
+}

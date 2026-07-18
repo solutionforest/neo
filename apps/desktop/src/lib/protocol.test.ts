@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  aggregateAll,
   aggregateStatus,
   BridgeError,
   ERROR_CODES,
@@ -62,6 +63,22 @@ describe("aggregateStatus", () => {
   it("is healthy when reachable with only info findings", () => {
     expect(aggregateStatus(snapshot(true), [])).toBe("healthy");
     expect(aggregateStatus(snapshot(true), [finding("info")])).toBe("healthy");
+  });
+});
+
+describe("aggregateAll", () => {
+  it("is unknown with no configured servers", () => {
+    expect(aggregateAll([])).toBe("unknown");
+  });
+
+  it("returns the worst status across servers", () => {
+    expect(aggregateAll(["healthy", "healthy"])).toBe("healthy");
+    expect(aggregateAll(["healthy", "warning"])).toBe("warning");
+    expect(aggregateAll(["warning", "critical"])).toBe("critical");
+    // A single starting-up/stale server drags the tray to unknown, unless a
+    // worse status is present.
+    expect(aggregateAll(["healthy", "unknown"])).toBe("unknown");
+    expect(aggregateAll(["critical", "unknown"])).toBe("critical");
   });
 });
 

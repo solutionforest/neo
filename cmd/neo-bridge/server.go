@@ -166,6 +166,9 @@ func (s *Server) handleLine(ctx context.Context, line []byte, w *syncWriter) (st
 	case "server.snapshot":
 		s.handleServerSnapshot(ctx, w, req)
 		return false
+	case "app.list":
+		s.handleAppList(ctx, w, req)
+		return false
 	default:
 		// Methods beyond hello/shutdown arrive in later slices. Until then the
 		// bridge answers with a stable code so the UI can react without parsing

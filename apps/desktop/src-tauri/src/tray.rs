@@ -19,7 +19,7 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         &[&open_i, &dashboard_i, &sep, &settings_i, &quit_i],
     )?;
 
-    let mut builder = TrayIconBuilder::with_id("neo-tray")
+    let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("Neo Desktop")
         .menu(&menu)
         // Left click toggles the popover; the menu is reserved for right click.
@@ -65,6 +65,46 @@ pub fn show_popover<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+/// The tray icon's registered id, shared between construction and later lookups.
+const TRAY_ID: &str = "neo-tray";
+
+/// Reflect the aggregate health state on the tray: update the tooltip and, on
+/// macOS, a monochrome badge glyph beside the template icon. macOS template
+/// icons follow the menu-bar appearance and carry NO color, so the plan's
+/// requirement that "shape or badge (not color alone) distinguishes critical vs
+/// unknown" is met with a distinct glyph per non-healthy state. On Windows/Linux
+/// the colored icon plus the tooltip convey the state (the title API is
+/// macOS-only).
+pub fn apply_tray_state<R: Runtime>(app: &AppHandle<R>, state: &str, summary: &str) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    let _ = tray.set_tooltip(Some(summary));
+
+    let badge = state_badge(state);
+    #[cfg(target_os = "macos")]
+    {
+        let _ = tray.set_title(badge);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = badge;
+    }
+}
+
+/// Map an aggregate state to its menu-bar badge glyph. Healthy shows no badge;
+/// every other state gets a distinct shape so critical and unknown are never
+/// told apart by color alone. Kept as a pure function so it is unit-testable
+/// without a running tray.
+fn state_badge(state: &str) -> Option<&'static str> {
+    match state {
+        "critical" => Some("!"),
+        "warning" => Some("△"),
+        "unknown" => Some("…"),
+        _ => None, // healthy
+    }
+}
+
 /// Toggle popover visibility.
 pub fn toggle_popover<R: Runtime>(app: &AppHandle<R>) {
     if let Some(win) = app.get_webview_window("popover") {
@@ -74,5 +114,28 @@ pub fn toggle_popover<R: Runtime>(app: &AppHandle<R>) {
             let _ = win.show();
             let _ = win.set_focus();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::state_badge;
+
+    #[test]
+    fn healthy_has_no_badge() {
+        assert_eq!(state_badge("healthy"), None);
+    }
+
+    #[test]
+    fn non_healthy_states_have_distinct_shapes() {
+        // Each state's glyph must be unique so critical and unknown are never
+        // distinguishable by color alone (they carry none on a template icon).
+        let crit = state_badge("critical");
+        let warn = state_badge("warning");
+        let unknown = state_badge("unknown");
+        assert!(crit.is_some() && warn.is_some() && unknown.is_some());
+        assert_ne!(crit, unknown);
+        assert_ne!(crit, warn);
+        assert_ne!(warn, unknown);
     }
 }

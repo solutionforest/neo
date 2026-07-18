@@ -66,6 +66,16 @@ describe("Popover", () => {
     );
   });
 
+  it("marks an offline server's data as stale", async () => {
+    const user = userEvent.setup();
+    renderPopover();
+    await screen.findByText("Reachable");
+
+    // edge is unreachable in the fixtures → its cached data is stale.
+    await user.selectOptions(screen.getByLabelText("Select server"), "edge");
+    await waitFor(() => expect(screen.getByText("Stale")).toBeInTheDocument());
+  });
+
   it("manual refresh re-requests the snapshot", async () => {
     const user = userEvent.setup();
     const base = createFixtureDesktopAPI();

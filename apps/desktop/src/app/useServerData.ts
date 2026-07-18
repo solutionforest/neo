@@ -1,12 +1,19 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DesktopAPI } from "../lib/desktop-api";
 import {
   aggregateStatus,
+  type AggregateStatus,
   type AppSummary,
   type Finding,
   type ServerSnapshot,
   type ServerSummary,
 } from "../lib/protocol";
+import {
+  DesktopService,
+  type ServerRuntime,
+  type ServiceState,
+} from "../lib/desktop-service";
+import { notify, setTrayState } from "../lib/host";
 
 export interface ServerData {
   loading: boolean;
@@ -17,105 +24,102 @@ export interface ServerData {
   apps: AppSummary[];
   findings: Finding[];
   lastRefreshed: string | null;
+  /** True when the selected server's cached snapshot is stale (offline). */
+  stale: boolean;
+  /** Aggregate tray state across ALL configured servers. */
+  aggregate: AggregateStatus;
   select: (server: string) => void;
   refresh: () => void;
 }
 
+export interface UseServerDataOptions {
+  /**
+   * When true (the popover), this hook's service becomes the polling owner: it
+   * runs the periodic timers and drives the native tray state + notifications.
+   * The management window passes false so it loads once and refreshes manually,
+   * never adding a second polling loop or double-driving the tray — the plan
+   * requires exactly one owner of periodic refresh.
+   */
+  ownsTray?: boolean;
+}
+
 /**
- * Loads the configured servers once, then the selected server's snapshot, apps,
- * and findings. Periodic polling is intentionally NOT here — slice 4 gives the
- * desktop application service sole ownership of refresh timers. This hook only
- * refreshes on mount, on server switch, and on explicit refresh().
+ * Subscribes the component to a DesktopService, which is the single owner of
+ * periodic refresh (plan Phase 4). No timer lives in React: the hook maps the
+ * service's per-server runtime for the selected server into the legacy
+ * ServerData shape and forwards user intent (select / manual refresh).
  */
-export function useServerData(api: DesktopAPI): ServerData {
-  const [servers, setServers] = useState<ServerSummary[]>([]);
-  const [selected, setSelected] = useState<string>("");
-  const [snapshot, setSnapshot] = useState<ServerSnapshot | null>(null);
-  const [apps, setApps] = useState<AppSummary[]>([]);
-  const [findings, setFindings] = useState<Finding[]>([]);
-  const [lastRefreshed, setLastRefreshed] = useState<string | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
+export function useServerData(
+  api: DesktopAPI,
+  options: UseServerDataOptions = {},
+): ServerData {
+  const { ownsTray = false } = options;
 
-  // Load the server list and pick an initial selection (the current server).
+  const service = useMemo(
+    () =>
+      new DesktopService({
+        api,
+        clock: () => Date.now(),
+        setTimer: (fn, ms) => window.setTimeout(fn, ms),
+        clearTimer: (h) => window.clearTimeout(h as number),
+        random: Math.random,
+        // Only the tray owner runs periodic timers and pushes to the shell.
+        periodic: ownsTray,
+        onTray: ownsTray ? (state, detail) => void setTrayState(state, detail) : undefined,
+        onNotify: ownsTray ? (n) => void notify(n) : undefined,
+      }),
+    [api, ownsTray],
+  );
+
+  const [state, setState] = useState<ServiceState>(() => service.getState());
+  // Keep the latest service in a ref so returned callbacks stay referentially
+  // stable across renders.
+  const serviceRef = useRef(service);
+  serviceRef.current = service;
+
   useEffect(() => {
-    let cancelled = false;
-    api
-      .listServers()
-      .then((list) => {
-        if (cancelled) return;
-        setServers(list);
-        setSelected((prev) => prev || list.find((s) => s.current)?.id || list[0]?.id || "");
-      })
-      .catch((err) => {
-        if (!cancelled) setError(errorMessage(err));
-      });
+    const unsubscribe = service.subscribe(setState);
+    void service.start();
+    // Rendering this window means it is visible; for the popover this refreshes
+    // the selected server immediately (plan "Immediately refresh ... when the
+    // popover opens").
+    service.setVisible(true);
     return () => {
-      cancelled = true;
+      service.setVisible(false);
+      unsubscribe();
+      service.stop();
     };
-  }, [api]);
+  }, [service]);
 
-  // Load the selected server's data whenever selection or refresh tick changes.
-  useEffect(() => {
-    if (!selected) {
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    Promise.all([
-      api.getSnapshot(selected),
-      api.listApps(selected),
-      api.runDiagnostics(selected),
-    ])
-      .then(([snap, appList, findingList]) => {
-        if (cancelled) return;
-        setSnapshot(snap);
-        setApps(appList);
-        setFindings(findingList);
-        setLastRefreshed(snap.observedAt);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(errorMessage(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [api, selected, tick]);
+  const selectedRuntime = findSelected(state);
 
-  const select = useCallback((server: string) => {
-    setSnapshot(null);
-    setApps([]);
-    setFindings([]);
-    setSelected(server);
-  }, []);
-
-  const refresh = useCallback(() => setTick((t) => t + 1), []);
-
-  return {
-    loading,
-    error,
-    servers,
-    selected,
-    snapshot,
-    apps,
-    findings,
-    lastRefreshed,
-    select,
-    refresh,
-  };
+  return useMemo<ServerData>(
+    () => ({
+      loading: selectedRuntime
+        ? selectedRuntime.refreshing && !selectedRuntime.snapshot
+        : state.loading,
+      error: selectedRuntime?.error?.message ?? state.error,
+      servers: state.servers.map((s) => s.server),
+      selected: state.selected,
+      snapshot: selectedRuntime?.snapshot ?? null,
+      apps: selectedRuntime?.apps ?? [],
+      findings: selectedRuntime?.findings ?? [],
+      lastRefreshed: selectedRuntime?.snapshot?.observedAt ?? null,
+      stale: selectedRuntime?.stale ?? false,
+      aggregate: state.aggregate,
+      select: (server) => serviceRef.current.select(server),
+      refresh: () => serviceRef.current.manualRefresh(),
+    }),
+    [state, selectedRuntime],
+  );
 }
 
-export function statusFor(data: ServerData) {
+function findSelected(state: ServiceState): ServerRuntime | undefined {
+  return state.servers.find((s) => s.server.id === state.selected);
+}
+
+/** The SELECTED server's status (the popover header badge). For the whole-tray
+ * rollup across every server use ServerData.aggregate instead. */
+export function statusFor(data: ServerData): AggregateStatus {
   return aggregateStatus(data.snapshot, data.findings);
-}
-
-function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
 }
