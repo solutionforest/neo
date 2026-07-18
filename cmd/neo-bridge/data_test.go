@@ -147,6 +147,44 @@ func TestServerSnapshotConnectErrorMapsToSSHCode(t *testing.T) {
 	}
 }
 
+func TestAppListMethod(t *testing.T) {
+	cfg := &config.Config{
+		Current: "production",
+		Servers: map[string]config.Server{"production": {Name: "production", Host: "root@10.0.0.1", Port: 22}},
+	}
+	srv := serverWithOps(t, stubConfigStore{cfg: cfg}, stubConnector{exec: stubExecutor{user: "root"}})
+	resp := drive(t, srv, `{"version":1,"id":"a1","method":"app.list","params":{"server":"production"}}`+"\n")
+
+	if len(resp) != 1 || resp[0].Error != nil {
+		t.Fatalf("unexpected app.list response: %+v", resp)
+	}
+	var apps []operations.AppSummary
+	remarshal(t, resp[0].Result, &apps)
+	if len(apps) != 1 {
+		t.Fatalf("want 1 app row, got %+v", apps)
+	}
+	if apps[0].Name != "ghost" || apps[0].Kind != operations.KindApp || apps[0].State != operations.StateRunning {
+		t.Fatalf("app.list row wrong: %+v", apps[0])
+	}
+}
+
+func TestAppListMissingParam(t *testing.T) {
+	srv := serverWithOps(t, stubConfigStore{cfg: &config.Config{Servers: map[string]config.Server{}}}, stubConnector{})
+	resp := drive(t, srv, `{"version":1,"id":"a2","method":"app.list"}`+"\n")
+	if len(resp) != 1 || resp[0].Error == nil || resp[0].Error.Code != ErrInvalidRequest {
+		t.Fatalf("want invalid_request for missing server, got %+v", resp)
+	}
+}
+
+func TestAppListUnknownServerMapsToCode(t *testing.T) {
+	cfg := &config.Config{Servers: map[string]config.Server{}}
+	srv := serverWithOps(t, stubConfigStore{cfg: cfg}, stubConnector{})
+	resp := drive(t, srv, `{"version":1,"id":"a3","method":"app.list","params":{"server":"ghost"}}`+"\n")
+	if len(resp) != 1 || resp[0].Error == nil || resp[0].Error.Code != ErrServerNotFound {
+		t.Fatalf("want server_not_found, got %+v", resp)
+	}
+}
+
 func TestDataMethodsUnconfigured(t *testing.T) {
 	// A server with no operations service must fail cleanly, not panic.
 	srv := NewServer("1", "1", slog.New(slog.NewTextHandler(io.Discard, nil)))

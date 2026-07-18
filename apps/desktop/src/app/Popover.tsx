@@ -26,7 +26,9 @@ function tone(
 }
 
 export function Popover({ api }: { api: DesktopAPI }) {
-  const data = useServerData(api);
+  // The popover is the always-alive menu-bar window: it owns the polling timers
+  // and drives the native tray state + notifications (plan Phase 4).
+  const data = useServerData(api, { ownsTray: true });
   const status = statusFor(data);
   const { snapshot } = data;
   const reachable = snapshot?.reachable ?? false;
@@ -60,10 +62,19 @@ export function Popover({ api }: { api: DesktopAPI }) {
         >
           {snapshot ? (reachable ? "Reachable" : "Unreachable") : "—"}
         </span>
-        <span className="popover__refreshed">
-          {data.lastRefreshed
-            ? `Updated ${formatRelativeTime(data.lastRefreshed)}`
-            : "Never updated"}
+        <span className="popover__refreshed" data-stale={data.stale || undefined}>
+          {data.stale ? (
+            <>
+              <span className="popover__stale-tag">Stale</span>
+              {data.lastRefreshed
+                ? ` · last seen ${formatRelativeTime(data.lastRefreshed)}`
+                : ""}
+            </>
+          ) : data.lastRefreshed ? (
+            `Updated ${formatRelativeTime(data.lastRefreshed)}`
+          ) : (
+            "Never updated"
+          )}
         </span>
       </div>
 

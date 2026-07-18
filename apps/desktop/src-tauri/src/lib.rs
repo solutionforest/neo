@@ -44,6 +44,8 @@ pub fn run() {
             commands::open_management_window,
             commands::hide_popover,
             commands::quit_app,
+            commands::set_tray_state,
+            commands::notify,
             bridge::bridge_hello,
             bridge::server_list,
             bridge::server_snapshot,

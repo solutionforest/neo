@@ -178,6 +178,17 @@ button {
   color: var(--text-muted);
 }
 
+.popover__refreshed[data-stale] {
+  color: var(--warn);
+}
+
+.popover__stale-tag {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.72em;
+}
+
 .popover__error,
 .management__error {
   background: var(--crit-bg);

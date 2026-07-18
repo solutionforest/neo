@@ -3,11 +3,10 @@
 Menu-bar (macOS) / notification-area (Windows) tray application for the
 [Neo CLI](../../README.md), built with **Tauri 2 + React + TypeScript + Vite**.
 
-Through **slice 2 — the bridge walking skeleton**: the runnable tray shell plus
-the bundled `neo-bridge` Go sidecar (`../../cmd/neo-bridge`). Rust supervises a
-single sidecar over versioned newline-delimited JSON, handshakes with
-`bridge.hello`, and restarts it with backoff. Live SSH data still arrives in
-later slices. See
+Through **slice 4 — live tray behavior**: the runnable tray shell, the bundled
+`neo-bridge` Go sidecar (`../../cmd/neo-bridge`) reading the real Neo config over
+SSH, and a single desktop application service that polls every configured server,
+rolls their health into one tray state, and fires transition notifications. See
 [`plans/2026-07-18-neo-desktop-tray-application.md`](../../plans/2026-07-18-neo-desktop-tray-application.md).
 
 ## Layout
@@ -90,5 +89,22 @@ protocol-version rejection, request-id correlation, event routing, ≤3 restarts
 with exponential backoff, terminate on exit); the sidecar bundled via Tauri
 `externalBin` and never exposed to the webview as a generic shell.
 
-Not yet: live SSH data, real config reads, polling, notifications, log
-streaming, lifecycle actions, and signed release packaging.
+Slice 3 (servers and snapshots): shared Go `internal/operations` service behind
+dependency-injected connector/executor/config interfaces; `server.list` and
+`server.snapshot` over the real `~/.neo/config.json`; typed numeric snapshots
+with graceful per-metric degradation.
+
+Slice 4 (app list and tray polling): the `app.list` bridge method (applications,
+workers, sidecars, and shared services, flattened and stable-sorted); a single
+`DesktopService` that owns all refresh timers — selected server every 30s while
+visible, others every 120s, ≤3 concurrent snapshots, ≤10% jitter, unreachable
+backoff 30/60/120/300s, debounced manual refresh that bypasses backoff once, and
+a cached last snapshot marked stale (with its age) when offline; an aggregate
+tray state across all servers reflected as a macOS template-icon badge (shape,
+not color alone); and transition-only notifications with per-finding dedup, a
+5-minute cooldown, and silence until the initial scan completes. The on-demand
+management window loads once instead of starting a second poller, so opening it
+never multiplies polling.
+
+Not yet: log streaming, deterministic diagnostics rules, lifecycle actions, and
+signed release packaging.
