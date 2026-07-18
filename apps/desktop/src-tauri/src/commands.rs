@@ -1,7 +1,7 @@
-//! Typed commands exposed to the webview. This is the entire surface the
-//! frontend can invoke — there is deliberately no generic shell or process
-//! command here. Slice 2 adds a single `bridge_request` command that forwards
-//! allowlisted, versioned JSON to the `neo-bridge` sidecar.
+//! Window/lifecycle commands exposed to the webview. This module deliberately
+//! contains no generic shell or process command. The bridge-facing commands
+//! (`bridge_hello`, `server_list`, …) live in `bridge.rs`; each forwards one
+//! allowlisted, versioned method to the `neo-bridge` sidecar.
 
 use tauri::{AppHandle, Manager, Runtime};
 
