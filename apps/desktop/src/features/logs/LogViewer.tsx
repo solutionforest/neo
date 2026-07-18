@@ -21,6 +21,16 @@ export interface LogViewerProps {
 }
 
 /**
+ * The most lines rendered to the DOM at once. The controller keeps a much larger
+ * bounded history in memory (up to MAX_LOG_TAIL) for local filtering, but a live
+ * follow stream that painted every one of those as a node would make React
+ * reconcile thousands of elements on each batched flush. Rendering only the most
+ * recent window keeps a fast tail without virtualization (Slice 9 performance
+ * pass on log rendering); older lines stay searchable, just not all painted.
+ */
+export const MAX_RENDERED_LINES = 2_000;
+
+/**
  * A log viewer over one selected workload. Search is purely local — the plan
  * keeps server-side grep out of the beta, so we filter the already-loaded lines
  * (Phase 3 "search loaded lines locally"). Pause/Clear and the bounded history
@@ -53,6 +63,17 @@ export function LogViewer({
     if (!q) return stream.lines;
     return stream.lines.filter((l) => l.text.toLowerCase().includes(q));
   }, [stream.lines, query]);
+
+  // Paint only the most recent window; everything above stays in memory and is
+  // still searched by the filter above (which runs over the full history).
+  const visible = useMemo(
+    () =>
+      filtered.length > MAX_RENDERED_LINES
+        ? filtered.slice(filtered.length - MAX_RENDERED_LINES)
+        : filtered,
+    [filtered],
+  );
+  const hiddenCount = filtered.length - visible.length;
 
   const hasTargets = targets.length > 0;
 
@@ -143,11 +164,18 @@ export function LogViewer({
             {stream.lines.length === 0 ? "Waiting for logs…" : "No lines match the filter."}
           </span>
         ) : (
-          filtered.map((line) => (
-            <span key={line.seq} className="logs__line">
-              {line.text}
-            </span>
-          ))
+          <>
+            {hiddenCount > 0 ? (
+              <span className="logs__truncated">
+                … {hiddenCount} earlier line{hiddenCount === 1 ? "" : "s"} hidden
+              </span>
+            ) : null}
+            {visible.map((line) => (
+              <span key={line.seq} className="logs__line">
+                {line.text}
+              </span>
+            ))}
+          </>
         )}
       </pre>
     </div>

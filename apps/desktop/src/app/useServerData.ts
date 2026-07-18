@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { DesktopAPI } from "../lib/desktop-api";
+import { isTauri, type DesktopAPI } from "../lib/desktop-api";
 import {
   aggregateStatus,
   type AggregateStatus,
@@ -14,6 +14,8 @@ import {
   type ServiceState,
 } from "../lib/desktop-service";
 import { notify, setTrayState } from "../lib/host";
+import { getObservability } from "../lib/observability";
+import { LifecycleMonitor } from "../lib/lifecycle-monitor";
 
 export interface ServerData {
   loading: boolean;
@@ -67,6 +69,7 @@ export function useServerData(
         periodic: ownsTray,
         onTray: ownsTray ? (state, detail) => void setTrayState(state, detail) : undefined,
         onNotify: ownsTray ? (n) => void notify(n) : undefined,
+        obs: getObservability(),
       }),
     [api, ownsTray],
   );
@@ -90,6 +93,51 @@ export function useServerData(
       service.stop();
     };
   }, [service]);
+
+  // Only the tray owner (the always-alive popover) reacts to laptop lifecycle
+  // events: sleep/wake, network online/offline, and window focus. Each triggers
+  // ONE debounced re-check of every server (plan Phase 4: "Sleep/wake and network
+  // reconnect trigger a debounced refresh"). The management window does not run
+  // this, so opening it never adds a second reconnect-refresh loop.
+  useEffect(() => {
+    if (!ownsTray || typeof window === "undefined") return;
+
+    const monitor = new LifecycleMonitor({
+      clock: () => Date.now(),
+      setTimer: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimer: (h) => window.clearTimeout(h as number),
+      onRefresh: (trigger) => serviceRef.current.refreshAll(trigger),
+    });
+    monitor.start();
+
+    const onOnline = () => monitor.online();
+    const onFocus = () => monitor.foreground();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") monitor.foreground();
+    };
+    window.addEventListener("online", onOnline);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    // Capture bridge start/stop/restart events for the support bundle. Guarded
+    // to Tauri so plain-browser dev and tests never touch the native event bus.
+    let unlistenBridge: (() => void) | undefined;
+    if (isTauri()) {
+      void import("../lib/tauri-api").then(({ observeBridgeLifecycle }) =>
+        observeBridgeLifecycle().then((un) => {
+          unlistenBridge = un;
+        }),
+      );
+    }
+
+    return () => {
+      monitor.stop();
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      unlistenBridge?.();
+    };
+  }, [ownsTray]);
 
   const selectedRuntime = findSelected(state);
 

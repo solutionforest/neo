@@ -27,6 +27,13 @@ export interface UpdateBackend {
   relaunch(): Promise<void>;
 }
 
+/** Optional sink for update observability (checks + signature failures). Kept as
+ * a narrow interface so tests inject a spy and production passes the shared log. */
+export interface UpdateObserver {
+  recordUpdateCheck(available: boolean, version: string | null): void;
+  recordUpdateFailure(message: string): void;
+}
+
 export type UpdatePhase = "idle" | "prompt" | "installing" | "restarting" | "error";
 
 export interface UpdateControllerState {
@@ -42,6 +49,8 @@ export interface UpdateControllerOptions {
   startupDelayMs?: number;
   /** Interval between silent checks (plan: every six hours). */
   intervalMs?: number;
+  /** Records update checks and signature failures for the support bundle. */
+  observer?: UpdateObserver;
 }
 
 export const DEFAULT_STARTUP_DELAY_MS = 20_000;
@@ -53,6 +62,7 @@ export class UpdateController {
   private backend: UpdateBackend;
   private startupDelayMs: number;
   private intervalMs: number;
+  private observer?: UpdateObserver;
 
   private state: UpdateControllerState = { phase: "idle", update: null, error: null };
   private listeners = new Set<Listener>();
@@ -67,6 +77,7 @@ export class UpdateController {
     this.backend = backend;
     this.startupDelayMs = options.startupDelayMs ?? DEFAULT_STARTUP_DELAY_MS;
     this.intervalMs = options.intervalMs ?? DEFAULT_CHECK_INTERVAL_MS;
+    this.observer = options.observer;
   }
 
   getState(): UpdateControllerState {
@@ -107,6 +118,7 @@ export class UpdateController {
     this.checking = true;
     try {
       const update = await this.backend.check();
+      this.observer?.recordUpdateCheck(update !== null, update?.version ?? null);
       if (
         update &&
         this.state.phase === "idle" &&
@@ -141,6 +153,9 @@ export class UpdateController {
       await this.backend.relaunch();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // A bad updater signature fails closed inside downloadAndInstall and lands
+      // here; recording it makes a fail-closed updater visible in the bundle.
+      this.observer?.recordUpdateFailure(message);
       this.setState({ phase: "error", update: null, error: message });
     }
   }

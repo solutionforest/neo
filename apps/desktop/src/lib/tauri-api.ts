@@ -11,6 +11,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { DesktopAPI } from "./desktop-api";
+import { getObservability } from "./observability";
 import {
   BridgeError,
   ERROR_CODES,
@@ -60,18 +61,58 @@ function toBridgeError(raw: unknown): BridgeError {
   );
 }
 
-/** Invoke a typed Tauri command, normalizing failures into BridgeError. */
+/** Invoke a typed Tauri command, normalizing failures into BridgeError and
+ * recording the call's method, duration, and stable error code — never its
+ * arguments — into the local observability log (plan "Observability"). */
 async function call<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  const startedAt = performance.now();
   try {
-    return await invoke<T>(command, args);
+    const result = await invoke<T>(command, args);
+    getObservability().recordRequest(command, performance.now() - startedAt, null);
+    return result;
   } catch (raw) {
-    throw toBridgeError(raw);
+    const err = toBridgeError(raw);
+    getObservability().recordRequest(command, performance.now() - startedAt, err.code);
+    throw err;
   }
+}
+
+/**
+ * Subscribe the observability log to the Rust supervisor's bridge lifecycle
+ * events (`bridge://ready|error|unavailable`). Returns an unlisten function.
+ * Call once from the always-alive popover window so restarts and crashes are
+ * captured for the support bundle without any extra Rust plumbing.
+ */
+export async function observeBridgeLifecycle(): Promise<UnlistenFn> {
+  const obs = getObservability();
+  const unlisteners = await Promise.all([
+    listen("bridge://ready", () => obs.recordBridge("ready")),
+    listen<{ message?: string }>("bridge://error", (e) =>
+      obs.recordBridge("error", e.payload?.message),
+    ),
+    listen<{ message?: string }>("bridge://unavailable", (e) =>
+      obs.recordBridge("unavailable", e.payload?.message),
+    ),
+  ]);
+  return () => unlisteners.forEach((u) => u());
 }
 
 export function createTauriDesktopAPI(): DesktopAPI {
   return {
-    hello: () => call<BridgeHello>("bridge_hello", {}),
+    hello: async () => {
+      const hello = await call<BridgeHello>("bridge_hello", {});
+      getObservability().setVersions({
+        desktopVersion: hello.desktopVersion,
+        bridgeVersion: hello.bridgeVersion,
+        coreVersion: hello.coreVersion,
+        protocolVersion: hello.protocolVersion,
+        commit: hello.commit,
+        platform: hello.platform,
+        arch: hello.arch,
+        activation: hello.activation,
+      });
+      return hello;
+    },
     listServers: () => call<ServerSummary[]>("server_list", {}),
     getSnapshot: (server) => call<ServerSnapshot>("server_snapshot", { server }),
     listApps: (server) => call<AppSummary[]>("app_list", { server }),

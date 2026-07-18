@@ -21,6 +21,7 @@
 // so the behavior above is covered by deterministic unit tests.
 
 import type { DesktopAPI } from "./desktop-api";
+import type { ObservabilityLog } from "./observability";
 import {
   aggregateAll,
   aggregateStatus,
@@ -81,6 +82,10 @@ export interface ServiceDeps {
    */
   periodic?: boolean;
   config?: Partial<PollingConfig>;
+  /** Optional local observability log. When present the service records poll
+   * scheduling, cache age, and delivered notifications (plan "Observability").
+   * Omitted in unit tests that don't assert on it. */
+  obs?: ObservabilityLog;
 }
 
 export interface TrayDetail {
@@ -138,6 +143,7 @@ export class DesktopService {
   private readonly onNotify?: (n: DesktopNotification) => void;
   private readonly periodic: boolean;
   private readonly cfg: PollingConfig;
+  private readonly obs?: ObservabilityLog;
 
   private cells = new Map<string, ServerCell>();
   private order: string[] = [];
@@ -167,6 +173,7 @@ export class DesktopService {
     this.onNotify = deps.onNotify;
     this.periodic = deps.periodic ?? true;
     this.cfg = { ...DEFAULT_POLLING_CONFIG, ...deps.config };
+    this.obs = deps.obs;
   }
 
   // --- lifecycle ----------------------------------------------------------
@@ -263,6 +270,21 @@ export class DesktopService {
     this.enqueuePoll(target, { immediate: true, bypassBackoff: true });
   }
 
+  /**
+   * Re-check EVERY server now, resetting backoff. Called after the machine wakes
+   * from sleep or the network reconnects (plan Phase 4: "Sleep/wake and network
+   * reconnect trigger a debounced refresh"). The LifecycleMonitor already
+   * collapses a burst of transitions into one call, so this fans out immediately
+   * rather than debouncing again. Concurrency stays capped by the poll queue.
+   */
+  refreshAll(trigger = "wake"): void {
+    if (!this.started) return;
+    this.obs?.recordLifecycle(trigger);
+    for (const id of this.order) {
+      this.enqueuePoll(id, { immediate: true, bypassBackoff: true });
+    }
+  }
+
   // --- polling engine -----------------------------------------------------
 
   private enqueuePoll(id: string, opts: { immediate?: boolean; bypassBackoff?: boolean } = {}): void {
@@ -355,6 +377,7 @@ export class DesktopService {
     if (reachable) cell.lastSuccessAt = this.clock();
     cell.consecutiveFailures = reachable ? 0 : cell.consecutiveFailures + 1;
     cell.status = aggregateStatus(snapshot, findings);
+    this.obs?.recordPollResult(reachable, reachable ? 0 : this.cacheAge(cell));
     this.markScanned(cell);
   }
 
@@ -369,7 +392,13 @@ export class DesktopService {
     cell.stale = true;
     cell.consecutiveFailures += 1;
     cell.status = "critical"; // unreachable server
+    this.obs?.recordPollResult(false, this.cacheAge(cell));
     this.markScanned(cell);
+  }
+
+  /** Age of the displayed cache in ms, or null when nothing was ever cached. */
+  private cacheAge(cell: ServerCell): number | null {
+    return cell.lastSuccessAt == null ? null : this.clock() - cell.lastSuccessAt;
   }
 
   private markScanned(cell: ServerCell): void {
@@ -393,6 +422,7 @@ export class DesktopService {
       cell.timer = null;
     }
     const delay = this.nextDelay(id, cell);
+    this.obs?.recordPollScheduled(delay);
     cell.timer = this.setTimer(() => {
       cell.timer = null;
       this.enqueuePoll(id);
@@ -474,6 +504,7 @@ export class DesktopService {
       return; // deduped within cooldown
     }
     this.lastNotifiedAt.set(note.key, now);
+    this.obs?.recordNotification(note.key, note.severity);
     this.onNotify?.(note);
   }
 

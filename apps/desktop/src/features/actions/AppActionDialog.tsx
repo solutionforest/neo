@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { ActionDialogState } from "../../lib/action-controller";
 import { actionLabel } from "../../lib/actions";
 
@@ -31,6 +32,26 @@ export function AppActionDialog({
   const { app, action, phase, safety } = dialog;
   const label = actionLabel(action);
   const title = `${label} ${app}`;
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Keyboard accessibility: Escape dismisses the dialog (except mid-run, where a
+  // stray keypress must not abandon an in-flight action — Cancel is explicit),
+  // and focus moves into the dialog on open so screen-reader/keyboard users land
+  // on the confirmation instead of behind it.
+  useEffect(() => {
+    if (phase !== "running") dialogRef.current?.focus();
+  }, [phase]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && phase !== "running") {
+        e.preventDefault();
+        onDismiss();
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [phase, onDismiss]);
 
   return (
     <div
@@ -41,6 +62,8 @@ export function AppActionDialog({
       }}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="action-dialog"
         role="dialog"
         aria-modal="true"

@@ -542,6 +542,12 @@ button {
 .logs__empty {
   color: var(--text-muted);
 }
+.logs__truncated {
+  display: block;
+  color: var(--text-muted);
+  font-style: italic;
+  padding-bottom: 4px;
+}
 
 /* Recent-logs disclosure in the popover */
 .popover__logs {
@@ -699,4 +705,94 @@ button {
   margin-left: auto;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+/* --- Slice 9: accessibility + diagnostic bundle -------------------------- */
+
+/* Visually hidden but exposed to assistive tech. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A single, consistent focus ring so keyboard users can always see where they
+   are — not just on .btn (which already had one). */
+a:focus-visible,
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Support panel + diagnostic bundle preview. */
+.panel__hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.action-dialog--wide {
+  width: min(640px, 100%);
+}
+.bundle-excludes {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.bundle-preview {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  resize: vertical;
+}
+
+/* Respect the OS "reduce motion" setting: drop transitions/animations so the
+   UI never moves for users who asked it not to (plan: reduced-motion behavior). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Respect "reduce transparency": swap translucent scrims for opaque surfaces so
+   nothing relies on see-through layering. */
+@media (prefers-reduced-transparency: reduce) {
+  .action-dialog__scrim {
+    background: rgba(9, 11, 17, 0.92);
+  }
+}
+
+/* Honor "increase contrast": strengthen borders and text so states stay legible
+   for low-vision users, complementing the shape/text status cues. */
+@media (prefers-contrast: more) {
+  :root {
+    --border: #9aa0b4;
+    --text-muted: #3b3f4d;
+  }
+  .status-badge,
+  .app-state,
+  .btn {
+    border-width: 2px;
+  }
 }

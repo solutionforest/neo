@@ -98,6 +98,42 @@ describe("AppActionDialog", () => {
     expect(onViewLogs).toHaveBeenCalledWith("ghost");
   });
 
+  it("dismisses on Escape while confirming and moves focus into the dialog", () => {
+    const onDismiss = vi.fn();
+    render(
+      <AppActionDialog
+        server="production"
+        dialog={dialog({ action: "start", safety: "reversible" })}
+        onConfirm={noop}
+        onCancel={noop}
+        onDismiss={onDismiss}
+        onRememberChange={noop}
+        onViewLogs={noop}
+      />,
+    );
+    // Focus lands on the dialog so keyboard/screen-reader users start inside it.
+    expect(screen.getByRole("dialog")).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not dismiss on Escape mid-run (Cancel is explicit)", () => {
+    const onDismiss = vi.fn();
+    render(
+      <AppActionDialog
+        server="production"
+        dialog={dialog({ phase: "running", operationId: "op-1" })}
+        onConfirm={noop}
+        onCancel={noop}
+        onDismiss={onDismiss}
+        onRememberChange={noop}
+        onViewLogs={noop}
+      />,
+    );
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
   it("shows changes on a successful result", () => {
     render(
       <AppActionDialog

@@ -275,6 +275,18 @@ func TestSnapshotConnectErrorsAreClassified(t *testing.T) {
 		{"unknownhost", "knownhosts: key is unknown", ErrSSHUnknownHost},
 		{"timeout", "dial tcp 10.0.0.1:22: i/o timeout", ErrOperationTimeout},
 		{"refused", "dial tcp 10.0.0.1:22: connect: connection refused", ErrSSHUnreachable},
+
+		// SSH edge cases from the plan's manual matrix. Every one must land on a
+		// stable code the UI can branch on — never leak the raw SSH text.
+		// An encrypted key the non-interactive bridge cannot unlock, or a missing
+		// key, both surface as "no supported methods" / auth rejection.
+		{"encrypted_key", "ssh: handshake failed: ssh: unable to authenticate, attempted methods [none publickey], no supported methods remain", ErrSSHAuthFailed},
+		{"missing_key", "ssh: handshake failed: unable to authenticate, no supported methods remain", ErrSSHAuthFailed},
+		{"permission_denied", "ssh: handshake failed: ssh: permission denied", ErrSSHAuthFailed},
+		// An unknown host must be rejected (strict known_hosts), not accepted.
+		{"unknown_host_prompt", "unknown host key for 10.0.0.1 — run a command manually first to accept the key", ErrSSHUnknownHost},
+		{"changed_host_key", "WARNING: HOST KEY HAS CHANGED for 10.0.0.1", ErrSSHUnknownHost},
+		{"cancelled", "context canceled", ErrOperationCancelled},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

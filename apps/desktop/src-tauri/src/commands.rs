@@ -58,6 +58,45 @@ pub fn notify<R: Runtime>(app: AppHandle<R>, title: String, body: String) -> Res
         .map_err(|e| e.to_string())
 }
 
+/// Write an exported diagnostic bundle to a user-visible file and return its
+/// path. The webview supplies only the already-redacted body and a filename; the
+/// shell alone chooses the directory (Downloads, then home, then the app data
+/// dir), so the frontend can never write to an arbitrary location. The frontend
+/// is responsible for redaction (see diagnostic-bundle.ts) — this command just
+/// persists the bytes.
+#[tauri::command]
+pub fn export_diagnostic_bundle<R: Runtime>(
+    app: AppHandle<R>,
+    filename: String,
+    content: String,
+) -> Result<String, String> {
+    let dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().home_dir())
+        .or_else(|_| app.path().app_data_dir())
+        .map_err(|e| format!("no writable directory for the bundle: {e}"))?;
+    let path = dir.join(sanitize_filename(&filename));
+    std::fs::write(&path, content).map_err(|e| format!("writing the bundle failed: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Reduce a caller-supplied filename to a safe basename: strip any directory
+/// components and keep only conservative filename characters, so the webview can
+/// never traverse out of the chosen directory.
+fn sanitize_filename(name: &str) -> String {
+    let base = name.rsplit(|c| c == '/' || c == '\\').next().unwrap_or("");
+    let cleaned: String = base
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        .collect();
+    if cleaned.is_empty() {
+        "neo-desktop-diagnostics.json".to_string()
+    } else {
+        cleaned
+    }
+}
+
 /// Shared helper used by both the command and the tray menu.
 pub fn show_management<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     // A full window means the app should show in the dock/taskbar on macOS.
