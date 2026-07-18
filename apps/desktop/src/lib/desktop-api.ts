@@ -56,7 +56,12 @@ export async function createDesktopAPI(): Promise<DesktopAPI> {
     return createTauriDesktopAPI();
   }
   const { createFixtureDesktopAPI } = await import("./fixtures");
-  return createFixtureDesktopAPI();
+  // Browser-only visual review can pin a deterministic fixture with
+  // `?server=edge`; production Tauri builds continue to use the bridge.
+  const initialServer = typeof window === "undefined"
+    ? undefined
+    : new URLSearchParams(window.location.search).get("server") ?? undefined;
+  return createFixtureDesktopAPI({ initialServer });
 }
 
 function useBridge(): boolean {

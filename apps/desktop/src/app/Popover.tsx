@@ -11,6 +11,7 @@ import {
 import { NeoLogo } from "../components/NeoLogo";
 import { StatusBadge } from "../components/StatusBadge";
 import { MetricCard, type MetricTone } from "../components/MetricCard";
+import { Icon } from "../components/Icon";
 import { ServerSelector } from "../features/servers/ServerSelector";
 import { FindingsList } from "../features/diagnostics/FindingsList";
 import { LogViewer } from "../features/logs/LogViewer";
@@ -54,11 +55,14 @@ export function Popover({
   const diskPct = snapshot ? usagePercent(snapshot.diskUsedBytes, snapshot.diskTotalBytes) : 0;
 
   return (
-    <div className="popover" data-status={status}>
+    <main className="popover" data-status={status} aria-busy={data.loading}>
       <header className="popover__header">
         <div className="popover__brand">
-          <NeoLogo />
-          <span className="popover__title">Neo Desktop</span>
+          <NeoLogo size={28} />
+          <span className="popover__brand-copy">
+            <span className="popover__title">Neo Desktop</span>
+            <span className="popover__subtitle">Server monitor</span>
+          </span>
         </div>
         <StatusBadge status={status} />
       </header>
@@ -70,42 +74,53 @@ export function Popover({
         onDismissError={updates.dismissError}
       />
 
-      <div className="popover__controls">
+      <section className="popover__server-card" aria-label="Selected server">
         <ServerSelector
           servers={data.servers}
           selected={data.selected}
           onSelect={data.select}
           disabled={data.loading}
         />
-      </div>
-
-      <div className="popover__reachability">
-        <span
-          className={`reachability reachability--${reachable ? "up" : "down"}`}
-          role="status"
-        >
-          {snapshot ? (reachable ? "Reachable" : "Unreachable") : "—"}
-        </span>
-        <span className="popover__refreshed" data-stale={data.stale || undefined}>
-          {data.stale ? (
-            <>
-              <span className="popover__stale-tag">Stale</span>
-              {data.lastRefreshed
-                ? ` · last seen ${formatRelativeTime(data.lastRefreshed)}`
-                : ""}
-            </>
-          ) : data.lastRefreshed ? (
-            `Updated ${formatRelativeTime(data.lastRefreshed)}`
-          ) : (
-            "Never updated"
-          )}
-        </span>
-      </div>
+        <div className="popover__reachability">
+          <span
+            className={`reachability reachability--${snapshot ? (reachable ? "up" : "down") : "unknown"}`}
+            role="status"
+          >
+            <span className="reachability__icon" aria-hidden="true">
+              <Icon name={snapshot ? (reachable ? "check" : "close") : "info"} size={12} />
+            </span>
+            {snapshot ? (reachable ? "Reachable" : "Unreachable") : "Checking status"}
+          </span>
+          <span className="popover__refreshed" data-stale={data.stale || undefined}>
+            {data.stale ? (
+              <>
+                <span className="popover__stale-tag">Stale</span>
+                {data.lastRefreshed
+                  ? ` · last seen ${formatRelativeTime(data.lastRefreshed)}`
+                  : ""}
+              </>
+            ) : data.lastRefreshed ? (
+              `Updated ${formatRelativeTime(data.lastRefreshed)}`
+            ) : (
+              "Waiting for first update"
+            )}
+          </span>
+        </div>
+      </section>
 
       {data.error ? (
         <div className="popover__error" role="alert">
-          {data.error}
+          <Icon name="warning" size={15} />
+          <span>{data.error}</span>
         </div>
+      ) : null}
+
+      {data.servers.length === 0 && !data.loading ? (
+        <section className="empty-state" aria-label="No configured servers">
+          <span className="empty-state__icon" aria-hidden="true"><Icon name="server" size={20} /></span>
+          <strong>No servers configured</strong>
+          <span>Add a server with the Neo CLI, then refresh.</span>
+        </section>
       ) : null}
 
       <section className="popover__metrics" aria-label="Server metrics">
@@ -114,6 +129,7 @@ export function Popover({
           value={snapshot ? formatPercent(snapshot.cpuPercent) : "—"}
           percent={snapshot?.cpuPercent}
           tone={snapshot ? tone(snapshot.cpuPercent, 80, 95) : "normal"}
+          icon="cpu"
         />
         <MetricCard
           label="RAM"
@@ -125,6 +141,7 @@ export function Popover({
           }
           percent={ramPct}
           tone={snapshot ? tone(ramPct, 80, 95) : "normal"}
+          icon="memory"
         />
         <MetricCard
           label="Disk"
@@ -136,30 +153,39 @@ export function Popover({
           }
           percent={diskPct}
           tone={snapshot ? tone(diskPct, 75, 90) : "normal"}
+          icon="disk"
         />
         <MetricCard
           label="Latency"
           value={snapshot && reachable ? formatLatency(snapshot.latencyMs) : "—"}
           tone={snapshot ? tone(snapshot.latencyMs, 750, 2000) : "normal"}
+          icon="latency"
         />
       </section>
 
       <section className="popover__counts" aria-label="Workload counts">
         <div className="count-pill">
+          <Icon name="apps" size={14} />
           <span className="count-pill__value">{snapshot?.apps.running ?? 0}</span>
           <span className="count-pill__label">Apps up</span>
         </div>
         <div className="count-pill">
+          <Icon name="warning" size={14} />
           <span className="count-pill__value">{snapshot?.apps.stopped ?? 0}</span>
           <span className="count-pill__label">Apps down</span>
         </div>
         <div className="count-pill">
+          <Icon name="activity" size={14} />
           <span className="count-pill__value">{snapshot?.services.running ?? 0}</span>
           <span className="count-pill__label">Services up</span>
         </div>
       </section>
 
       <section className="popover__findings" aria-label="Findings">
+        <div className="section-heading">
+          <h2>Findings</h2>
+          <span>{data.findings.length === 0 ? "All clear" : `${data.findings.length} active`}</span>
+        </div>
         <FindingsList findings={data.findings} limit={3} />
       </section>
 
@@ -171,8 +197,8 @@ export function Popover({
           aria-expanded={logsOpen}
           disabled={data.apps.length === 0}
         >
-          <span>Recent logs</span>
-          <span aria-hidden="true">{logsOpen ? "▾" : "▸"}</span>
+          <span className="popover__logs-label"><Icon name="logs" size={15} />Recent logs</span>
+          <Icon name="chevron" size={14} className={logsOpen ? "icon--expanded" : ""} />
         </button>
         {logsOpen && data.apps.length > 0 ? (
           <LogViewer
@@ -191,6 +217,7 @@ export function Popover({
           onClick={data.refresh}
           disabled={data.loading}
         >
+          <Icon name="refresh" size={14} className={data.loading ? "icon--spinning" : ""} />
           {data.loading ? "Refreshing…" : "Refresh"}
         </button>
         <button
@@ -199,8 +226,9 @@ export function Popover({
           onClick={() => openManagementWindow()}
         >
           Open Dashboard
+          <Icon name="chevron" size={14} />
         </button>
       </footer>
-    </div>
+    </main>
   );
 }

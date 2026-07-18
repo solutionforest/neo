@@ -10,6 +10,12 @@ describe("fixture DesktopAPI", () => {
     expect(servers.filter((s) => s.current)).toHaveLength(1);
   });
 
+  it("can pin an offline fixture for deterministic visual review", async () => {
+    const edge = createFixtureDesktopAPI({ initialServer: "edge" });
+    const servers = await edge.listServers();
+    expect(servers.find((server) => server.current)?.id).toBe("edge");
+  });
+
   it("returns a reachable production snapshot", async () => {
     const snap = await api.getSnapshot("production");
     expect(snap.reachable).toBe(true);

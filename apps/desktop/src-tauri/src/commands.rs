@@ -85,7 +85,7 @@ pub fn export_diagnostic_bundle<R: Runtime>(
 /// components and keep only conservative filename characters, so the webview can
 /// never traverse out of the chosen directory.
 fn sanitize_filename(name: &str) -> String {
-    let base = name.rsplit(|c| c == '/' || c == '\\').next().unwrap_or("");
+    let base = name.rsplit(['/', '\\']).next().unwrap_or("");
     let cleaned: String = base
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))

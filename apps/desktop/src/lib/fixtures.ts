@@ -169,10 +169,22 @@ export interface FixtureOptions {
   latencyMs?: number;
   /** Deterministic timestamp for generated operation results. */
   now?: () => string;
+  /** Select a deterministic server for browser-based visual review. */
+  initialServer?: string;
 }
 
 export function createFixtureDesktopAPI(options: FixtureOptions = {}): DesktopAPI {
-  const { latencyMs = 0, now = () => "2026-07-18T09:00:05Z" } = options;
+  const {
+    latencyMs = 0,
+    now = () => "2026-07-18T09:00:05Z",
+    initialServer,
+  } = options;
+  const fixtureServers = initialServer && FIXTURE_SERVERS.some((s) => s.id === initialServer)
+    ? FIXTURE_SERVERS.map((server) => ({
+        ...server,
+        current: server.id === initialServer,
+      }))
+    : FIXTURE_SERVERS;
   const delay = <T>(value: T): Promise<T> =>
     latencyMs > 0
       ? new Promise((r) => setTimeout(() => r(value), latencyMs))
@@ -182,7 +194,7 @@ export function createFixtureDesktopAPI(options: FixtureOptions = {}): DesktopAP
 
   return {
     hello: () => delay(clone(FIXTURE_HELLO)),
-    listServers: () => delay(clone(FIXTURE_SERVERS)),
+    listServers: () => delay(clone(fixtureServers)),
     getSnapshot: (server) => {
       const snap = SNAPSHOTS[server];
       if (!snap) return Promise.reject(new Error(`unknown fixture server: ${server}`));

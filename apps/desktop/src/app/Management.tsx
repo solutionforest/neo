@@ -12,6 +12,8 @@ import { actionLabel } from "../lib/actions";
 import type { AppAction, AppState, AppSummary } from "../lib/protocol";
 import { NeoLogo } from "../components/NeoLogo";
 import { StatusBadge } from "../components/StatusBadge";
+import { MetricCard, type MetricTone } from "../components/MetricCard";
+import { Icon } from "../components/Icon";
 import { ServerSelector } from "../features/servers/ServerSelector";
 import { FindingsList } from "../features/diagnostics/FindingsList";
 import { LogViewer } from "../features/logs/LogViewer";
@@ -27,6 +29,17 @@ function actionsForState(state: AppState): AppAction[] {
   return state === "stopped" ? ["start"] : ["restart", "stop"];
 }
 
+function metricTone(
+  value: number | null | undefined,
+  warning: number,
+  critical: number,
+): MetricTone {
+  if (value == null) return "normal";
+  if (value >= critical) return "critical";
+  if (value >= warning) return "warning";
+  return "normal";
+}
+
 export function Management({ api }: { api: DesktopAPI }) {
   const data = useServerData(api);
   const status = statusFor(data);
@@ -40,17 +53,25 @@ export function Management({ api }: { api: DesktopAPI }) {
     onSettled: () => data.refresh(),
   });
   const { dialog } = actions.state;
+  const ramPct = snapshot
+    ? usagePercent(snapshot.ramUsedBytes, snapshot.ramTotalBytes)
+    : 0;
+  const diskPct = snapshot
+    ? usagePercent(snapshot.diskUsedBytes, snapshot.diskTotalBytes)
+    : 0;
 
   // The failure "View logs" link selects that workload in the viewer below.
   const [logsTarget, setLogsTarget] = useState<string | undefined>(undefined);
 
   return (
-    <div className="management" data-status={status}>
+    <main className="management" data-status={status} aria-busy={data.loading}>
       <header className="management__header">
         <div className="popover__brand">
-          <NeoLogo size={26} />
-          <span className="management__title">Neo Desktop</span>
-          <StatusBadge status={status} />
+          <NeoLogo size={32} />
+          <span className="management__brand-copy">
+            <span className="management__title">Neo Desktop</span>
+            <span className="management__subtitle">Server operations</span>
+          </span>
         </div>
         <div className="management__toolbar">
           <ServerSelector
@@ -65,6 +86,7 @@ export function Management({ api }: { api: DesktopAPI }) {
             onClick={data.refresh}
             disabled={data.loading}
           >
+            <Icon name="refresh" size={14} className={data.loading ? "icon--spinning" : ""} />
             {data.loading ? "Refreshing…" : "Refresh"}
           </button>
         </div>
@@ -72,71 +94,62 @@ export function Management({ api }: { api: DesktopAPI }) {
 
       {data.error ? (
         <div className="management__error" role="alert">
-          {data.error}
+          <Icon name="warning" size={16} />
+          <span>{data.error}</span>
         </div>
       ) : null}
 
       <div className="management__grid">
-        <section className="panel" aria-label="Overview">
-          <h2 className="panel__title">Overview</h2>
-          <dl className="kv">
-            <div className="kv__row">
-              <dt>Reachable</dt>
-              <dd>{snapshot ? (snapshot.reachable ? "Yes" : "No") : "—"}</dd>
+        <section className="panel panel--wide overview-panel" aria-label="Overview">
+          <div className="panel__heading">
+            <div>
+              <h1 className="panel__title">Server health</h1>
+              <p className="panel__description">Live capacity and reachability for {data.selected || "your selected server"}.</p>
             </div>
-            <div className="kv__row">
-              <dt>Last updated</dt>
-              <dd>
-                {data.lastRefreshed
-                  ? formatRelativeTime(data.lastRefreshed)
-                  : "Never"}
-              </dd>
+            <StatusBadge status={status} />
+          </div>
+          <div className="overview-panel__body">
+            <div className={`overview-state overview-state--${snapshot ? (snapshot.reachable ? "reachable" : "offline") : "unknown"}`}>
+              <span className="overview-state__icon" aria-hidden="true">
+                <Icon name={snapshot?.reachable ? "check" : snapshot ? "close" : "activity"} size={22} />
+              </span>
+              <span className="overview-state__copy">
+                <strong>{snapshot ? (snapshot.reachable ? "Server is reachable" : "Server is offline") : "Checking server"}</strong>
+                <span>
+                  {data.stale
+                    ? `Showing cached data${data.lastRefreshed ? ` from ${formatRelativeTime(data.lastRefreshed)}` : ""}`
+                    : data.lastRefreshed
+                      ? `Updated ${formatRelativeTime(data.lastRefreshed)}`
+                      : "Waiting for the first snapshot"}
+                </span>
+              </span>
             </div>
-            <div className="kv__row">
-              <dt>CPU</dt>
-              <dd>{snapshot ? formatPercent(snapshot.cpuPercent) : "—"}</dd>
+            <div className="management__metrics" aria-label="Server metrics">
+              <MetricCard label="CPU" value={snapshot ? formatPercent(snapshot.cpuPercent) : "—"} percent={snapshot?.cpuPercent} tone={snapshot ? metricTone(snapshot.cpuPercent, 80, 95) : "normal"} icon="cpu" />
+              <MetricCard label="Memory" value={snapshot ? formatPercent(ramPct) : "—"} detail={snapshot ? `${formatBytes(snapshot.ramUsedBytes)} of ${formatBytes(snapshot.ramTotalBytes)}` : undefined} percent={ramPct} tone={snapshot ? metricTone(ramPct, 80, 95) : "normal"} icon="memory" />
+              <MetricCard label="Disk" value={snapshot ? formatPercent(diskPct) : "—"} detail={snapshot ? `${formatBytes(snapshot.diskUsedBytes)} of ${formatBytes(snapshot.diskTotalBytes)}` : undefined} percent={diskPct} tone={snapshot ? metricTone(diskPct, 75, 90) : "normal"} icon="disk" />
+              <MetricCard label="Latency" value={snapshot?.reachable ? formatLatency(snapshot.latencyMs) : "—"} tone={snapshot ? metricTone(snapshot.latencyMs, 750, 2000) : "normal"} icon="latency" />
             </div>
-            <div className="kv__row">
-              <dt>RAM</dt>
-              <dd>
-                {snapshot
-                  ? `${formatBytes(snapshot.ramUsedBytes)} / ${formatBytes(
-                      snapshot.ramTotalBytes,
-                    )} (${formatPercent(
-                      usagePercent(snapshot.ramUsedBytes, snapshot.ramTotalBytes),
-                    )})`
-                  : "—"}
-              </dd>
-            </div>
-            <div className="kv__row">
-              <dt>Disk</dt>
-              <dd>
-                {snapshot
-                  ? `${formatBytes(snapshot.diskUsedBytes)} / ${formatBytes(
-                      snapshot.diskTotalBytes,
-                    )} (${formatPercent(
-                      usagePercent(snapshot.diskUsedBytes, snapshot.diskTotalBytes),
-                    )})`
-                  : "—"}
-              </dd>
-            </div>
-            <div className="kv__row">
-              <dt>Latency</dt>
-              <dd>
-                {snapshot && snapshot.reachable
-                  ? formatLatency(snapshot.latencyMs)
-                  : "—"}
-              </dd>
-            </div>
-          </dl>
+          </div>
         </section>
 
-        <section className="panel" aria-label="Applications">
-          <h2 className="panel__title">Applications</h2>
+        <section className="panel panel--wide panel--workloads" aria-label="Applications">
+          <div className="panel__heading">
+            <div>
+              <h2 className="panel__title">Applications & services</h2>
+              <p className="panel__description">Inspect workload state and run allowlisted lifecycle actions.</p>
+            </div>
+            <span className="panel__count">{data.apps.length} workloads</span>
+          </div>
           {data.apps.length === 0 ? (
-            <p className="panel__empty">No applications on this server.</p>
+            <div className="empty-state empty-state--compact">
+              <span className="empty-state__icon" aria-hidden="true"><Icon name="apps" size={20} /></span>
+              <strong>No applications on this server</strong>
+              <span>Workloads appear here after the next successful refresh.</span>
+            </div>
           ) : (
-            <table className="apps-table">
+            <div className="table-scroll" tabIndex={0} aria-label="Scrollable application list">
+              <table className="apps-table">
               <thead>
                 <tr>
                   <th scope="col">Name</th>
@@ -154,6 +167,9 @@ export function Management({ api }: { api: DesktopAPI }) {
                     <td className="apps-table__image">{app.image}</td>
                     <td>
                       <span className={`app-state app-state--${app.state}`}>
+                        <span className="app-state__glyph" aria-hidden="true">
+                          {app.state === "running" ? <Icon name="check" size={11} /> : <Icon name="warning" size={11} />}
+                        </span>
                         {app.state}
                       </span>
                     </td>
@@ -163,12 +179,16 @@ export function Management({ api }: { api: DesktopAPI }) {
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
+            </div>
           )}
         </section>
 
-        <section className="panel panel--wide" aria-label="Findings">
-          <h2 className="panel__title">Findings</h2>
+        <section className="panel" aria-label="Findings">
+          <div className="panel__heading">
+            <h2 className="panel__title">Findings</h2>
+            <span className="panel__count">{data.findings.length} active</span>
+          </div>
           <FindingsList findings={data.findings} />
         </section>
 
@@ -182,7 +202,13 @@ export function Management({ api }: { api: DesktopAPI }) {
         <DiagnosticBundlePanel servers={data.servers} />
 
         <section className="panel panel--wide" aria-label="Logs">
-          <h2 className="panel__title">Logs</h2>
+          <div className="panel__heading">
+            <div>
+              <h2 className="panel__title">Live logs</h2>
+              <p className="panel__description">Search the bounded local history or follow new output.</p>
+            </div>
+            <Icon name="logs" size={18} />
+          </div>
           <LogViewer
             // Remount when a failure asks to show a specific workload's logs, so
             // the viewer re-selects that target.
@@ -211,7 +237,7 @@ export function Management({ api }: { api: DesktopAPI }) {
           }}
         />
       ) : null}
-    </div>
+    </main>
   );
 }
 
@@ -237,8 +263,11 @@ function AboutPanel({ api }: { api: DesktopAPI }) {
   }, [api]);
 
   return (
-    <section className="panel" aria-label="About">
-      <h2 className="panel__title">About</h2>
+    <section className="panel panel--quiet" aria-label="About">
+      <div className="panel__heading">
+        <h2 className="panel__title">About</h2>
+        <Icon name="info" size={17} />
+      </div>
       <dl className="kv">
         <div className="kv__row">
           <dt>Desktop</dt>

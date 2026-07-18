@@ -96,6 +96,19 @@ describe("Popover", () => {
     await waitFor(() => expect(snapshotCalls).toBeGreaterThan(initial));
   });
 
+  it("shows a useful empty state when no servers are configured", async () => {
+    const base = createFixtureDesktopAPI();
+    renderPopover({
+      ...base,
+      listServers: async () => [],
+    });
+
+    expect(
+      await screen.findByRole("region", { name: "No configured servers" }),
+    ).toHaveTextContent("Add a server with the Neo CLI, then refresh.");
+    expect(screen.getByLabelText("Select server")).toBeDisabled();
+  });
+
   it("prompts for an available update and defers on Later", async () => {
     const user = userEvent.setup();
     const backend: UpdateBackend = {

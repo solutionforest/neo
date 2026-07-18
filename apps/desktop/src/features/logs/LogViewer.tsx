@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { DesktopAPI } from "../../lib/desktop-api";
 import type { AppSummary, LogSubscribeInput } from "../../lib/protocol";
 import { useLogStream } from "../../app/useLogStream";
+import { Icon } from "../../components/Icon";
 
 export interface LogViewerProps {
   api: DesktopAPI;
@@ -102,15 +103,18 @@ export function LogViewer({
           </select>
         </label>
 
-        <input
-          type="search"
-          className="logs__search"
-          placeholder="Filter loaded lines…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Filter logs"
-          disabled={!hasTargets}
-        />
+        <label className="logs__search-field">
+          <Icon name="search" size={14} />
+          <input
+            type="search"
+            className="logs__search"
+            placeholder="Filter loaded lines…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="Filter logs"
+            disabled={!hasTargets}
+          />
+        </label>
 
         <div className="logs__actions">
           <button
@@ -138,6 +142,7 @@ export function LogViewer({
           {filtered.length}
           {query ? ` / ${stream.lines.length}` : ""} lines
         </span>
+        {follow && hasTargets ? <span className="logs__live"><span aria-hidden="true" />Live</span> : null}
         {stream.paused && stream.pendingCount > 0 ? (
           <button
             type="button"
