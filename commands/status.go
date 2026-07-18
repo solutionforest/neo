@@ -1,12 +1,15 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/vxero/neo/internal/operations"
 	"github.com/vxero/neo/internal/ssh"
 	"github.com/vxero/neo/internal/state"
 	"github.com/vxero/neo/internal/ui"
@@ -360,80 +363,19 @@ func runStatusJSON() error {
 	}
 	defer exec.Close()
 
-	out := statusOutput{
-		Server: srv.Name,
-		Host:   srv.Host,
-	}
+	// Collect through the shared operation layer so the CLI and the desktop
+	// bridge use ONE snapshot implementation. The typed snapshot is then mapped
+	// back to the legacy `neo status --json` shape by the adapter below, keeping
+	// the CLI output backward compatible (plan "Phase 3: Domain types").
+	summary := operations.ServerSummary{ID: srv.Name, Name: srv.Name, Host: srv.Host, Current: true}
+	snap := operations.CollectSnapshot(
+		context.Background(),
+		operations.NewSSHExecutor(exec),
+		summary,
+		operations.SystemClock(),
+	)
 
-	// Ping
-	start := time.Now()
-	if _, pingErr := exec.Run("true"); pingErr == nil {
-		out.Reachable = true
-		out.LatencyMs = time.Since(start).Milliseconds()
-	}
-
-	// State (app/service counts)
-	st, err := state.Load(exec)
-	if err != nil {
-		return fmt.Errorf("load state: %w", err)
-	}
-	for _, a := range st.Apps {
-		out.Apps.Total++
-		if a.Status == "running" {
-			out.Apps.Running++
-		} else {
-			out.Apps.Stopped++
-		}
-	}
-	for _, svc := range st.Services {
-		out.Services.Total++
-		if svc.Status == "running" {
-			out.Services.Running++
-		}
-	}
-
-	// Server metrics
-	raw, _ := exec.Run(
-		`echo "CPU:$(top -bn1 2>/dev/null | grep '%Cpu' | awk '{print 100-$8}' || echo '?')" && ` +
-			`echo "MEM:$(free -m 2>/dev/null | awk '/Mem:/{printf "%d/%d", $3, $2}' || echo '?')" && ` +
-			`echo "DISK:$(df -h / 2>/dev/null | awk 'NR==2{printf "%s/%s", $3, $2}' || echo '?')" && ` +
-			`echo "UP:$(uptime -p 2>/dev/null | sed 's/^up //' || echo '?')"`)
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		switch {
-		case strings.HasPrefix(line, "CPU:"):
-			out.CPU = strings.TrimPrefix(line, "CPU:")
-		case strings.HasPrefix(line, "MEM:"):
-			parts := strings.SplitN(strings.TrimPrefix(line, "MEM:"), "/", 2)
-			if len(parts) == 2 {
-				out.RAMUsedMB, out.RAMTotalMB = parts[0], parts[1]
-			}
-		case strings.HasPrefix(line, "DISK:"):
-			parts := strings.SplitN(strings.TrimPrefix(line, "DISK:"), "/", 2)
-			if len(parts) == 2 {
-				out.DiskUsed, out.DiskTotal = parts[0], parts[1]
-			}
-		case strings.HasPrefix(line, "UP:"):
-			out.Uptime = strings.TrimPrefix(line, "UP:")
-		}
-	}
-
-	// Container stats
-	statsOut, _ := exec.Run(
-		`docker stats --no-stream --format '{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' 2>/dev/null`)
-	for _, line := range strings.Split(strings.TrimSpace(statsOut), "\n") {
-		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) == 3 {
-			out.Containers = append(out.Containers, containerStat{
-				Name:   parts[0],
-				CPU:    parts[1],
-				Memory: parts[2],
-			})
-		}
-	}
-	if out.Containers == nil {
-		out.Containers = []containerStat{}
-	}
+	out := snapshotToStatusOutput(srv.Name, srv.Host, snap)
 
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
@@ -441,6 +383,129 @@ func runStatusJSON() error {
 	}
 	fmt.Println(string(data))
 	return nil
+}
+
+// snapshotToStatusOutput adapts the shared typed Snapshot onto the legacy
+// statusOutput JSON shape. It preserves every field name and JSON type exactly;
+// only the collection path changed. An unavailable metric (nil pointer) renders
+// as an empty string, matching the pre-refactor behaviour where a missing
+// metric left the field blank.
+func snapshotToStatusOutput(name, host string, snap operations.Snapshot) statusOutput {
+	out := statusOutput{
+		Server:     name,
+		Host:       host,
+		Reachable:  snap.Reachable,
+		LatencyMs:  snap.LatencyMS,
+		Apps:       statusAppCount{Running: snap.Apps.Running, Stopped: snap.Apps.Stopped, Total: snap.Apps.Total},
+		Services:   statusSvcCount{Running: snap.Services.Running, Total: snap.Services.Total},
+		Containers: []containerStat{},
+	}
+
+	if snap.CPUPercent != nil {
+		out.CPU = strconv.FormatFloat(*snap.CPUPercent, 'f', -1, 64)
+	}
+	if snap.RAMUsedBytes != nil {
+		out.RAMUsedMB = strconv.FormatUint(*snap.RAMUsedBytes/(1024*1024), 10)
+	}
+	if snap.RAMTotalBytes != nil {
+		out.RAMTotalMB = strconv.FormatUint(*snap.RAMTotalBytes/(1024*1024), 10)
+	}
+	if snap.DiskUsedBytes != nil {
+		out.DiskUsed = humanizeDiskBytes(*snap.DiskUsedBytes)
+	}
+	if snap.DiskTotalBytes != nil {
+		out.DiskTotal = humanizeDiskBytes(*snap.DiskTotalBytes)
+	}
+	if snap.UptimeSeconds != nil {
+		out.Uptime = humanizeUptime(*snap.UptimeSeconds)
+	}
+
+	for _, c := range snap.Containers {
+		out.Containers = append(out.Containers, containerStat{
+			Name:   c.Name,
+			CPU:    formatContainerPercent(c.CPUPercent),
+			Memory: formatContainerMem(c.MemUsedBytes, c.MemLimitBytes),
+		})
+	}
+	return out
+}
+
+// humanizeDiskBytes renders bytes in `df -h` style: 1024-based, one fractional
+// digit under 10, integer otherwise.
+func humanizeDiskBytes(b uint64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%dB", b)
+	}
+	units := []string{"K", "M", "G", "T", "P"}
+	val := float64(b)
+	i := -1
+	for val >= unit && i < len(units)-1 {
+		val /= unit
+		i++
+	}
+	if val < 10 {
+		return fmt.Sprintf("%.1f%s", val, units[i])
+	}
+	return fmt.Sprintf("%.0f%s", val, units[i])
+}
+
+// humanizeMemBytes renders bytes in Docker's IEC style (e.g. "1.9GiB").
+func humanizeMemBytes(b uint64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%dB", b)
+	}
+	units := []string{"KiB", "MiB", "GiB", "TiB", "PiB"}
+	val := float64(b)
+	i := -1
+	for val >= unit && i < len(units)-1 {
+		val /= unit
+		i++
+	}
+	return fmt.Sprintf("%.1f%s", val, units[i])
+}
+
+// humanizeUptime renders a duration in seconds as a compact human string.
+func humanizeUptime(sec uint64) string {
+	days := sec / 86400
+	hours := (sec % 86400) / 3600
+	mins := (sec % 3600) / 60
+	var parts []string
+	if days > 0 {
+		parts = append(parts, pluralUnit(days, "day"))
+	}
+	if hours > 0 {
+		parts = append(parts, pluralUnit(hours, "hour"))
+	}
+	if mins > 0 {
+		parts = append(parts, pluralUnit(mins, "minute"))
+	}
+	if len(parts) == 0 {
+		return "less than a minute"
+	}
+	return strings.Join(parts, ", ")
+}
+
+func pluralUnit(n uint64, unit string) string {
+	if n == 1 {
+		return "1 " + unit
+	}
+	return fmt.Sprintf("%d %ss", n, unit)
+}
+
+func formatContainerPercent(p *float64) string {
+	if p == nil {
+		return ""
+	}
+	return strconv.FormatFloat(*p, 'f', -1, 64) + "%"
+}
+
+func formatContainerMem(used, limit *uint64) string {
+	if used == nil || limit == nil {
+		return ""
+	}
+	return humanizeMemBytes(*used) + " / " + humanizeMemBytes(*limit)
 }
 
 // colorResourcePct colorizes a resource value string based on its usage percentage.

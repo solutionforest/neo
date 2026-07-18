@@ -14,7 +14,12 @@ import { ServerSelector } from "../features/servers/ServerSelector";
 import { FindingsList } from "../features/diagnostics/FindingsList";
 import { statusFor, useServerData } from "./useServerData";
 
-function tone(value: number, warn: number, crit: number): MetricTone {
+function tone(
+  value: number | null | undefined,
+  warn: number,
+  crit: number,
+): MetricTone {
+  if (value == null) return "normal"; // unavailable metric — no alarm
   if (value >= crit) return "critical";
   if (value >= warn) return "warning";
   return "normal";
