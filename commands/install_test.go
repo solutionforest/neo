@@ -1,10 +1,62 @@
 package commands
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/vxero/neo/internal/app"
 )
+
+func TestScaffoldGeneration(t *testing.T) {
+	m := &app.Manifest{
+		Name: "ghost", Title: "Ghost", Image: "ghost:5-alpine", Port: 2368,
+		Volumes: []app.VolumeSpec{{Name: "ghost-content", Path: "/var/lib/ghost/content"}},
+		Env: []app.EnvSpec{
+			{Key: "url", From: "domain"},
+			{Key: "database__connection__host", FromService: "mysql", Template: "svc-ghost-mysql"},
+			{Key: "database__connection__password", FromService: "mysql", Template: "${MYSQL_PASSWORD}"},
+		},
+		Services: []app.ServiceSpec{{
+			Name: "mysql", Image: "mysql:8.4", Port: 3306,
+			Volumes: []app.VolumeSpec{{Name: "ghost-mysql", Path: "/var/lib/mysql"}},
+			Env:     []app.EnvSpec{{Key: "MYSQL_PASSWORD", Generate: "hex:32"}, {Key: "MYSQL_DATABASE", Value: "ghost"}},
+		}},
+		Health: &app.HealthSpec{Path: "/ghost/", Interval: "15s", Retries: 5},
+	}
+
+	serviceEnvs := map[string]map[string]string{"mysql": {}}
+	for _, ev := range m.Services[0].Env {
+		if ev.Generate != "" {
+			v, _ := app.GenerateValue(ev.Generate)
+			serviceEnvs["mysql"][ev.Key] = v
+		} else if ev.Value != "" {
+			serviceEnvs["mysql"][ev.Key] = ev.Value
+		}
+	}
+	appEnv := resolveScaffoldEnv(m, "blog.example.com", nil, serviceEnvs)
+
+	if appEnv["database__connection__host"] != "mysql" {
+		t.Errorf("host = %q, want compose service name 'mysql'", appEnv["database__connection__host"])
+	}
+	if appEnv["database__connection__password"] != serviceEnvs["mysql"]["MYSQL_PASSWORD"] {
+		t.Error("app DB password not wired to the generated service secret")
+	}
+
+	compose := composeYAML(m, serviceEnvs)
+	for _, want := range []string{"image: ghost:5-alpine", "image: mysql:8.4", "ghost-content:/var/lib/ghost/content", "depends_on:", "- mysql", "ghost-mysql: {}"} {
+		if !strings.Contains(compose, want) {
+			t.Errorf("compose missing %q\n%s", want, compose)
+		}
+	}
+	for _, want := range []string{"name: ghost", "domain: blog.example.com", "port: 2368", "compose_service: ghost"} {
+		if !strings.Contains(neoYML(m, "blog.example.com"), want) {
+			t.Errorf(".neo.yml missing %q", want)
+		}
+	}
+	if !strings.Contains(envFile(m, appEnv), "url=https://blog.example.com") {
+		t.Error(".env missing resolved url")
+	}
+}
 
 func TestResolveEnvVars(t *testing.T) {
 	m := &app.Manifest{
@@ -22,7 +74,7 @@ func TestResolveEnvVars(t *testing.T) {
 		"MAIL_USER": "admin@example.com",
 	}
 
-	env := resolveEnvVars(m, "blog.example.com", userVars)
+	env := resolveScaffoldEnv(m, "blog.example.com", userVars, nil)
 
 	if env["APP_URL"] != "https://blog.example.com" {
 		t.Errorf("APP_URL = %q, want %q", env["APP_URL"], "https://blog.example.com")
@@ -52,7 +104,7 @@ func TestResolveEnvVarsEmptyDomain(t *testing.T) {
 		},
 	}
 
-	env := resolveEnvVars(m, "", nil)
+	env := resolveScaffoldEnv(m, "", nil, nil)
 	if env["APP_URL"] != "https://" {
 		t.Errorf("APP_URL = %q (empty domain case)", env["APP_URL"])
 	}
@@ -65,7 +117,7 @@ func TestResolveEnvVarsNoUserVars(t *testing.T) {
 		},
 	}
 
-	env := resolveEnvVars(m, "example.com", nil)
+	env := resolveScaffoldEnv(m, "example.com", nil, nil)
 	if _, ok := env["MAIL_USER"]; ok {
 		t.Error("MAIL_USER should not be set when no user vars provided")
 	}

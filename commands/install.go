@@ -2,25 +2,26 @@ package commands
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/vxero/neo/internal/app"
-	"github.com/vxero/neo/internal/config"
-	"github.com/vxero/neo/internal/remote"
-	neossh "github.com/vxero/neo/internal/ssh"
-	"github.com/vxero/neo/internal/state"
 	"github.com/vxero/neo/internal/ui"
 )
 
 func newInstallCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "install [app]",
-		Short: "Install an application on the server",
-		Long:  "Installs a Docker-based application with guided setup. If no app name given, shows an interactive picker.",
-		Args:  cobra.MaximumNArgs(1),
+		Short: "Scaffold a bundled app template into a folder",
+		Long: "Scaffolds a ready-to-deploy project for a bundled app template. Prompts for\n" +
+			"a folder, then writes a docker-compose.yml (app image + bundled databases),\n" +
+			"a .neo.yml, and a .env with generated secrets. Then run `neo deploy` in that\n" +
+			"folder. If no app name is given, shows an interactive picker.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			appName := ""
 			if len(args) > 0 {
@@ -37,11 +38,10 @@ func runInstall(appName string) error {
 		return fmt.Errorf("load app registry: %w", err)
 	}
 
-	// If no app specified, show interactive picker
+	// Select the template.
 	var manifest *app.Manifest
 	if appName == "" {
-		manifest, err = pickApp(registry)
-		if err != nil {
+		if manifest, err = pickApp(registry); err != nil || manifest == nil {
 			return err
 		}
 	} else {
@@ -53,285 +53,235 @@ func runInstall(appName string) error {
 		manifest = m
 	}
 
-	// Connect to server
-	cfg, srv, exec, err := mustResolveAndConnect()
+	// Ask where to scaffold.
+	dir := "./" + manifest.Name
+	if err := huh.NewInput().
+		Title("Folder to scaffold " + manifest.Title + " into").
+		Description("A docker-compose.yml, .neo.yml, and .env will be written here.").
+		Placeholder("./" + manifest.Name).
+		Value(&dir).
+		Run(); err != nil {
+		return nil
+	}
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		dir = "./" + manifest.Name
+	}
+
+	// Refuse to clobber an existing project.
+	for _, f := range []string{"docker-compose.yml", ".neo.yml"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+			ui.Error(fmt.Sprintf("%s already exists in %s — choose an empty folder.", f, dir))
+			return nil
+		}
+	}
+
+	// Domain (optional) + any ask-able env vars.
+	domain, userVars, err := collectConfig(manifest)
 	if err != nil {
 		return err
 	}
-	defer exec.Close()
-	_ = cfg
 
-	// Check if already installed
-	st, err := state.Load(exec)
-	if err != nil {
-		return fmt.Errorf("load state: %w", err)
-	}
-	if _, exists := st.Apps[manifest.Name]; exists {
-		ui.Error(fmt.Sprintf("%s is already installed. Use 'neo update %s' to update.", manifest.Name, manifest.Name))
-		return nil
-	}
-
-	fmt.Println()
-	fmt.Printf("  Installing %s %s\n", ui.Bold.Render(manifest.Title), ui.Faint.Render("v"+manifest.Version))
-	fmt.Printf("  Server: %s (%s)\n", srv.Name, srv.Host)
-	fmt.Println()
-
-	// Collect configuration via interactive prompts
-	domain, envVars, err := collectConfig(manifest)
-	if err != nil {
-		return err
-	}
-
-	// Resolve all env vars
-	resolvedEnv := resolveEnvVars(manifest, domain, envVars)
-
-	// Confirm
-	fmt.Println()
-	var confirm bool
-	huh.NewConfirm().
-		Title("Deploy " + manifest.Title + "?").
-		Affirmative("Yes, deploy").
-		Negative("Cancel").
-		Value(&confirm).
-		Run()
-	if !confirm {
-		return nil
-	}
-
-	fmt.Println()
-	docker := remote.NewDocker(exec)
-	caddy := remote.NewCaddy(exec)
-
-	// Start pulling app image in background while services are set up
-	appPullDone := make(chan error, 1)
-	go func() {
-		appPullDone <- docker.Pull(manifest.Image)
-	}()
-
-	// Pull services first — offer to reuse existing shared services
+	// Generate each bundled service's env (secrets), then resolve the app env.
 	serviceEnvs := make(map[string]map[string]string)
-	linkedShared := make(map[string]string) // svc spec name → shared service name
 	for _, svc := range manifest.Services {
-		// Check if a compatible shared service exists
-		sharedName := findCompatibleSharedService(st, svc.Image)
-		if sharedName != "" {
-			var useShared bool
-			huh.NewConfirm().
-				Title(fmt.Sprintf("Reuse existing shared %s service %q?", detectServiceType(svc.Image), sharedName)).
-				Description("This avoids running a duplicate database container.").
-				Affirmative("Yes, reuse").
-				Negative("No, create new").
-				Value(&useShared).
-				Run() //nolint:errcheck
-
-			if useShared {
-				linkedShared[svc.Name] = sharedName
-				// We'll link after the app is in state — for now, gather env from existing service
-				shared := st.Services[sharedName]
-				serviceEnvs[svc.Name] = shared.Env
-				ui.Success(fmt.Sprintf("Will reuse shared service %q", sharedName))
-				continue
-			}
-		}
-
-		containerName := config.SvcContainer(manifest.Name, svc.Name)
-
-		spin := ui.NewSpinner(fmt.Sprintf("Pulling %s...", svc.Image))
-		spin.Start()
-		if err := docker.Pull(svc.Image); err != nil {
-			spin.Stop()
-			return fmt.Errorf("pull %s: %w", svc.Image, err)
-		}
-		spin.Stop()
-		ui.Success(fmt.Sprintf("Pulled %s", svc.Image))
-
-		// Resolve service env vars
-		svcEnv := make(map[string]string)
-		for _, e := range svc.Env {
-			if e.Generate != "" {
-				val, err := app.GenerateValue(e.Generate)
+		e := make(map[string]string)
+		for _, ev := range svc.Env {
+			switch {
+			case ev.Generate != "":
+				v, err := app.GenerateValue(ev.Generate)
 				if err != nil {
 					return err
 				}
-				svcEnv[e.Key] = val
-			} else if e.Value != "" {
-				svcEnv[e.Key] = e.Value
+				e[ev.Key] = v
+			case ev.Value != "":
+				e[ev.Key] = ev.Value
 			}
 		}
-		serviceEnvs[svc.Name] = svcEnv
+		serviceEnvs[svc.Name] = e
+	}
+	appEnv := resolveScaffoldEnv(manifest, domain, userVars, serviceEnvs)
 
-		// Build volumes
-		var volumes []string
-		for _, v := range svc.Volumes {
-			volumes = append(volumes, fmt.Sprintf("%s:%s", v.Name, v.Path))
-		}
-
-		// Start service container
-		_, err := docker.Run(remote.RunOpts{
-			Name:    containerName,
-			Image:   svc.Image,
-			Network: config.DockerNetwork,
-			Restart: "unless-stopped",
-			Volumes: volumes,
-			Env:     svcEnv,
-		})
-		if err != nil {
-			return fmt.Errorf("start %s: %w", containerName, err)
-		}
-		ui.Success(fmt.Sprintf("Started %s", containerName))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte(composeYAML(manifest, serviceEnvs)), 0o644); err != nil {
+		return fmt.Errorf("write docker-compose.yml: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envFile(manifest, appEnv)), 0o600); err != nil {
+		return fmt.Errorf("write .env: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".neo.yml"), []byte(neoYML(manifest, domain)), 0o644); err != nil {
+		return fmt.Errorf("write .neo.yml: %w", err)
 	}
 
-	// Resolve env var templates that reference service passwords
-	for k, v := range resolvedEnv {
-		if strings.Contains(v, "${") {
-			resolvedEnv[k] = expandServiceVars(v, serviceEnvs)
-		}
-	}
-
-	// Wait for app image pull (started in background before service setup)
-	spin := ui.NewSpinner(fmt.Sprintf("Pulling %s...", manifest.Image))
-	spin.Start()
-	if err := <-appPullDone; err != nil {
-		spin.Stop()
-		return fmt.Errorf("pull %s: %w", manifest.Image, err)
-	}
-	spin.Stop()
-	ui.Success(fmt.Sprintf("Pulled %s", manifest.Image))
-
-	// Build app volumes
-	var appVolumes []string
-	for _, v := range manifest.Volumes {
-		appVolumes = append(appVolumes, fmt.Sprintf("%s:%s", v.Name, v.Path))
-	}
-
-	// Start app container
-	containerName := config.AppContainer(manifest.Name)
-	_, err = docker.Run(remote.RunOpts{
-		Name:    containerName,
-		Image:   manifest.Image,
-		Network: config.DockerNetwork,
-		Restart: "unless-stopped",
-		Volumes: appVolumes,
-		Env:     resolvedEnv,
-	})
-	if err != nil {
-		return fmt.Errorf("start %s: %w", containerName, err)
-	}
-	ui.Success("Container started")
-
-	// Add Caddy route
-	if domain != "" {
-		upstream := fmt.Sprintf("%s:%d", containerName, manifest.Port)
-		if err := caddy.AddRoute(containerName, []string{domain}, upstream); err != nil {
-			ui.Error(fmt.Sprintf("Failed to add Caddy route: %s", err))
-			ui.Info("You can add the route manually: neo domain " + manifest.Name + " " + domain)
-		} else {
-			ui.Success(fmt.Sprintf("SSL certificate issued for %s", domain))
-		}
-	}
-
-	// Health check
-	if manifest.Health != nil {
-		spin = ui.NewSpinner("Waiting for health check...")
-		spin.Start()
-		healthy := waitForHealth(docker, containerName, manifest.Health.Path, manifest.Health.Retries)
-		spin.Stop()
-		if healthy {
-			ui.Success("Health check passed")
-		} else {
-			ui.Error("Health check failed — app may still be starting")
-		}
-	}
-
-	// Update remote state
-	stateApp := state.App{
-		Name:         manifest.Name,
-		Image:        manifest.Image,
-		Domain:       domain,
-		Status:       "running",
-		InternalPort: manifest.Port,
-		Env:          resolvedEnv,
-		Volumes:      make(map[string]state.VolumeInfo),
-		Services:     make(map[string]state.AppService),
-		InstalledAt:  time.Now().UTC().Format(time.RFC3339),
-	}
-	for _, v := range manifest.Volumes {
-		stateApp.Volumes[v.Name] = state.VolumeInfo{ContainerPath: v.Path}
-	}
-	// Only store bundled services that were NOT reused from shared services
-	for _, svc := range manifest.Services {
-		if _, isShared := linkedShared[svc.Name]; !isShared {
-			stateApp.Services[svc.Name] = state.AppService{Image: svc.Image}
-		}
-	}
-	st.Apps[manifest.Name] = stateApp
-
-	// Configure shared services for this app — create DB/user and inject env vars
-	for svcSpecName, sharedName := range linkedShared {
-		shared := st.Services[sharedName]
-		svcType := detectServiceType(shared.Image)
-		containerName := config.SvcContainerShared(sharedName)
-
-		switch svcType {
-		case "mysql", "mariadb":
-			dbName := strings.ReplaceAll(sanitizeName(manifest.Name), "-", "_") + "_db"
-			dbUser := strings.ReplaceAll(sanitizeName(manifest.Name), "-", "_")
-			dbPass, _ := app.GenerateValue("hex:32")
-			rootPass := shared.Env[serviceRootEnvKey(svcType)]
-
-			safeDBName := neossh.SafeSQLIdentifierMySQL(dbName)
-			createDB := fmt.Sprintf(`mysql -uroot -p'%s' -e "CREATE DATABASE IF NOT EXISTS %s;"`, safeSQLValue(rootPass), safeDBName)
-			docker.Exec(containerName, createDB)
-
-			createUser := fmt.Sprintf(`mysql -uroot -p'%s' -e "CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; GRANT ALL PRIVILEGES ON %s.* TO '%s'@'%%'; FLUSH PRIVILEGES;"`,
-				safeSQLValue(rootPass), safeSQLValue(dbUser), safeSQLValue(dbPass), safeDBName, safeSQLValue(dbUser))
-			docker.Exec(containerName, createUser)
-
-			stateApp.Env["database__connection__host"] = containerName
-			stateApp.Env["database__connection__user"] = dbUser
-			stateApp.Env["database__connection__password"] = dbPass
-			stateApp.Env["database__connection__database"] = dbName
-
-		case "postgres":
-			dbName := strings.ReplaceAll(sanitizeName(manifest.Name), "-", "_") + "_db"
-			dbUser := strings.ReplaceAll(sanitizeName(manifest.Name), "-", "_")
-			dbPass, _ := app.GenerateValue("hex:32")
-
-			safeDBUser := neossh.SafeSQLIdentifierPG(dbUser)
-			safeDBName := neossh.SafeSQLIdentifierPG(dbName)
-			createUser := fmt.Sprintf(`psql -U postgres -c "CREATE USER %s WITH PASSWORD '%s';" 2>/dev/null; true`, safeDBUser, safeSQLValue(dbPass))
-			docker.Exec(containerName, createUser)
-
-			createDB := fmt.Sprintf(`psql -U postgres -c "CREATE DATABASE %s OWNER %s;" 2>/dev/null; true`, safeDBName, safeDBUser)
-			docker.Exec(containerName, createDB)
-
-			stateApp.Env["DATABASE_URL"] = fmt.Sprintf("postgres://%s:%s@%s:5432/%s", dbUser, dbPass, containerName, dbName)
-
-		case "redis":
-			stateApp.Env["REDIS_URL"] = fmt.Sprintf("redis://%s:6379", containerName)
-		}
-
-		_ = svcSpecName
-	}
-
-	st.Apps[manifest.Name] = stateApp
-	state.Save(exec, st)
-
-	// Success card
+	// Success + next steps.
 	card := ui.NewCard()
-	card.Add(ui.Green.Render("✓") + " " + manifest.Title + " is live!")
+	card.Add(ui.Green.Render("✓") + " " + manifest.Title + " scaffolded")
 	card.Blank()
-	if domain != "" {
-		card.AddKV("URL", "https://"+domain)
-	}
+	card.AddKV("Folder", dir)
+	card.Add(ui.Faint.Render("  docker-compose.yml · .neo.yml · .env"))
 	card.Blank()
-	card.Add("Data stored on server:")
-	for _, v := range manifest.Volumes {
-		card.Add(fmt.Sprintf("  %s  →  docker volume", v.Name))
+	card.Add("Next steps:")
+	card.Add("  cd " + dir)
+	if domain == "" {
+		card.Add("  # set a domain in .neo.yml (or: neo domain " + manifest.Name + " --temp)")
 	}
+	card.Add("  " + ui.Cyan.Render("neo deploy"))
 	card.Render()
 
+	if strings.TrimSpace(manifest.Notes) != "" {
+		fmt.Println()
+		fmt.Println("  " + ui.Bold.Render("Notes"))
+		for _, line := range strings.Split(strings.TrimRight(manifest.Notes, "\n"), "\n") {
+			fmt.Println("  " + ui.Faint.Render(line))
+		}
+	}
+	fmt.Println()
 	return nil
+}
+
+// resolveScaffoldEnv builds the app's environment for a scaffolded compose
+// project. Service references resolve to the compose service name (host) and
+// generated service secrets (passwords), not server-side container names.
+func resolveScaffoldEnv(m *app.Manifest, domain string, userVars map[string]string, serviceEnvs map[string]map[string]string) map[string]string {
+	env := make(map[string]string)
+	for _, e := range m.Env {
+		switch {
+		case e.From == "domain":
+			env[e.Key] = "https://" + domain
+		case e.From == "domain_host":
+			env[e.Key] = domain
+		case e.Generate != "":
+			v, _ := app.GenerateValue(e.Generate)
+			env[e.Key] = v
+		case e.FromService != "" && e.Template != "" && !strings.Contains(e.Template, "${"):
+			// A service hostname reference — use the compose service name.
+			env[e.Key] = e.FromService
+		case e.Template != "":
+			env[e.Key] = expandServiceVars(e.Template, serviceEnvs)
+		case e.Value != "":
+			env[e.Key] = e.Value
+		case e.Ask:
+			if v, ok := userVars[e.Key]; ok {
+				env[e.Key] = v
+			}
+		}
+	}
+	return env
+}
+
+// composeYAML renders a docker-compose.yml for the template: the app service
+// (env from .env) plus each bundled service, with named volumes.
+func composeYAML(m *app.Manifest, serviceEnvs map[string]map[string]string) string {
+	var b strings.Builder
+	vols := map[string]bool{}
+
+	fmt.Fprintf(&b, "# Generated by `neo install %s` — edit freely, then run `neo deploy`.\n", m.Name)
+	b.WriteString("services:\n")
+
+	// App service.
+	fmt.Fprintf(&b, "  %s:\n", m.Name)
+	fmt.Fprintf(&b, "    image: %s\n", m.Image)
+	b.WriteString("    restart: unless-stopped\n")
+	b.WriteString("    env_file:\n      - .env\n")
+	if m.Port > 0 {
+		fmt.Fprintf(&b, "    expose:\n      - \"%d\"\n", m.Port)
+	}
+	if len(m.Volumes) > 0 {
+		b.WriteString("    volumes:\n")
+		for _, v := range m.Volumes {
+			fmt.Fprintf(&b, "      - %s:%s\n", v.Name, v.Path)
+			vols[v.Name] = true
+		}
+	}
+	if len(m.Services) > 0 {
+		b.WriteString("    depends_on:\n")
+		for _, svc := range m.Services {
+			fmt.Fprintf(&b, "      - %s\n", svc.Name)
+		}
+	}
+
+	// Bundled services.
+	for _, svc := range m.Services {
+		fmt.Fprintf(&b, "  %s:\n", svc.Name)
+		fmt.Fprintf(&b, "    image: %s\n", svc.Image)
+		b.WriteString("    restart: unless-stopped\n")
+		if env := serviceEnvs[svc.Name]; len(env) > 0 {
+			b.WriteString("    environment:\n")
+			for _, k := range sortedKeys(env) {
+				fmt.Fprintf(&b, "      %s: %s\n", k, yamlValue(env[k]))
+			}
+		}
+		if len(svc.Volumes) > 0 {
+			b.WriteString("    volumes:\n")
+			for _, v := range svc.Volumes {
+				fmt.Fprintf(&b, "      - %s:%s\n", v.Name, v.Path)
+				vols[v.Name] = true
+			}
+		}
+	}
+
+	if len(vols) > 0 {
+		b.WriteString("volumes:\n")
+		names := make([]string, 0, len(vols))
+		for n := range vols {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			fmt.Fprintf(&b, "  %s: {}\n", n)
+		}
+	}
+	return b.String()
+}
+
+// envFile renders the .env consumed by the app service.
+func envFile(m *app.Manifest, appEnv map[string]string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s environment — generated by `neo install`. Keep secrets private.\n", m.Title)
+	for _, k := range sortedKeys(appEnv) {
+		fmt.Fprintf(&b, "%s=%s\n", k, appEnv[k])
+	}
+	return b.String()
+}
+
+// neoYML renders a minimal .neo.yml for the scaffolded project.
+func neoYML(m *app.Manifest, domain string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# .neo.yml — Neo project config. Docs: https://neo.vxero.dev/docs\n")
+	fmt.Fprintf(&b, "name: %s\n", m.Name)
+	if domain != "" {
+		fmt.Fprintf(&b, "domain: %s\n", domain)
+	} else {
+		fmt.Fprintf(&b, "# domain: app.example.com          # set a domain (or run: neo domain %s --temp)\n", m.Name)
+	}
+	if m.Port > 0 {
+		fmt.Fprintf(&b, "port: %d\n", m.Port)
+	}
+	fmt.Fprintf(&b, "compose_service: %s\n", m.Name)
+	if m.Health != nil && m.Health.Path != "" {
+		b.WriteString("\nhealth:\n")
+		fmt.Fprintf(&b, "  cmd: \"curl -f http://localhost:%d%s\"\n", m.Port, m.Health.Path)
+		if m.Health.Interval != "" {
+			fmt.Fprintf(&b, "  interval: %s\n", m.Health.Interval)
+		}
+		if m.Health.Retries > 0 {
+			fmt.Fprintf(&b, "  retries: %d\n", m.Health.Retries)
+		}
+	}
+	return b.String()
+}
+
+// yamlValue quotes a compose environment value when needed.
+func yamlValue(v string) string {
+	if v == "" {
+		return `""`
+	}
+	if strings.ContainsAny(v, ":#{}[],&*?|<>=!%@`\"' ") {
+		return `"` + strings.ReplaceAll(v, `"`, `\"`) + `"`
+	}
+	return v
 }
 
 // pickApp shows an interactive app picker.
@@ -340,76 +290,41 @@ func pickApp(registry *app.Registry) (*app.Manifest, error) {
 	opts := make([]ui.SelectOption, len(apps))
 	for i, a := range apps {
 		label := fmt.Sprintf("%-15s %s", a.Name, ui.Faint.Render(a.Description))
-		opts[i] = ui.SelectOption{label, a.Name}
+		opts[i] = ui.SelectOption{Label: label, Value: a.Name}
 	}
 
-	selected := ui.Select("Choose an app to install", opts)
+	selected := ui.Select("Choose an app to scaffold", opts)
 	if selected == "" {
 		return nil, nil
 	}
-
 	m, _ := registry.Get(selected)
 	return m, nil
 }
 
-// collectConfig prompts the user for domain and any ask-able env vars.
+// collectConfig prompts for an optional domain and any ask-able env vars.
 func collectConfig(m *app.Manifest) (string, map[string]string, error) {
 	var domain string
 	envVars := make(map[string]string)
 
-	// Domain prompt
-	err := huh.NewInput().
-		Title("Domain for " + m.Title).
+	if err := huh.NewInput().
+		Title("Domain for " + m.Title + " (optional)").
+		Description("Leave blank to set it later in .neo.yml.").
 		Placeholder("app.example.com").
 		Value(&domain).
-		Run()
-	if err != nil {
+		Run(); err != nil {
 		return "", nil, err
 	}
 
-	// Prompt for any env vars that need user input
 	for _, e := range m.Env {
 		if e.Ask {
 			var val string
-			err := huh.NewInput().
-				Title(e.Label).
-				Value(&val).
-				Run()
-			if err != nil {
+			if err := huh.NewInput().Title(e.Label).Value(&val).Run(); err != nil {
 				return "", nil, err
 			}
 			envVars[e.Key] = val
 		}
 	}
-
-	return domain, envVars, nil
-}
-
-// resolveEnvVars builds the final environment variable map for the app container.
-func resolveEnvVars(m *app.Manifest, domain string, userVars map[string]string) map[string]string {
-	env := make(map[string]string)
-
-	for _, e := range m.Env {
-		switch {
-		case e.From == "domain":
-			env[e.Key] = "https://" + domain
-		case e.From == "domain_host":
-			env[e.Key] = domain
-		case e.Generate != "":
-			val, _ := app.GenerateValue(e.Generate)
-			env[e.Key] = val
-		case e.Value != "":
-			env[e.Key] = e.Value
-		case e.Template != "":
-			env[e.Key] = e.Template // will be expanded later with service vars
-		case e.Ask:
-			if v, ok := userVars[e.Key]; ok {
-				env[e.Key] = v
-			}
-		}
-	}
-
-	return env
+	return strings.TrimSpace(domain), envVars, nil
 }
 
 // expandServiceVars replaces ${VAR} references with actual service env values.
@@ -421,34 +336,4 @@ func expandServiceVars(tmpl string, serviceEnvs map[string]map[string]string) st
 		}
 	}
 	return result
-}
-
-// findCompatibleSharedService returns the name of an existing shared service
-// that matches the given image type, or "" if none exists.
-func findCompatibleSharedService(st *state.State, image string) string {
-	targetType := detectServiceType(image)
-	if targetType == "unknown" {
-		return ""
-	}
-	for name, svc := range st.Services {
-		if detectServiceType(svc.Image) == targetType && svc.Status == "running" {
-			return name
-		}
-	}
-	return ""
-}
-
-// waitForHealth polls a container's health endpoint.
-func waitForHealth(docker *remote.Docker, container, path string, retries int) bool {
-	if retries == 0 {
-		retries = 5
-	}
-	for i := 0; i < retries; i++ {
-		time.Sleep(3 * time.Second)
-		out, err := docker.Exec(container, fmt.Sprintf("wget -qO- http://localhost%s || true", neossh.ShellQuote(path)))
-		if err == nil && out != "" {
-			return true
-		}
-	}
-	return false
 }

@@ -4,6 +4,18 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.22.0 — 2026-07-20
+
+### New Features
+
+- **`neo install` scaffolds a project instead of installing on the server** — `neo install <app>` (or the interactive picker) now asks for a folder and writes a ready-to-deploy `docker-compose.yml` (the template's app image + its bundled databases), a `.neo.yml`, and a `.env` with generated secrets. You then run `neo deploy` in that folder — and can edit the files first. (The install command previously wasn't wired up at all.)
+
+### Changes
+
+- **Dropped `neo connect`** — the one-time "transfer to Vxero" command was only a browser-redirect stub, so it's been removed from the CLI and the dashboard. The `internal/bridge/` package is retained but no longer wired to any command.
+
+---
+
 ## v0.21.7 — 2026-07-17
 
 ### Changes

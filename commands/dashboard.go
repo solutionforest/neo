@@ -95,10 +95,6 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 			if err := tuiDeployProject(); err != nil {
 				ui.Error(err.Error())
 			}
-		case "connect":
-			if err := runConnect(); err != nil {
-				ui.Error(err.Error())
-			}
 		case "license":
 			if err := runLicenseMenu(); err != nil {
 				ui.Error(err.Error())

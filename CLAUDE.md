@@ -152,7 +152,7 @@ func newFooCmd() *cobra.Command {
 
 ### Interactive Dashboard (`dashboard.go`):
 `neo` with no arguments launches an interactive TUI loop:
-- `tuiMainMenu(cfg)` — top-level menu (Servers, Applications, Deploy, Install, Connect)
+- `tuiMainMenu(cfg)` — top-level menu (Servers, Applications, Deploy, Install)
 - `tuiServersMenu(cfg)` — list/add/switch servers
 - `tuiAppsMenu(cfg)` — list apps, select one for actions
 - `tuiAppActions(appName, exec, st)` — start/stop/restart/logs/domain/update/remove
@@ -326,10 +326,9 @@ Local shell commands that run during deploy lifecycle:
 - `mustResolveAndConnect()` — load config + resolve server + SSH connect (returns cfg, srv, exec, err)
 
 ### Vxero Transfer (`internal/bridge/`):
-- **Currently disabled** — `neo connect` shows "Coming Soon" card
+- **Dropped from the CLI** — the `neo connect` command was removed (`commands/connect.go` deleted). The bridge package below is retained but **not wired to any command**.
 - `api.go` — lightweight Vxero REST API client (VxeroClient)
 - `migrate.go` — `BuildMigrationPlan(state)` analyzes apps/services and creates a plan
-- `connect.go` — agent install (one-way, no disconnect)
 - Service type mapping: Docker images → Vxero ServiceType (postgres→postgresql, mysql→mysql, redis→redis, etc.)
 - Bridge code is retained in `internal/bridge/` for future activation
 
@@ -531,7 +530,7 @@ make image-build
 docker run --rm vxero/neo:latest --help
 ./bin/neo                    # dashboard (no server configured)
 ./bin/neo init root@<ip>     # test with a real VPS
-./bin/neo install            # interactive app picker
+./bin/neo install            # scaffold a template into a folder
 ```
 
 ## Directory Layout
@@ -567,7 +566,7 @@ plans/                       # Planning documents
 | `neo` (no args) | Interactive TUI dashboard |
 | `neo init <user@host>` | Initialize remote server |
 | `neo deploy [app]` | Deploy app/project to server |
-| `neo install` | Interactive app template picker |
+| `neo install [app]` | Scaffold a bundled app template into a folder (compose + .neo.yml + .env), then `neo deploy` |
 | `neo list` | List apps on server |
 | `neo status` | Show app/service status |
 | `neo start/stop/restart <app>` | App lifecycle |
@@ -593,7 +592,6 @@ plans/                       # Planning documents
 | `neo stealth` | Toggle stealth mode |
 | `neo activate [key]` | Activate neo (free) — by email or existing key |
 | `neo license status/deactivate` | License management (`plus` = hidden alias) |
-| `neo connect` | Vxero bridge (Coming Soon) |
 | `neo ask` | Interactive skill assistant |
 | `neo version` | Show version, check for updates |
 | `neo upgrade` | Self-update binary |
@@ -608,4 +606,4 @@ plans/                       # Planning documents
 | Server-side | Vxero agent + control plane | Pure Docker + Caddy |
 | Config | `~/.vxero/config.yml` | `~/.neo/config.json` |
 | State | Server-side (Vxero DB) | `/etc/neo/state.json` on each server |
-| Bridge | N/A | `neo connect` (coming soon — transfers server to Vxero) |
+| Bridge | N/A | `internal/bridge/` retained but not wired to any command (`neo connect` dropped) |

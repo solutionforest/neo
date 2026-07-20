@@ -65,6 +65,7 @@ func NewRootCmd(version string) *cobra.Command {
 		newConfigCmd(),
 		newDevCmd(),
 		newDeployCmd(),
+		newInstallCmd(),
 		newListCmd(),
 		newStatusCmd(),
 		newServersCmd(),
@@ -84,7 +85,6 @@ func NewRootCmd(version string) *cobra.Command {
 		newRestoreCmd(),
 		newPruneCmd(),
 		newSyncCmd(),
-		newConnectCmd(),
 		newDestroyCmd(),
 		newLicenseCmd(),
 		newActivateCmd(),
@@ -160,6 +160,7 @@ func printHelp() {
 		{
 			title: "Apps",
 			entries: []entry{
+				{"neo install [app]", "Scaffold a bundled app template into a folder"},
 				{"neo deploy [path]", "Deploy a local Dockerfile project"},
 				{"neo list", "List all apps on the server"},
 				{"neo logs <app>", "Stream app container logs"},
@@ -223,12 +224,6 @@ func printHelp() {
 			entries: []entry{
 				{"neo version", "Show version and check for updates"},
 				{"neo upgrade", "Upgrade neo to the latest version"},
-			},
-		},
-		{
-			title: "Vxero",
-			entries: []entry{
-				{"neo connect", "Transfer server to Vxero (coming soon)"},
 			},
 		},
 	}

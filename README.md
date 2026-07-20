@@ -178,8 +178,7 @@ Every time you run `neo`, you get a full TUI hub:
   > Servers              2 configured
     Applications         3 apps, 2 running
     Deploy Project       deploy local repo
-    Install App          from template catalog
-    Transfer to Vxero    one-time migration to K3s
+    Install App          scaffold a template into a folder
     Quit
 ```
 
@@ -233,44 +232,35 @@ Every time you run `neo`, you get a full TUI hub:
     ← Back
 ```
 
-### 3. Install an app (from the dashboard or CLI)
+### 3. Scaffold an app template
 
-From the dashboard, choose **Install App**, or run directly:
+`neo install` doesn't touch a server — it **scaffolds a ready-to-deploy project** into a folder: a `docker-compose.yml` (the app image plus its bundled databases), a `.neo.yml`, and a `.env` with generated secrets. You then `neo deploy` it like any other project, and can edit the files first.
 
 ```bash
 $ neo install plausible
 ```
 
 ```
-  Installing Plausible Analytics v2.1.4
-  Server: production (159.65.100.42)
+  ? Folder to scaffold Plausible Analytics into
+  │ ./plausible
 
-  ? Domain for Plausible Analytics
+  ? Domain for Plausible Analytics (optional)
   │ analytics.mysite.com
 
-  ? Deploy Plausible Analytics? Yes, deploy
+  ╭──────────────────────────────────────────────╮
+  │  ✓ Plausible Analytics scaffolded            │
+  │                                              │
+  │  Folder:  ./plausible                        │
+  │    docker-compose.yml · .neo.yml · .env      │
+  │                                              │
+  │  Next steps:                                 │
+  │    cd ./plausible                            │
+  │    neo deploy                                │
+  ╰──────────────────────────────────────────────╯
+```
 
-  ✓ Pulled postgres:16-alpine
-  ✓ Started svc-plausible-postgres
-  ✓ Pulled clickhouse/clickhouse-server:24.3-alpine
-  ✓ Started svc-plausible-clickhouse
-  ✓ Pulled ghcr.io/plausible/community-edition:v2.1.4
-  ✓ Container started
-  ✓ SSL certificate issued for analytics.mysite.com
-  ✓ Health check passed
-
-  ╭────────────────────────────────────────────╮
-  │  ✓ Plausible Analytics is live!            │
-  │                                            │
-  │  URL:     https://analytics.mysite.com     │
-  │                                            │
-  │  Data stored on server:                    │
-  │    plausible-events  →  docker volume      │
-  │                                            │
-  │  Mount to external drive:                  │
-  │  neo volumes mount plausible-events        │
-  │    /mnt/ssd/plausible                      │
-  ╰────────────────────────────────────────────╯
+```bash
+$ cd plausible && neo deploy   # builds/runs on your server, with auto-SSL
 ```
 
 ### 4. Deploy your own project
@@ -358,7 +348,7 @@ $ neo install
 ```
 
 ```
-  ? Choose an app to install
+  ? Choose an app to scaffold
 
   > chatwoot         Open-source customer engagement platform
     ghost            Professional publishing platform
@@ -527,75 +517,6 @@ $ neo restore plausible /var/backups/neo/plausible-20260318-143200.tar.gz
   ✓ plausible restored successfully
 ```
 
-### `neo connect` — One-Time Transfer to Vxero
-
-Transfers your server from neo (Docker) to the Vxero platform (K3s). **This is a one-way, one-time migration** — after transfer, neo no longer manages this server.
-
-```bash
-$ neo connect
-```
-
-```
-  ✓ Authenticated as John Doe (My Team)
-
-  Migration Plan — One-Time Transfer
-  ──────────────────────────────────────────────────────
-
-  What will happen:
-  1. Register server with Vxero control plane
-  2. Install Vxero agent (heartbeat, metrics, jobs)
-  3. System packages updated (apt upgrade)
-  4. Your Docker apps are recorded in Vxero
-  5. Vxero transitions apps from Docker → K3s
-
-  Managed services to create:
-    • postgres → Vxero managed postgresql
-    • redis → Vxero managed redis
-
-  Architecture transition:
-
-  Before (neo/Docker)       After (Vxero/K3s)
-  ─────────────────────────────────────────────────
-  Docker containers         K3s pods
-  Caddy reverse proxy       K3s Ingress + cert-manager
-  Docker volumes            Longhorn PVCs
-  neo CLI                   Vxero dashboard + CLI
-  SSH-only management       Agent-based management
-
-  Apps to transfer:
-    ● plausible        analytics.mysite.com
-      └ volume: plausible-events
-    ● ghost            blog.mysite.com
-      └ volume: ghost-content
-
-  Important — this is a one-way transfer:
-    • After transfer, this server is managed by Vxero
-    • Neo will no longer manage apps on this server
-    • Use the Vxero dashboard or vxero CLI going forward
-    • Your apps stay running during the transfer (zero downtime)
-
-  ? Transfer this server to Vxero? (this cannot be undone) Yes, transfer to Vxero
-
-  ✓ Registering server with Vxero...
-  ✓ Installing Vxero agent...
-  ✓ Creating managed postgresql for plausible...
-  ✓ Updating server state...
-
-  ╭────────────────────────────────────────────╮
-  │  ✓ Server transferred to Vxero!           │
-  │                                            │
-  │  2 apps now managed by Vxero              │
-  │                                            │
-  │  Your apps continue running — Vxero will  │
-  │  transition them from Docker to K3s.      │
-  │                                            │
-  │  Next steps:                              │
-  │    • Open Vxero dashboard to see server   │
-  │    • Use the vxero CLI for management     │
-  │    • neo no longer manages this server    │
-  ╰────────────────────────────────────────────╯
-```
-
 ### `neo ssh`
 
 ```bash
@@ -613,13 +534,13 @@ $ neo ssh --server staging
 | Command | Description |
 |---------|-------------|
 | **Dashboard** | |
-| `neo` | Interactive TUI — servers, apps, deploy, install, transfer |
+| `neo` | Interactive TUI — servers, apps, deploy, install |
 | **Setup** | |
 | `neo init <user@host>` | Bootstrap a server (Docker, Caddy, state) |
 | `neo init <user@host> --name staging` | Name the server |
 | **Apps** | |
-| `neo install` | Interactive app picker |
-| `neo install <app>` | Install a specific app |
+| `neo install` | Pick a template and scaffold it into a folder |
+| `neo install <app>` | Scaffold a specific template |
 | `neo deploy [path]` | Deploy local Dockerfile project |
 | `neo deploy --domain <d> --port <p>` | Deploy with domain and port |
 | `neo list` | List all apps on current server |
@@ -642,8 +563,6 @@ $ neo ssh --server staging
 | `neo servers` | List all configured servers |
 | `neo use <name>` | Switch active server |
 | `neo ssh` | SSH into current server |
-| **Vxero Transfer** | |
-| `neo connect` | One-time transfer to Vxero (Docker → K3s) |
 
 ### Global Flags
 
@@ -656,7 +575,7 @@ $ neo ssh --server staging
 
 ## Bundled App Templates
 
-10 production-ready templates with auto-configured databases, SSL, and health checks:
+10 production-ready templates. `neo install <app>` scaffolds each into a folder — a `docker-compose.yml` (app + bundled databases), a `.neo.yml`, and a `.env` with generated secrets — that you then ship with `neo deploy`:
 
 | App | Category | Bundled Services |
 |-----|----------|-----------------|
@@ -671,7 +590,7 @@ $ neo ssh --server staging
 | **Vaultwarden** | Security | — (SQLite built-in) |
 | **Chatwoot** | Support | PostgreSQL, Redis |
 
-Each template auto-generates secrets, wires database URLs, and configures health checks.
+Each template auto-generates secrets into `.env`, wires the app to its bundled databases in `docker-compose.yml`, and sets a health check in `.neo.yml`. Edit any of it before you deploy.
 
 ---
 
@@ -680,11 +599,13 @@ Each template auto-generates secrets, wires database URLs, and configures health
 Neo is a **local CLI** — no daemon, no agent. Every operation runs over SSH:
 
 ```
-neo install ghost
+neo install ghost                # local — scaffold only
+  ↓ writes ./ghost/{docker-compose.yml, .neo.yml, .env}
+
+cd ghost && neo deploy
   ↓ (local — Charm TUI)
-  Interactive prompts: domain, env vars, confirm
+  build/pull image, read .neo.yml
   ↓ (SSH to remote server)
-  docker pull ghost:5-alpine
   docker run -d --name app-ghost --network neo ...
   curl -X POST localhost:2019/config/... (Caddy route)
   ↓ (local — Charm TUI)
@@ -729,7 +650,7 @@ $ neo init root@staging.mysite.com --name staging
 $ neo use staging
   ✓ Switched to server "staging"
 
-$ neo install ghost --server production           # or target per-command
+$ neo deploy --server production                  # or target per-command
 ```
 
 ---
