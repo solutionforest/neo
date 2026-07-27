@@ -20,6 +20,7 @@ import { LogViewer } from "../features/logs/LogViewer";
 import { AppActionDialog } from "../features/actions/AppActionDialog";
 import { ActionHistoryList } from "../features/actions/ActionHistoryList";
 import { DiagnosticBundlePanel } from "../features/diagnostics/DiagnosticBundlePanel";
+import { TerminalSection } from "../features/terminal/TerminalSection";
 import { statusFor, useServerData } from "./useServerData";
 import { useAppActions } from "./useAppActions";
 
@@ -221,6 +222,11 @@ export function Management({ api }: { api: DesktopAPI }) {
             initialTarget={logsTarget}
           />
         </section>
+
+        <TerminalSection
+          server={data.servers.find((s) => s.id === data.selected)?.name}
+          apps={data.apps}
+        />
       </div>
 
       {dialog ? (

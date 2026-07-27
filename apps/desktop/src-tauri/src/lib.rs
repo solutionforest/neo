@@ -7,6 +7,7 @@
 
 pub mod bridge;
 mod commands;
+mod pty;
 mod tray;
 
 use std::sync::Arc;
@@ -56,8 +57,14 @@ pub fn run() {
             bridge::operation_cancel,
             bridge::logs_subscribe,
             bridge::logs_unsubscribe,
+            pty::pty_spawn,
+            pty::pty_write,
+            pty::pty_resize,
+            pty::pty_kill,
         ])
         .setup(|app| {
+            pty::init(app);
+
             // macOS: behave as a menu-bar accessory (no dock icon) until a full
             // management window is opened. Slice-1 approximation of the plan's
             // "no dock icon when only the popover is open" requirement.

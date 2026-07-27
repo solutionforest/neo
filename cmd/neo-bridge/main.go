@@ -39,6 +39,12 @@ var (
 )
 
 func main() {
+	// Raw interactive-terminal mode, outside the JSON protocol. Spawned by the
+	// desktop app as `neo-bridge pty <server> …` for each integrated terminal.
+	if len(os.Args) > 1 && os.Args[1] == "pty" {
+		os.Exit(runInteractivePty(os.Args[2:]))
+	}
+
 	logger := newLogger(os.Getenv("NEO_BRIDGE_LOG_LEVEL"))
 	slog.SetDefault(logger)
 
