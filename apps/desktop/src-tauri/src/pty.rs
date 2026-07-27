@@ -28,7 +28,11 @@ pub struct PtyState {
 /// externalBin there without the target-triple suffix).
 fn bridge_path() -> Option<std::path::PathBuf> {
     let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    for name in ["neo-bridge", "neo-bridge-aarch64-apple-darwin", "neo-bridge-x86_64-apple-darwin"] {
+    for name in [
+        "neo-bridge",
+        "neo-bridge-aarch64-apple-darwin",
+        "neo-bridge-x86_64-apple-darwin",
+    ] {
         let cand = dir.join(name);
         if cand.exists() {
             return Some(cand);
@@ -51,7 +55,9 @@ pub fn pty_spawn(
     }
 
     let bridge = bridge_path().ok_or_else(|| "neo-bridge not found".to_string())?;
-    let container_arg = container.filter(|c| !c.is_empty()).unwrap_or_else(|| "-".to_string());
+    let container_arg = container
+        .filter(|c| !c.is_empty())
+        .unwrap_or_else(|| "-".to_string());
 
     let mut child = Command::new(&bridge)
         .arg("pty")
@@ -80,7 +86,11 @@ pub fn pty_spawn(
     let ev_err = data_ev.clone();
     std::thread::spawn(move || pump(stderr, &app_err, &ev_err));
 
-    app.state::<PtyState>().sessions.lock().unwrap().insert(id.clone(), Session { child, stdin });
+    app.state::<PtyState>()
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(id.clone(), Session { child, stdin });
 
     // Reap the child and notify the frontend when it exits.
     let app_reap = app.clone();
@@ -126,7 +136,9 @@ pub fn pty_write(app: tauri::AppHandle, id: String, data: String) -> Result<(), 
     let state = app.state::<PtyState>();
     let mut sessions = state.sessions.lock().unwrap();
     if let Some(sess) = sessions.get_mut(&id) {
-        sess.stdin.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+        sess.stdin
+            .write_all(data.as_bytes())
+            .map_err(|e| e.to_string())?;
         sess.stdin.flush().map_err(|e| e.to_string())?;
     }
     Ok(())
