@@ -188,7 +188,11 @@ jobs:
       # consumes APPLE_* env natively (keychain import, codesign of the app AND
       # the embedded sidecar, notarization); the updater key env makes it emit
       # signed updater artifacts.
-      - name: Build, package, and sign
+      # Signed build — only when an Apple certificate secret is present. Passing
+      # the APPLE_* env unconditionally makes Tauri run `security import` on an
+      # empty/invalid cert and abort, so the unsigned path below omits it.
+      - name: Build, package, and sign (Apple cert present)
+        if: steps.signing.outputs.apple_cert == 'true'
         shell: bash
         env:
           NEO_DESKTOP_VERSION: ${{ needs.verify.outputs.version }}
@@ -201,6 +205,19 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run tauri build -- --target ${{ matrix.triple }} --config tauri.release.json
+
+      # Unsigned build — no Apple signing env (macOS ad-hoc). Windows still signs
+      # via the certificateThumbprint composed into the overlay above. Updater
+      # artifacts are still produced when TAURI_SIGNING_PRIVATE_KEY is set.
+      - name: Build and package (unsigned)
+        if: steps.signing.outputs.apple_cert != 'true'
+        shell: bash
+        env:
+          NEO_DESKTOP_VERSION: ${{ needs.verify.outputs.version }}
+          NEO_DESKTOP_COMMIT: ${{ github.sha }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build -- --target ${{ matrix.triple }} --config tauri.release.json
 
       # Step 7: smoke test on the native runner. The embedded bridge must speak
