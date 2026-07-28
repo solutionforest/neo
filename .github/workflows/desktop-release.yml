@@ -1,0 +1,175 @@
+# Neo Desktop release pipeline — triggered by `desktop-v*` tags (independent of
+# the CLI's `v*` releases). Per target it builds the matching neo-bridge sidecar
+# from the tag commit, packages the Tauri app + DMG, smoke-tests the bundled
+# bridge, and publishes a draft GitHub Release with the DMGs.
+#
+# Signing is optional: with no APPLE_CERTIFICATE secret the macOS build is
+# unsigned (ad-hoc) instead of failing at `security import`.
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - "desktop-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify tag and versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#desktop-v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Desktop release tags must be desktop-v<semver>; got ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+          conf=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          pkg=$(node -p "require('./apps/desktop/package.json').version")
+          if [[ "$conf" != "$version" || "$pkg" != "$version" ]]; then
+            echo "Version mismatch: tag=$version tauri.conf.json=$conf package.json=$pkg" >&2
+            echo "Bump apps/desktop versions before tagging." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.triple }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            triple: aarch64-apple-darwin
+            goos: darwin
+            goarch: arm64
+          - os: macos-13
+            triple: x86_64-apple-darwin
+            goos: darwin
+            goarch: amd64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      # Build the target-specific bridge sidecar (version-stamped) before the
+      # Tauri bundle consumes it via externalBin.
+      - name: Build neo-bridge sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+            -o "apps/desktop/src-tauri/binaries/neo-bridge-${{ matrix.triple }}" ./cmd/neo-bridge
+
+      - name: Install frontend deps
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Signing preflight
+        id: signing
+        shell: bash
+        env:
+          HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        run: |
+          echo "apple_cert=${HAS_APPLE_CERT}" >> "$GITHUB_OUTPUT"
+          [ "${HAS_APPLE_CERT}" = "true" ] || echo "::warning::APPLE_CERTIFICATE missing — macOS app will be unsigned"
+
+      # Signed build — only when a certificate secret exists (passing APPLE_*
+      # env with no cert makes Tauri abort at `security import`).
+      - name: Build and package (signed)
+        if: steps.signing.outputs.apple_cert == 'true'
+        working-directory: apps/desktop
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run tauri build -- --target ${{ matrix.triple }}
+
+      - name: Build and package (unsigned)
+        if: steps.signing.outputs.apple_cert != 'true'
+        working-directory: apps/desktop
+        run: npm run tauri build -- --target ${{ matrix.triple }}
+
+      # The bundled bridge must be executable and report the tag version.
+      - name: Smoke test bundled bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="apps/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Neo Desktop.app"
+          bridge="$app/Contents/MacOS/neo-bridge"
+          test -x "$bridge" || { echo "bundled neo-bridge missing"; exit 1; }
+          "$bridge" bridge.hello > hello.json
+          cat hello.json
+          grep -q '"protocolVersion":1' hello.json
+          grep -q "\"bridgeVersion\":\"${VERSION}\"" hello.json
+
+      - name: Collect DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/upload"
+          cp apps/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/dmg/*.dmg "$RUNNER_TEMP/upload/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.triple }}
+          path: ${{ runner.temp }}/upload/*
+
+  publish:
+    name: Publish draft release
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find dist -type f -name '*.dmg')
+          echo "Publishing: ${files[*]}"
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --title "Neo Desktop ${GITHUB_REF_NAME#desktop-v}" \
+            --notes "Automated build of the Neo Desktop app (our UI + integrated terminal). Unsigned — right-click the app and choose Open on first launch." \
+            "${files[@]}"

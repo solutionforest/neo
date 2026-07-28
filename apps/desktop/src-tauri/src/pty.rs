@@ -27,7 +27,11 @@ pub struct PtyState {
 // Locate the bundled neo-bridge binary next to our executable.
 fn bridge_path() -> Option<std::path::PathBuf> {
     let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    for name in ["neo-bridge", "neo-bridge-aarch64-apple-darwin", "neo-bridge-x86_64-apple-darwin"] {
+    for name in [
+        "neo-bridge",
+        "neo-bridge-aarch64-apple-darwin",
+        "neo-bridge-x86_64-apple-darwin",
+    ] {
         let cand = dir.join(name);
         if cand.exists() {
             return Some(cand);
@@ -51,7 +55,9 @@ pub fn pty_spawn(
     }
 
     let bridge = bridge_path().ok_or_else(|| "neo-bridge not found".to_string())?;
-    let container_arg = container.filter(|c| !c.is_empty()).unwrap_or_else(|| "-".to_string());
+    let container_arg = container
+        .filter(|c| !c.is_empty())
+        .unwrap_or_else(|| "-".to_string());
 
     let mut child = Command::new(&bridge)
         .arg("pty")
@@ -135,7 +141,9 @@ pub fn pty_write(app: tauri::AppHandle, id: String, data: String) -> Result<(), 
     let guard = app.state::<PtyState>();
     let mut sessions = guard.sessions.lock().unwrap();
     if let Some(sess) = sessions.get_mut(&id) {
-        sess.stdin.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+        sess.stdin
+            .write_all(data.as_bytes())
+            .map_err(|e| e.to_string())?;
         sess.stdin.flush().map_err(|e| e.to_string())?;
     }
     Ok(())
