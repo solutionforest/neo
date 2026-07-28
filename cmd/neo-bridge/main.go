@@ -174,7 +174,13 @@ func snapshot(name string) (*serverSnapshot, error) {
 	snap.Reachable = true
 	snap.LatencyMS = time.Since(start).Milliseconds()
 
-	metricsCmd := `echo "CPU:$(top -bn1 2>/dev/null | awk '/%Cpu/{print 100-$8; exit}' || echo 0)"; ` +
+	// CPU is measured as the busy fraction across two /proc/stat samples ~0.3s
+	// apart. A single `top -bn1` reports an instantaneous, unreliable value
+	// (often ~0 idle → 100%); two samples track what htop shows.
+	cpuCmd := `CPU=$(set -- $(grep "^cpu " /proc/stat); t1=0; for v in $2 $3 $4 $5 $6 $7 $8 $9; do t1=$((t1+v)); done; i1=$(($5+$6)); ` +
+		`sleep 0.3; set -- $(grep "^cpu " /proc/stat); t2=0; for v in $2 $3 $4 $5 $6 $7 $8 $9; do t2=$((t2+v)); done; i2=$(($5+$6)); ` +
+		`dt=$((t2-t1)); di=$((i2-i1)); if [ "$dt" -gt 0 ]; then echo $(( (100*(dt-di))/dt )); else echo 0; fi)`
+	metricsCmd := cpuCmd + `; echo "CPU:${CPU:-0}"; ` +
 		`echo "MEM:$(free -b 2>/dev/null | awk '/Mem:/{printf "%d/%d",$3,$2}' || echo 0/0)"; ` +
 		`echo "DISK:$(df -B1 / 2>/dev/null | awk 'NR==2{printf "%d/%d",$3,$2}' || echo 0/0)"; ` +
 		`echo "UP:$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 0)"`
