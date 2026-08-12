@@ -127,6 +127,65 @@ Notes:
 
 ---
 
+## Neo Desktop — Experimental GUI ⚠️
+
+> **⚠️ Experimental / testing (測試) build.** Neo Desktop is a macOS menu-bar (tray)
+> app that wraps the neo CLI — live CPU/RAM/disk gauges, per-app start/stop/restart,
+> a log viewer, and integrated SSH/container terminals. It is **early and under active
+> development**: expect rough edges, breaking changes, and missing features. The `neo`
+> CLI remains the supported interface — don't rely on the GUI for production work yet.
+
+Caveats before you build or run it:
+
+- **macOS only** right now (Apple Silicon + Intel). No Windows/Linux builds.
+- **Unsigned builds.** Release `.dmg`s are ad-hoc signed unless a signing certificate
+  is configured, so macOS Gatekeeper blocks the first launch. Either **right-click the
+  app → Open**, or clear the quarantine flag:
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/Neo Desktop.app"
+  ```
+- **Not the Docker build path.** Unlike the CLI (`make build`), the desktop app builds
+  with your **host toolchains** — Rust, Node, and Go.
+- It reuses your existing neo config (`~/.neo`) and SSH auth through a bundled
+  `neo-bridge` sidecar, so servers you added with the CLI show up automatically.
+
+### Build from source
+
+Prerequisites: **Rust** (via [rustup](https://rustup.rs)), **Node 18+**, and **Go 1.23+**.
+
+```bash
+cd apps/desktop
+
+# 1. Build the neo-bridge sidecar for your Mac's arch.
+#    Apple Silicon (M1/M2/M3):
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+  go build -trimpath -ldflags "-s -w" \
+  -o src-tauri/binaries/neo-bridge-aarch64-apple-darwin ../../cmd/neo-bridge
+#    Intel Macs: use GOARCH=amd64 and the -x86_64-apple-darwin suffix instead.
+
+# 2. Install frontend dependencies.
+npm ci
+
+# 3. Build the app bundle (.app + .dmg land in src-tauri/target/release/bundle/).
+npm run tauri build
+```
+
+Prefer a hot-reloading dev window? Build the sidecar (step 1) first, then:
+
+```bash
+cd apps/desktop
+npm install
+npm run tauri dev
+```
+
+> **Sidecar filename must match your Rust host triple** — check it with
+> `rustc -vV | grep host`. Tauri resolves `binaries/neo-bridge` to
+> `binaries/neo-bridge-<triple>` at build time; a missing or mismatched suffix fails
+> the build. See [`.github/workflows/desktop-release.yml`](.github/workflows/desktop-release.yml)
+> for the canonical multi-arch build.
+
+---
+
 ## Quick Start
 
 ### 1. Run `neo` — everything starts here

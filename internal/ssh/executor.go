@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,6 +96,104 @@ func (e *Executor) Close() error {
 		return e.client.Close()
 	}
 	return nil
+}
+
+// InteractiveShell opens a PTY-backed session and bridges the local process's
+// stdin/stdout/stderr to it. If command is empty it starts a login shell;
+// otherwise it runs that command interactively (e.g. `docker exec -it … sh`).
+// Used by `neo-bridge pty` so the desktop terminal reuses neo's working auth.
+func (e *Executor) InteractiveShell(cols, rows int, command string) error {
+	session, err := e.client.NewSession()
+	if err != nil {
+		return fmt.Errorf("ssh session: %w", err)
+	}
+	defer session.Close()
+
+	if cols <= 0 {
+		cols = 80
+	}
+	if rows <= 0 {
+		rows = 24
+	}
+	modes := ssh.TerminalModes{
+		ssh.ECHO:          1,
+		ssh.TTY_OP_ISPEED: 14400,
+		ssh.TTY_OP_OSPEED: 14400,
+	}
+	if err := session.RequestPty("xterm-256color", rows, cols, modes); err != nil {
+		return fmt.Errorf("request pty: %w", err)
+	}
+
+	session.Stdout = os.Stdout
+	session.Stderr = os.Stderr
+	stdinPipe, err := session.StdinPipe()
+	if err != nil {
+		return err
+	}
+
+	// Bridge stdin, intercepting resize control frames. The desktop app sends
+	// "\x1eR<cols>x<rows>\n" (0x1e = RS, never produced by a keyboard) to grow
+	// the remote PTY; everything else is forwarded as keystrokes.
+	go func() {
+		buf := make([]byte, 4096)
+		var ctrl []byte
+		inCtrl := false
+		for {
+			n, rerr := os.Stdin.Read(buf)
+			if n > 0 {
+				forward := make([]byte, 0, n)
+				for _, b := range buf[:n] {
+					switch {
+					case inCtrl && b == '\n':
+						applyResize(session, ctrl)
+						ctrl = ctrl[:0]
+						inCtrl = false
+					case inCtrl:
+						ctrl = append(ctrl, b)
+					case b == 0x1e:
+						inCtrl = true
+						ctrl = ctrl[:0]
+					default:
+						forward = append(forward, b)
+					}
+				}
+				if len(forward) > 0 {
+					if _, werr := stdinPipe.Write(forward); werr != nil {
+						return
+					}
+				}
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
+
+	if command != "" {
+		if err := session.Start(command); err != nil {
+			return err
+		}
+	} else if err := session.Shell(); err != nil {
+		return err
+	}
+	return session.Wait()
+}
+
+// applyResize parses a "R<cols>x<rows>" control frame and resizes the PTY.
+func applyResize(session *ssh.Session, frame []byte) {
+	s := string(frame)
+	if len(s) < 2 || s[0] != 'R' {
+		return
+	}
+	parts := strings.SplitN(s[1:], "x", 2)
+	if len(parts) != 2 {
+		return
+	}
+	cols, e1 := strconv.Atoi(parts[0])
+	rows, e2 := strconv.Atoi(parts[1])
+	if e1 == nil && e2 == nil && cols > 0 && rows > 0 {
+		_ = session.WindowChange(rows, cols)
+	}
 }
 
 // Run executes a command and returns combined stdout.
