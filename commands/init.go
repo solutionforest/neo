@@ -77,8 +77,14 @@ func runInit(host, name string) error {
 
 	// Connect via SSH — no spinner here because host key verification may need user input
 	fmt.Print("  Connecting via SSH...\n")
-	if err := exec.Connect(); err != nil {
+	if err := connectWithBootRetry(exec); err != nil {
 		errStr := err.Error()
+
+		// Network-level failure (refused/timeout/unreachable) — not an auth problem.
+		// Skip the password prompt and --key hint; they cannot fix a TCP failure.
+		if isNetworkError(errStr) {
+			return networkUnreachableError(host, 22, err)
+		}
 
 		// Host key mismatch (server rebuilt, IP reused) — show actionable fix
 		if strings.Contains(errStr, "HOST KEY HAS CHANGED") {
@@ -178,8 +184,11 @@ func runInitWithKey(host, name, keyPath string) error {
 	exec.PrivateKey = keyData
 
 	fmt.Print("  Connecting via SSH...\n")
-	if err := exec.Connect(); err != nil {
+	if err := connectWithBootRetry(exec); err != nil {
 		errStr := err.Error()
+		if isNetworkError(errStr) {
+			return networkUnreachableError(host, 22, err)
+		}
 		if strings.Contains(errStr, "HOST KEY HAS CHANGED") {
 			ip := extractIP(host)
 			if ip == "" {
@@ -193,6 +202,87 @@ func runInitWithKey(host, name, keyPath string) error {
 	defer exec.Close()
 
 	return setupServer(exec, cfg, name, host, keyPath)
+}
+
+// isNetworkError reports whether errStr is a network-level SSH failure (the TCP
+// connection could not be established) rather than an auth or host-key problem.
+// These fail before authentication, so a password prompt or --key hint is useless.
+func isNetworkError(errStr string) bool {
+	for _, p := range []string{
+		"connection refused",
+		"i/o timeout",
+		"connection timed out",
+		"no route to host",
+		"network is unreachable",
+		"no such host",
+	} {
+		if strings.Contains(errStr, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isBootingError is the subset of network errors that retrying may resolve —
+// typically a freshly provisioned cloud server whose sshd is not up yet. DNS
+// failures ("no such host") are excluded because retrying rarely helps.
+func isBootingError(errStr string) bool {
+	for _, p := range []string{
+		"connection refused",
+		"i/o timeout",
+		"connection timed out",
+		"no route to host",
+		"network is unreachable",
+	} {
+		if strings.Contains(errStr, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// connectWithBootRetry attempts the SSH connection, retrying for up to ~75s when
+// the failure looks like a still-booting server (connection refused, etc.). The
+// first attempt and every retry run without a spinner active so host-key prompts
+// can read stdin cleanly. Non-network errors (auth, host-key mismatch) return
+// immediately for the caller's specialized handling.
+func connectWithBootRetry(exec *ssh.Executor) error {
+	err := exec.Connect()
+	if err == nil || !isBootingError(err.Error()) {
+		return err
+	}
+
+	fmt.Println("  Server refused the connection — it may still be booting. Retrying for up to 75s...")
+	deadline := time.Now().Add(75 * time.Second)
+	for time.Now().Before(deadline) {
+		spin := ui.NewSpinner("Waiting for server SSH...")
+		spin.Start()
+		time.Sleep(5 * time.Second)
+		spin.Stop()
+
+		err = exec.Connect()
+		if err == nil || !isBootingError(err.Error()) {
+			return err
+		}
+	}
+	return err
+}
+
+// networkUnreachableError builds an actionable message for a network-level SSH
+// failure — pointing at the real causes (boot, firewall, wrong host) instead of
+// misleading the user toward SSH keys or passwords.
+func networkUnreachableError(host string, port int, err error) error {
+	target := extractIP(host)
+	if target == "" {
+		target = host
+	}
+	return fmt.Errorf("cannot reach %s:%d over SSH: %w\n\n"+
+		"  This is a network error, not an auth problem. Check:\n"+
+		"    - the server is running and finished booting\n"+
+		"    - port %d is open (no firewall / cloud security-group block)\n"+
+		"    - the host/IP is correct\n\n"+
+		"  Verify from your machine:  nc -vz %s %d",
+		target, port, err, port, target, port)
 }
 
 // setupServer performs the shared server initialization after SSH is connected.
