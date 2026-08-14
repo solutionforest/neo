@@ -4,6 +4,25 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.23.2 — 2026-08-14
+
+### Fixes
+
+- **HTTP basic auth works and stays on.** Three bugs fixed: (1) `${VAR}` references in `.neo.yml` — e.g. `basic_auth: password: ${NEO_BASIC_AUTH_PASSWORD}` — are now resolved at deploy instead of reaching Caddy as literal text; (2) basic auth is persisted to server state, so `neo domain` and `neo caddy update` no longer silently strip it from the live route; (3) the `--all` deploy path now honors environment-level `basic_auth`.
+- **`env_file` long form parses correctly.** The modern `env_file: [{path: …, required: …}]` form was mangled into a garbage string, so those variables never loaded (in both `neo deploy` and `neo config generate`). It now handles the string, list-of-strings, and `{path, required}` forms.
+
+### New Features
+
+- **`${VAR:-default}` interpolation** in `.neo.yml`, and interpolation now runs during `neo deploy` (previously dev-only), covering the env map and `basic_auth`.
+- **`dockerfile:` field in `.neo.yml`** — point Neo at a Dockerfile that isn't at the project root (e.g. `Dockerfile.local`) without passing `--dockerfile` on every deploy.
+- **Better `neo config generate`** — records a custom `dockerfile:`, captures sidecar `command`s, and warns (instead of silently dropping) bind mounts and extra `env_file` entries when converting a large compose file.
+
+### Docs
+
+- Documented `neo service info <svc>` (host, port, user, password, URL) — the command existed but was missing from the docs.
+
+---
+
 ## v0.22.0 — 2026-07-20
 
 ### New Features
