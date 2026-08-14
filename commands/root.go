@@ -105,6 +105,18 @@ func NewRootCmd(version string) *cobra.Command {
 	// Replace default help template with grouped commands
 	root.SetUsageTemplate(helpTemplate())
 
+	// `neo --help` / `neo -h` on the root command shows the same grouped
+	// command reference as `neo help`, instead of a thin usage stub.
+	// Subcommands (e.g. `neo deploy --help`) keep Cobra's default per-command help.
+	defaultHelpFunc := root.HelpFunc()
+	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		if cmd == root {
+			printHelp()
+			return
+		}
+		defaultHelpFunc(cmd, args)
+	})
+
 	return root
 }
 
