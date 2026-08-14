@@ -5,7 +5,7 @@
 ```
   ▀▄▀ █ █ █▀▀ █▀█ █▀█   ┃   █▄ █ █▀▀ █▀█
   █ █ ▀▄▀ ██▄ █▀▄ █▄█   ┃   █ ▀█ ██▄ █▄█
-  ⚡ neo v1.0.0
+  ⚡ neo v0.22.0
 ```
 
 Like [Kamal](https://kamal-deploy.org/) — you run it locally, it SSHes into your VPS and manages everything remotely.
@@ -57,7 +57,7 @@ See the [neo-skill README](https://github.com/solutionforest/neo-skill) for per-
 macOS and Linux:
 
 ```bash
-curl -fsSL https://get.vxero.dev/neo | sh
+curl -fsSL https://neo.vxero.dev/neo | sh
 ```
 
 Building from source? See [Build With Docker](#build-with-docker) below.
@@ -197,7 +197,7 @@ $ neo
 ```
   ▀▄▀ █ █ █▀▀ █▀█ █▀█   ┃   █▄ █ █▀▀ █▀█
   █ █ ▀▄▀ ██▄ █▀▄ █▄█   ┃   █ ▀█ ██▄ █▄█
-  ⚡ neo v1.0.0
+  ⚡ neo v0.22.0
 
   No servers configured.
 
@@ -229,7 +229,7 @@ Every time you run `neo`, you get a full TUI hub:
 ```
   ▀▄▀ █ █ █▀▀ █▀█ █▀█   ┃   █▄ █ █▀▀ █▀█
   █ █ ▀▄▀ ██▄ █▀▄ █▄█   ┃   █ ▀█ ██▄ █▄█
-  ⚡ neo v1.0.0
+  ⚡ neo v0.22.0
 
   Server: production (root@159.65.100.42)
 
@@ -608,20 +608,44 @@ $ neo ssh --server staging
 | `neo restart <app>` | Restart an app |
 | `neo update <app>` | Pull latest image and redeploy |
 | `neo remove <app>` | Remove app (keeps data volumes) |
+| `neo destroy` | Tear down everything on a server |
+| `neo prune` | Remove unused images/containers/volumes |
+| `neo status` | Show app/service status |
+| `neo dev [down]` | Run the current project locally via Docker |
 | **Logs & Domain** | |
 | `neo logs <app>` | Show last 100 log lines |
 | `neo logs <app> -f` | Stream logs in real-time |
 | `neo logs <app> --tail 50` | Custom tail count |
 | `neo domain <app> <domain>` | Set/change domain (auto-SSL via Caddy) |
-| **Volumes & Backups** | |
+| `neo redirect add <from> <to>` | Redirect a domain without deploying an app |
+| **Env & Config** | |
+| `neo env <app>` | List/set/unset/import env vars |
+| `neo config init` | Scaffold a new `.neo.yml` |
+| `neo config generate` | Generate `.neo.yml` from `docker-compose.yml` |
+| `neo sync [app]` | Sync server state back to `.neo.yml` |
+| **Services & Data** | |
+| `neo service create/list/link/unlink/remove` | Shared MySQL/Postgres/Redis/MariaDB instances |
+| `neo db <app> [shell]` | Interactive database browser or raw shell |
 | `neo volumes` | List all volumes on server |
 | `neo volumes mount <vol> <path>` | Mount volume to host path (e.g., external SSD) |
 | `neo backup <app>` | Backup app data volumes |
 | `neo restore <app> <file>` | Restore from backup |
+| **Security** | |
+| `neo firewall install/status/block/unblock/list` | CrowdSec intrusion prevention |
+| `neo stealth` | Hide server from IP-based discovery |
+| `neo key add` | Authorize an SSH key on a server |
 | **Servers** | |
 | `neo servers` | List all configured servers |
 | `neo use <name>` | Switch active server |
 | `neo ssh` | SSH into current server |
+| `neo run <cmd>` | Execute a command on the server |
+| `neo tunnel <app>` | Forward a remote port to your machine |
+| **Licensing & Meta** | |
+| `neo activate [key]` | Activate neo (free, required before use) |
+| `neo license status/deactivate` | License management |
+| `neo ask` | Interactive skill assistant |
+| `neo version` | Show version, check for updates |
+| `neo upgrade` | Self-update the binary |
 
 ### Global Flags
 
@@ -774,21 +798,30 @@ make build-neotest
 
 ```
 neo/
-├── cmd/neo/main.go              # Entry point
-├── commands/                    # 15 command files → 21 commands
+├── cmd/
+│   ├── neo/main.go              # CLI entry point
+│   ├── neo-bridge/              # Sidecar used by Neo Desktop (see below)
+│   ├── neotest/                 # DigitalOcean integration test runner
+│   └── neosandbox/              # Docker sandbox test runner
+├── commands/                    # ~40 command files → 40 top-level commands
 │   ├── root.go                  # Root command + shared helpers
 │   ├── dashboard.go             # Interactive TUI (main menu, servers, apps)
 │   ├── init.go                  # Server bootstrap
 │   ├── install.go               # App wizard
 │   ├── deploy.go                # Deploy local projects
-│   ├── list.go                  # App table
+│   ├── list.go / status.go      # App table / status
 │   ├── servers.go               # Multi-server + use
 │   ├── manage.go                # start/stop/restart/remove/update
 │   ├── logs.go                  # Container log streaming
-│   ├── domain.go                # Caddy route management
+│   ├── domain.go / redirect.go  # Caddy route + redirect management
+│   ├── env.go / envfile.go      # Env var management
+│   ├── service.go               # Shared MySQL/Postgres/Redis/MariaDB
 │   ├── volumes.go               # Volume list + mount
 │   ├── backup.go                # Backup + restore
-│   ├── connect.go               # Vxero SaaS bridge
+│   ├── firewall.go / stealth.go # CrowdSec + discovery hiding
+│   ├── db.go / dev.go / sync.go # DB browser, local dev, state→yaml sync
+│   ├── key.go / tunnel.go       # SSH key auth, port forwarding
+│   ├── license.go               # Activation + license management
 │   ├── ssh_cmd.go               # Quick SSH
 │   ├── exec_unix.go             # syscall.Exec (unix)
 │   └── exec_windows.go          # os/exec fallback (windows)
@@ -796,9 +829,13 @@ neo/
 │   ├── ssh/executor.go          # Persistent SSH client
 │   ├── remote/
 │   │   ├── docker.go            # Docker commands over SSH
-│   │   └── caddy.go             # Caddy Admin API over SSH
+│   │   ├── caddy.go             # Caddy Admin API over SSH
+│   │   └── crowdsec.go          # CrowdSec firewall over SSH
 │   ├── config/config.go         # ~/.neo/config.json
 │   ├── state/state.go           # /etc/neo/state.json (remote)
+│   ├── license/                 # License API client, offline cache
+│   ├── sandbox/                 # Docker sandbox test matrix + runner
+│   ├── testinfra/               # DigitalOcean integration test infra
 │   ├── app/
 │   │   ├── manifest.go          # YAML manifest parser
 │   │   ├── registry.go          # Embedded template registry
@@ -810,10 +847,9 @@ neo/
 │   │   ├── spinner.go           # Braille spinner
 │   │   ├── progress.go          # Progress bar + status bullets
 │   │   └── styles.go            # Lipgloss styles
-│   └── bridge/
-│       ├── connect.go           # Agent install/remove
-│       ├── api.go               # Vxero REST API client
-│       └── migrate.go           # Docker → K3s migration planner
+│   └── bridge/                  # Vxero SaaS migration API — retained,
+│                                 # not wired to any command
+├── apps/desktop/                # Neo Desktop (Tauri GUI) — experimental
 ├── Makefile
 ├── go.mod / go.sum
 └── .gitignore
@@ -826,6 +862,7 @@ neo/
 | `spf13/cobra` | v1.8.1 | CLI framework |
 | `charmbracelet/huh` | v1.0.0 | Interactive prompts |
 | `charmbracelet/lipgloss` | v1.1.0 | Terminal styling |
+| `charmbracelet/x/term` | v0.2.1 | Terminal size/state helpers |
 | `golang.org/x/crypto/ssh` | v0.31.0 | SSH client |
 | `gopkg.in/yaml.v3` | v3.0.1 | YAML parsing |
 

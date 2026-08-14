@@ -119,8 +119,8 @@ Point the whole CLI at another environment with one var: `NEO_BASE=https://neo-s
 
 - `neo version` — shows current version, checks `version.json` on the download server for updates
 - `neo upgrade` — downloads the latest binary for the current OS/arch and replaces itself in-place
-- Version check endpoint: `https://get.vxero.dev/neo/version.json` → `{"version":"0.2.0","released":"2026-03-19"}`
-- Download endpoint: `https://get.vxero.dev/neo/download.php?os=<os>&arch=<arch>`
+- Version check endpoint: `https://neo.vxero.dev/api/neo/version.json` → `{"version":"0.2.0","released":"2026-03-19"}`
+- Download endpoint: `https://neo.vxero.dev/api/download/<os>/<arch>?version=<v>`
 - Version is stamped at build time via `-ldflags "-X main.version=0.2.0"`
 
 ## OS Requirements

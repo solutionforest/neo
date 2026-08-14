@@ -931,15 +931,23 @@ Stored at `~/.neo/config.json`.
 
 | Constant | Value |
 |----------|-------|
-| `DefaultAPIBaseURL` | `https://get.vxero.dev/neo` |
-| `DefaultVersionURL` | `https://get.vxero.dev/neo/version.json` |
-| `DefaultDownloadBaseURL` | `https://get.vxero.dev/neo/download.php` |
+| `DefaultBaseURL` | `https://neo.vxero.dev` (only hardcoded host; override via `NEO_BASE`) |
+| `DefaultAgentInstallURL` | `https://get.vxero.dev/agent` |
 | `DefaultDockerInstallURL` | `https://get.docker.com` |
 | `DefaultFreeServerLimit` | `1` |
 | `AppContainerPrefix` | `app-` |
 | `SvcContainerPrefix` | `svc-` |
 | `DockerNetwork` | `neo` |
 | `BackupDir` | `/var/backups/neo` |
+
+**Derived endpoints** (each built from `DefaultBaseURL`, each individually overridable by its own env var):
+
+| Function | Value | Env override |
+|----------|-------|--------------|
+| `APIBaseURL()` | `<base>/api` | `NEO_API_BASE_URL` |
+| `InstallURL()` | `<base>/neo` | `NEO_INSTALL_URL` |
+| `VersionURL()` | `<base>/api/neo/version.json` | `NEO_VERSION_URL` |
+| `DownloadBaseURL()` | `<base>/api/download` | `NEO_DOWNLOAD_URL` |
 
 **Container Naming Functions:**
 
@@ -1352,9 +1360,9 @@ Code: `internal/testinfra/` (DO API client, test runner, ephemeral SSH keys).
 
 ## Self-Update System
 
-**Version check:** `GET https://get.vxero.dev/neo/version.json` → `{"version":"0.2.0","released":"2026-03-19"}`
+**Version check:** `GET https://neo.vxero.dev/api/neo/version.json` → `{"version":"0.2.0","released":"2026-03-19"}`
 
-**Download:** `GET https://get.vxero.dev/neo/download.php?os={os}&arch={arch}`
+**Download:** `GET https://neo.vxero.dev/api/download/{os}/{arch}?version={v}`
 
 **Supported platforms:** darwin/linux/windows × amd64/arm64/arm.
 
