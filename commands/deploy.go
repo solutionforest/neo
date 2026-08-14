@@ -95,19 +95,22 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		return nil
 	}
 
-	// Find Dockerfile
+	// Load .neo.yml for defaults (parsed early for name/port/domain/dockerfile)
+	neoConfig, _ := loadNeoConfig(absPath)
+
+	// Resolve Dockerfile: --dockerfile flag > .neo.yml dockerfile: > ./Dockerfile
+	if dockerfile == "" && neoConfig != nil && neoConfig.Dockerfile != "" {
+		dockerfile = neoConfig.Dockerfile
+	}
 	if dockerfile == "" {
 		dockerfile = filepath.Join(absPath, "Dockerfile")
 	} else if !filepath.IsAbs(dockerfile) {
 		dockerfile = filepath.Join(absPath, dockerfile)
 	}
 	if _, err := os.Stat(dockerfile); err != nil {
-		ui.Error("No Dockerfile found. Create one or specify with --dockerfile.")
+		ui.Error("No Dockerfile found. Create one, set dockerfile: in .neo.yml, or use --dockerfile.")
 		return nil
 	}
-
-	// Load .neo.yml for defaults (parsed early for name/port/domain)
-	neoConfig, _ := loadNeoConfig(absPath)
 
 	// When environments: is defined, root-level server:/domains: are ignored.
 	// Warn the user so they know to move them into each environment.

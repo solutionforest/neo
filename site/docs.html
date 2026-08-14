@@ -284,6 +284,8 @@ neo domain my-app --temp</pre>
     <h2>Project Config (.neo.yml)</h2>
     <p>The <code>.neo.yml</code> file declares your deployment configuration. All fields are optional — Neo works without it by auto-detecting from your Dockerfile and docker-compose.yml.</p>
 
+    <p>By default Neo builds from a <code>Dockerfile</code> in your project root. If yours lives elsewhere (e.g. <code>Dockerfile.local</code> or <code>docker/Dockerfile</code>), set the <code>dockerfile:</code> field or pass <code>--dockerfile</code> / <code>-f</code> to <code>neo deploy</code>. The build <em>context</em> is always the project root.</p>
+
     <div class="codeblock">
         <div class="codeblock-header">.neo.yml — Full example</div>
         <pre><span class="k">name:</span> my-app
@@ -294,6 +296,8 @@ neo domain my-app --temp</pre>
 <span class="k">ssl:</span>
   <span class="v">certificate:</span> certs/fullchain.pem
   <span class="v">private_key:</span> certs/privkey.pem
+
+<span class="k">dockerfile:</span> Dockerfile
 
 <span class="k">env:</span>
   <span class="v">APP_ENV:</span> production
@@ -333,6 +337,11 @@ neo domain my-app --temp</pre>
     <span class="s">env:</span>
       <span class="s">APP_DEBUG:</span> <span class="p">"true"</span></pre>
     </div>
+
+    <div class="callout callout-warn">
+        <strong>Generating from a large compose file</strong>
+        <p><code>neo config generate</code> is best-effort and lossy for big multi-service compose files — always review the result. It deploys <em>one</em> app (the <code>build:</code> service) plus internal sidecars, so extra dev services (SMTP, SSO, mocks, object storage) become port-less sidecars. Bind mounts (<code>./data:/…</code>) are dropped, only the first <code>env_file</code> is kept, a sidecar's <code>ports</code>/<code>healthcheck</code>/<code>entrypoint</code> are not migrated, and the build <em>context</em> is always the project root. The command prints a warning for each thing it drops.</p>
+    </div>
 </section>
 
 <!-- CONFIG: NAME & DOMAIN -->
@@ -344,6 +353,7 @@ neo domain my-app --temp</pre>
         <tr><td><code>name</code></td><td>string</td><td>Directory name</td><td>App name used for container naming (<code>app-{name}</code>)</td></tr>
         <tr><td><code>domain</code></td><td>string</td><td>Prompt</td><td>Domain name for Caddy routing</td></tr>
         <tr><td><code>port</code></td><td>integer</td><td>Dockerfile EXPOSE</td><td>Port your app listens on inside the container</td></tr>
+        <tr><td><code>dockerfile</code></td><td>string</td><td><code>Dockerfile</code></td><td>Dockerfile path relative to the project root (context stays the root). <code>--dockerfile</code> overrides.</td></tr>
         <tr><td><code>server</code></td><td>string</td><td>Current server</td><td>Pin deployment to a specific server by name</td></tr>
     </table>
 

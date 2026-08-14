@@ -196,6 +196,55 @@ func TestParseComposePortFormats(t *testing.T) {
 	}
 }
 
+func TestParseComposeEnvFileForms(t *testing.T) {
+	// string form
+	if got := parseComposeEnvFile(".env"); len(got) != 1 || got[0] != ".env" {
+		t.Errorf("string form = %v, want [.env]", got)
+	}
+
+	// list-of-strings form
+	if got := parseComposeEnvFile([]interface{}{".env", ".env.local"}); len(got) != 2 || got[1] != ".env.local" {
+		t.Errorf("list-of-strings form = %v", got)
+	}
+
+	// long { path, required } form — must not stringify the whole map
+	long := []interface{}{
+		map[string]interface{}{"path": "./share.env", "required": true},
+		map[string]interface{}{"path": "./override.env", "required": false},
+	}
+	got := parseComposeEnvFile(long)
+	if len(got) != 2 || got[0] != "./share.env" || got[1] != "./override.env" {
+		t.Errorf("long form = %v, want [./share.env ./override.env]", got)
+	}
+
+	if got := parseComposeEnvFile(nil); got != nil {
+		t.Errorf("nil form = %v, want nil", got)
+	}
+}
+
+func TestComposeBuildDockerfile(t *testing.T) {
+	if got := composeBuildDockerfile(map[string]interface{}{"context": "./", "dockerfile": "Dockerfile.local"}); got != "Dockerfile.local" {
+		t.Errorf("map form = %q, want Dockerfile.local", got)
+	}
+	if got := composeBuildDockerfile("./"); got != "" {
+		t.Errorf("string (context-only) form = %q, want empty", got)
+	}
+	if got := composeBuildDockerfile(nil); got != "" {
+		t.Errorf("nil form = %q, want empty", got)
+	}
+}
+
+func TestComposeBindMounts(t *testing.T) {
+	vols := []string{"../:/var/www/html", "./data/db:/var/lib/postgresql/data", "named-vol:/data"}
+	got := composeBindMounts(vols)
+	if len(got) != 2 {
+		t.Fatalf("composeBindMounts() = %v, want 2 bind mounts", got)
+	}
+	if got := composeBindMounts([]string{"named-vol:/data"}); len(got) != 0 {
+		t.Errorf("named volume flagged as bind: %v", got)
+	}
+}
+
 func TestGuessAppService(t *testing.T) {
 	services := map[string]composeService{
 		"app":   {Build: ".", Ports: []string{"8080:3000"}},

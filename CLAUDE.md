@@ -179,6 +179,7 @@ domain: app.example.com   # domain (default: prompt)
 port: 8080                # container port (default: Dockerfile EXPOSE)
 https: true               # nil=default, true=HTTPS, false=HTTP-only
 env_file: .env.production # load env vars from file
+dockerfile: Dockerfile    # Dockerfile path relative to project root (default: Dockerfile); --dockerfile overrides
 compose_service: app      # which docker-compose service to extract from
 restart: unless-stopped   # Docker restart policy
 env:                      # env var defaults (non-sensitive)
@@ -301,10 +302,26 @@ Shared helpers used by both dev and deploy:
 ### Docker Compose Auto-Detection:
 If a `docker-compose.yml` / `compose.yml` exists in the project dir, `neo deploy` auto-extracts:
 - Environment variables (map or list format)
-- `env_file` references
+- `env_file` references — supports the string, list-of-strings, and long
+  `{path, required}` list forms (`parseComposeEnvFile` in `compose.go`)
 - Container port from `ports:`
 - Auto-detects the app service (prefers `build:` context, skips infra images like mysql/redis/postgres)
 - Use `compose_service` in `.neo.yml` to specify which service if auto-detection fails
+
+#### `neo config generate` — limitations (best-effort, review the output)
+Generating a `.neo.yml` from a large multi-service compose is lossy by design.
+The generator (`commands/config.go`) warns about each of these on stdout:
+- **One app + sidecars only.** Neo deploys a single public app (`build:` service)
+  plus internal sidecars. A 7-service dev compose (smtp, sso, mock, storage…) maps
+  poorly — each non-app service becomes a sidecar with no public port.
+- **Bind mounts are dropped.** Only named volumes migrate; `./data:/…`-style host
+  mounts can't (they reference host paths). Warned per service.
+- **Single `env_file`.** `.neo.yml` holds one `env_file`; extra entries are warned
+  and must be added manually.
+- **Custom Dockerfile.** `build.dockerfile:` is captured into the `dockerfile:`
+  field; the build **context** is not (deploy always builds from the project root).
+- **Sidecar fidelity.** Only image/env/volumes/command carry over — a sidecar's
+  `ports`, `healthcheck`, and `entrypoint` are not migrated.
 
 ### Deploy Hooks (`hooks.go`):
 Local shell commands that run during deploy lifecycle:

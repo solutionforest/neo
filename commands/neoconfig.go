@@ -194,6 +194,7 @@ type NeoConfig struct {
 	BasicAuth      *NeoBasicAuth             `yaml:"basic_auth,omitempty"` // HTTP basic auth at proxy layer
 	Env            map[string]string         `yaml:"env,omitempty"`
 	EnvFile        string                    `yaml:"env_file,omitempty"`
+	Dockerfile     string                    `yaml:"dockerfile,omitempty"` // Dockerfile path relative to project root (default: Dockerfile); --dockerfile overrides
 	ComposeService string                    `yaml:"compose_service,omitempty"`
 	Restart        string                    `yaml:"restart,omitempty"` // Docker restart policy (default: unless-stopped)
 	Health         *NeoHealth                `yaml:"health,omitempty"`  // Docker health check

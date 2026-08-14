@@ -148,6 +148,32 @@ func neoConfigTemplate(name, domain string, port int, https bool) string {
 	return strings.Replace(b.String(), "http://localhost:PORT/health", fmt.Sprintf("http://localhost:%d/health", port), 1)
 }
 
+// sidecarFromCompose builds a NeoSidecar from a compose service, carrying over
+// the image, env, named volumes, and command/entrypoint override. Command is
+// captured because services like Keycloak or WireMock are useless without it.
+func sidecarFromCompose(svc composeService) NeoSidecar {
+	sc := NeoSidecar{Image: svc.Image}
+	if svc.Environment != nil {
+		sc.Env = parseComposeEnvironment(svc.Environment)
+	}
+	if v := parseComposeVolumeMounts(svc.Volumes); len(v) > 0 {
+		sc.Volumes = v
+	}
+	if cmd := parseComposeCommand(svc.Command); cmd != "" {
+		sc.Command = cmd
+	}
+	return sc
+}
+
+// warnSidecarBinds prints a warning for any bind mounts a service declares, since
+// generate migrates only named volumes — bind mounts reference host paths.
+func warnSidecarBinds(name string, svc composeService) {
+	if binds := composeBindMounts(svc.Volumes); len(binds) > 0 {
+		fmt.Printf("  %s  %-15s bind mounts not migrated: %s\n",
+			ui.Yellow.Render("⚠"), name, strings.Join(binds, ", "))
+	}
+}
+
 func newConfigGenerateCmd() *cobra.Command {
 	var composePath string
 
@@ -208,24 +234,40 @@ func runConfigGenerate(composePath string) error {
 		Env:  make(map[string]string),
 	}
 
+	// Record a custom Dockerfile (e.g. build.dockerfile: Dockerfile.local) so
+	// deploy doesn't fall back to ./Dockerfile.
+	if df := composeBuildDockerfile(appSvc.Build); df != "" {
+		cfg.Dockerfile = df
+		fmt.Printf("  %s  dockerfile: %s\n", ui.Faint.Render("●"), df)
+	}
+
 	// Extract app env vars
 	if appSvc.Environment != nil {
 		cfg.Env = parseComposeEnvironment(appSvc.Environment)
 	}
 
-	// Extract app env_file
+	// Extract app env_file — .neo.yml holds a single env_file, so keep the first
+	// and warn when the compose service references more.
 	envFiles := parseComposeEnvFile(appSvc.EnvFile)
 	if len(envFiles) > 0 {
 		cfg.EnvFile = envFiles[0]
+		if len(envFiles) > 1 {
+			fmt.Printf("  %s  %d env_file entries — only %s recorded; add the rest to .neo.yml manually\n",
+				ui.Yellow.Render("~"), len(envFiles), envFiles[0])
+		}
 	}
 
-	// Extract app volumes
+	// Extract app volumes (named volumes only; bind mounts can't be migrated).
 	appVolumes := parseComposeVolumeMounts(appSvc.Volumes)
 	if len(appVolumes) > 0 {
 		cfg.Volumes = make(map[string]NeoVolume)
 		for name, path := range appVolumes {
 			cfg.Volumes[name] = NeoVolume{Path: path}
 		}
+	}
+	if binds := composeBindMounts(appSvc.Volumes); len(binds) > 0 {
+		fmt.Printf("  %s  %-15s bind mounts not migrated: %s\n",
+			ui.Yellow.Render("⚠"), appName, strings.Join(binds, ", "))
 	}
 
 	// Classify other services
@@ -276,19 +318,9 @@ func runConfigGenerate(composePath string) error {
 			if cfg.Sidecars == nil {
 				cfg.Sidecars = make(map[string]NeoSidecar)
 			}
-			sc := NeoSidecar{
-				Image: svc.Image,
-			}
-			if svc.Environment != nil {
-				sc.Env = parseComposeEnvironment(svc.Environment)
-			}
-			scVolumes := parseComposeVolumeMounts(svc.Volumes)
-			if len(scVolumes) > 0 {
-				sc.Volumes = scVolumes
-			}
-			cfg.Sidecars[name] = sc
-
+			cfg.Sidecars[name] = sidecarFromCompose(svc)
 			fmt.Printf("  %s  %-15s → sidecar (%s)\n", ui.Faint.Render("●"), name, svc.Image)
+			warnSidecarBinds(name, svc)
 
 		} else if hasBuild(svc) {
 			// Same build context + custom command → worker
@@ -308,16 +340,9 @@ func runConfigGenerate(composePath string) error {
 				if cfg.Sidecars == nil {
 					cfg.Sidecars = make(map[string]NeoSidecar)
 				}
-				sc := NeoSidecar{Image: svc.Image}
-				if svc.Environment != nil {
-					sc.Env = parseComposeEnvironment(svc.Environment)
-				}
-				scVolumes := parseComposeVolumeMounts(svc.Volumes)
-				if len(scVolumes) > 0 {
-					sc.Volumes = scVolumes
-				}
-				cfg.Sidecars[name] = sc
+				cfg.Sidecars[name] = sidecarFromCompose(svc)
 				fmt.Printf("  %s  %-15s → sidecar (%s)\n", ui.Faint.Render("●"), name, svc.Image)
+				warnSidecarBinds(name, svc)
 			}
 		}
 	}

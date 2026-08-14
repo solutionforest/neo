@@ -198,7 +198,19 @@ func parseComposeEnvironment(env interface{}) map[string]string {
 	return result
 }
 
-// parseComposeEnvFile handles both string and list formats.
+// parseComposeEnvFile handles every Compose env_file form:
+//
+//	env_file: .env
+//	env_file: [.env, .env.local]
+//	env_file:
+//	  - path: ./share.env
+//	    required: true
+//	  - path: ./override.env
+//	    required: false
+//
+// It returns the referenced file paths in order. The long ({path, required})
+// form is common in modern Compose files; treating each list item as a plain
+// string turned those map entries into garbage like "map[path:./share.env ...]".
 func parseComposeEnvFile(envFile interface{}) []string {
 	if envFile == nil {
 		return nil
@@ -210,12 +222,50 @@ func parseComposeEnvFile(envFile interface{}) []string {
 	case []interface{}:
 		var files []string
 		for _, item := range v {
-			files = append(files, fmt.Sprintf("%v", item))
+			switch it := item.(type) {
+			case string:
+				files = append(files, it)
+			case map[string]interface{}:
+				// Long form: { path: ..., required: bool }. Callers already
+				// skip files that fail to load, which honors required: false.
+				if p, ok := it["path"].(string); ok && p != "" {
+					files = append(files, p)
+				}
+			}
 		}
 		return files
 	}
 
 	return nil
+}
+
+// composeBuildDockerfile returns the dockerfile path from a Compose build
+// directive when it uses the map form ({context, dockerfile}). The plain string
+// form (context only) has no custom dockerfile, so it returns "".
+func composeBuildDockerfile(build interface{}) string {
+	if m, ok := build.(map[string]interface{}); ok {
+		if df, ok := m["dockerfile"].(string); ok {
+			return df
+		}
+	}
+	return ""
+}
+
+// composeBindMounts returns the bind-mount specs (host:container) from a volumes
+// list — the ones config generate cannot migrate because they reference host
+// paths. Used to warn instead of silently dropping them.
+func composeBindMounts(volumes []string) []string {
+	var binds []string
+	for _, v := range volumes {
+		parts := strings.SplitN(v, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if strings.HasPrefix(parts[0], "/") || strings.HasPrefix(parts[0], ".") {
+			binds = append(binds, v)
+		}
+	}
+	return binds
 }
 
 // parseComposePort extracts the container port from a ports list.
