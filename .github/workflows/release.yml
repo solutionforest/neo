@@ -220,6 +220,33 @@ jobs:
             gh "${args[@]}"
           fi
 
+      - name: Refresh version cache
+        if: ${{ steps.release.outputs.prerelease != 'true' }}
+        env:
+          REFRESH_URL: ${{ vars.NEO_VERSION_REFRESH_URL }}
+          REFRESH_TOKEN: ${{ secrets.NEO_VERSION_REFRESH_TOKEN }}
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          # Best-effort: bust neo-cms's cached "latest release" so `neo upgrade`
+          # sees the new version immediately instead of after its 1-hour TTL.
+          if [[ -z "${REFRESH_TOKEN:-}" ]]; then
+            echo "NEO_VERSION_REFRESH_TOKEN not set — skipping cache refresh"
+            exit 0
+          fi
+
+          url="${REFRESH_URL:-https://neo.vxero.dev/api/neo/version/refresh}"
+          code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --request POST \
+            --header "Authorization: Bearer ${REFRESH_TOKEN}" \
+            "${url}")" || true
+
+          echo "version cache refresh (${url}) -> HTTP ${code:-000}"
+          if [[ "${code:-000}" != "200" ]]; then
+            echo "::warning::version cache refresh returned HTTP ${code:-000} — endpoint self-heals within 1h"
+          fi
+
       - name: Stop neo-builder
         if: always()
         run: docker rm --force neo-builder >/dev/null 2>&1 || true
