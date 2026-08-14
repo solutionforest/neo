@@ -80,8 +80,10 @@ func interpolateEnvValues(env map[string]string) map[string]string {
 	return result
 }
 
-// interpolateString replaces all ${VAR} patterns in s.
-// Lookup order: env map first, then os.Getenv. Unresolved references are left as-is.
+// interpolateString replaces all ${VAR} and ${VAR:-default} patterns in s.
+// Lookup order: env map first, then os.Getenv. An unset or empty value falls back
+// to the :-default (bash semantics) when one is given; otherwise the reference is
+// left as-is.
 func interpolateString(s string, env map[string]string) string {
 	var buf strings.Builder
 	i := 0
@@ -89,11 +91,25 @@ func interpolateString(s string, env map[string]string) string {
 		if i+1 < len(s) && s[i] == '$' && s[i+1] == '{' {
 			end := strings.IndexByte(s[i+2:], '}')
 			if end >= 0 {
-				varName := s[i+2 : i+2+end]
-				if val, ok := env[varName]; ok {
-					buf.WriteString(val)
-				} else if val := os.Getenv(varName); val != "" {
-					buf.WriteString(val)
+				expr := s[i+2 : i+2+end] // "VAR" or "VAR:-default"
+				varName, defaultVal, hasDefault := expr, "", false
+				if idx := strings.Index(expr, ":-"); idx >= 0 {
+					varName = expr[:idx]
+					defaultVal = expr[idx+2:]
+					hasDefault = true
+				}
+
+				resolved, found := "", false
+				if v, ok := env[varName]; ok && v != "" {
+					resolved, found = v, true
+				} else if v := os.Getenv(varName); v != "" {
+					resolved, found = v, true
+				}
+
+				if found {
+					buf.WriteString(resolved)
+				} else if hasDefault {
+					buf.WriteString(defaultVal)
 				} else {
 					buf.WriteString(s[i : i+2+end+1]) // leave unresolved
 				}

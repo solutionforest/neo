@@ -255,6 +255,48 @@ func TestInterpolateStringPartialPattern(t *testing.T) {
 	}
 }
 
+func TestInterpolateStringDefaultSyntax(t *testing.T) {
+	env := map[string]string{"SET": "yes", "EMPTY": ""}
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"default used when unset", "${MISSING:-fallback}", "fallback"},
+		{"default used when empty", "${EMPTY:-fallback}", "fallback"},
+		{"value wins over default", "${SET:-fallback}", "yes"},
+		{"no default, unset left as-is", "${MISSING}", "${MISSING}"},
+		{"embedded in text", "user=${USER_X:-admin}!", "user=admin!"},
+		{"empty default", "${MISSING:-}", ""},
+	}
+	for _, tt := range tests {
+		if got := interpolateString(tt.in, env); got != tt.want {
+			t.Errorf("%s: interpolateString(%q) = %q, want %q", tt.name, tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestInterpolateNeoConfigBasicAuth(t *testing.T) {
+	env := map[string]string{"NEO_BASIC_AUTH_PASSWORD": "s3cr3t"}
+	cfg := &NeoConfig{BasicAuth: &NeoBasicAuth{
+		User:     "${NEO_BASIC_AUTH_USER:-admin}",
+		Password: "${NEO_BASIC_AUTH_PASSWORD}",
+		Bypass:   []string{"/api/*", "${BYPASS_EXTRA:-/up}"},
+	}}
+	interpolateNeoConfigBasicAuth(cfg, env)
+
+	if cfg.BasicAuth.User != "admin" {
+		t.Errorf("User = %q, want admin (default)", cfg.BasicAuth.User)
+	}
+	if cfg.BasicAuth.Password != "s3cr3t" {
+		t.Errorf("Password = %q, want s3cr3t", cfg.BasicAuth.Password)
+	}
+	if cfg.BasicAuth.Bypass[1] != "/up" {
+		t.Errorf("Bypass[1] = %q, want /up (default)", cfg.BasicAuth.Bypass[1])
+	}
+}
+
 func TestLooksLikeSecret(t *testing.T) {
 	tests := []struct {
 		key  string

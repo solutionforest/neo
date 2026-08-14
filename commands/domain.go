@@ -286,7 +286,7 @@ func runDomainTemp(appName string, add bool) error {
 
 	spin := ui.NewSpinner(fmt.Sprintf("Setting up %s with auto-SSL...", domain))
 	spin.Start()
-	routeErr := caddy.UpdateRoute(containerName, app.AllDomains(), upstream)
+	routeErr := caddy.UpdateRoute(containerName, app.AllDomains(), upstream, routeOptionsForApp(app)...)
 	spin.Stop()
 
 	if routeErr != nil {
@@ -381,7 +381,7 @@ func runDomainCustomCert(appName, domain, certFile, keyFile string) error {
 	app.Domain = domain
 	app.ExtraDomains = nil
 	app.HTTPOnly = false
-	routeErr := caddy.UpdateRoute(containerName, app.AllDomains(), upstream)
+	routeErr := caddy.UpdateRoute(containerName, app.AllDomains(), upstream, routeOptionsForApp(app)...)
 	spin.Stop()
 	if routeErr != nil {
 		return fmt.Errorf("update caddy route: %w", routeErr)
@@ -464,13 +464,24 @@ func runSetHTTPS(appName string, httpsOn bool, edgeHTTPS ...bool) error {
 }
 
 func routeOptionsForApp(app state.App) []remote.RouteOptions {
-	if !app.EdgeHTTPS {
+	var opts remote.RouteOptions
+	if app.EdgeHTTPS {
+		opts.ForwardedProto = "https"
+		opts.ForwardedSSL = true
+	}
+	// Reapply basic auth on every route rebuild — otherwise neo domain / neo caddy
+	// update would silently strip it (it only lives in state, not the live route).
+	if app.BasicAuth != nil && app.BasicAuth.User != "" && app.BasicAuth.Password != "" {
+		opts.BasicAuth = &remote.BasicAuthConfig{
+			Username:    app.BasicAuth.User,
+			Password:    app.BasicAuth.Password,
+			BypassPaths: app.BasicAuth.Bypass,
+		}
+	}
+	if opts.BasicAuth == nil && opts.ForwardedProto == "" && !opts.ForwardedSSL {
 		return nil
 	}
-	return []remote.RouteOptions{{
-		ForwardedProto: "https",
-		ForwardedSSL:   true,
-	}}
+	return []remote.RouteOptions{opts}
 }
 
 func hasWildcardDomain(domains []string) bool {

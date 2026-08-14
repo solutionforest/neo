@@ -89,8 +89,18 @@ type App struct {
 	Sidecars     map[string]AppSidecar `json:"sidecars,omitempty"`
 	Restart      string                `json:"restart,omitempty"`
 	Health       *HealthCheck          `json:"health,omitempty"`
-	Scale        int                   `json:"scale,omitempty"` // number of replicas; 0 or 1 means single-container mode
+	BasicAuth    *AppBasicAuth         `json:"basic_auth,omitempty"` // HTTP basic auth at the Caddy proxy layer; persisted so route rebuilds preserve it
+	Scale        int                   `json:"scale,omitempty"`      // number of replicas; 0 or 1 means single-container mode
 	InstalledAt  string                `json:"installed_at"`
+}
+
+// AppBasicAuth is the persisted HTTP basic auth config for an app. It lives in
+// state (not just .neo.yml) so state-driven route rebuilds — neo domain,
+// neo caddy update — can reapply auth instead of silently dropping it.
+type AppBasicAuth struct {
+	User     string   `json:"user"`
+	Password string   `json:"password"` // plaintext, like the service passwords already stored in state
+	Bypass   []string `json:"bypass,omitempty"`
 }
 
 // AllDomains returns all domains for this app: primary first, then extras.

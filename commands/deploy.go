@@ -442,6 +442,13 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		}
 	}
 
+	// Resolve ${VAR} / ${VAR:-default} references in the merged env and in
+	// .neo.yml basic_auth, using the merged env then OS env. Without this, deploy
+	// left ${...} literal (interpolation used to be dev-only), which silently broke
+	// e.g. basic_auth: password: ${NEO_BASIC_AUTH_PASSWORD}.
+	env = interpolateEnvValues(env)
+	interpolateNeoConfigBasicAuth(neoConfig, env)
+
 	// Auto-assign a temporary sslip.io domain when no domain set (first deploy only).
 	// sslip.io resolves the IP from the hostname and supports Let's Encrypt auto-SSL.
 	if domain == "" && !isRedeploy && !flags.noDomain {
@@ -1279,12 +1286,17 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		Sidecars:     sidecarStates,
 		Restart:      appRestart,
 		Health:       appHealth,
+		BasicAuth:    neoBasicAuthToState(neoConfig),
 		Scale:        scale,
 		InstalledAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 	if isRedeploy {
 		stateApp.Services = existing.Services
 		stateApp.InstalledAt = existing.InstalledAt
+		// Redeploy without a .neo.yml (state-driven): keep the existing basic auth.
+		if neoConfig == nil {
+			stateApp.BasicAuth = existing.BasicAuth
+		}
 	}
 	// Save all extra domains (config + manually-added) so conflict checks stay accurate.
 	if len(deployDomains) > 1 {
@@ -1583,6 +1595,34 @@ func restartPolicy(r string) string {
 		return "unless-stopped"
 	}
 	return r
+}
+
+// interpolateNeoConfigBasicAuth resolves ${VAR} / ${VAR:-default} references in
+// the basic_auth user, password, and bypass paths using the merged deploy env
+// (then OS env). This is what lets basic_auth: password: ${SECRET} work.
+func interpolateNeoConfigBasicAuth(cfg *NeoConfig, env map[string]string) {
+	if cfg == nil || cfg.BasicAuth == nil {
+		return
+	}
+	cfg.BasicAuth.User = interpolateString(cfg.BasicAuth.User, env)
+	cfg.BasicAuth.Password = interpolateString(cfg.BasicAuth.Password, env)
+	for i, b := range cfg.BasicAuth.Bypass {
+		cfg.BasicAuth.Bypass[i] = interpolateString(b, env)
+	}
+}
+
+// neoBasicAuthToState converts .neo.yml basic_auth into the persisted state form,
+// or nil when auth is not fully configured. Persisting it lets state-driven route
+// rebuilds (neo domain, neo caddy update) reapply auth instead of dropping it.
+func neoBasicAuthToState(cfg *NeoConfig) *state.AppBasicAuth {
+	if cfg == nil || cfg.BasicAuth == nil || cfg.BasicAuth.User == "" || cfg.BasicAuth.Password == "" {
+		return nil
+	}
+	return &state.AppBasicAuth{
+		User:     cfg.BasicAuth.User,
+		Password: cfg.BasicAuth.Password,
+		Bypass:   cfg.BasicAuth.Bypass,
+	}
 }
 
 // neoBasicAuthToRouteOpts converts route-related NeoConfig fields into remote.RouteOptions.
@@ -2170,6 +2210,22 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 	for k, v := range envCfg.Env {
 		env[k] = v
 	}
+	env = interpolateEnvValues(env)
+
+	// Effective config for this environment: basic_auth from the environment block
+	// overrides top-level, with ${VAR} references resolved against the merged env.
+	// Copied so per-environment interpolation never mutates the shared base config.
+	effCfg := *neoConfig
+	if ba := envCfg.BasicAuth; ba != nil {
+		effCfg.BasicAuth = ba
+	}
+	if effCfg.BasicAuth != nil {
+		baCopy := *effCfg.BasicAuth
+		baCopy.Bypass = append([]string(nil), effCfg.BasicAuth.Bypass...)
+		effCfg.BasicAuth = &baCopy
+	}
+	effCfg.Env = env
+	interpolateNeoConfigBasicAuth(&effCfg, env)
 
 	httpsFlag := neoConfig.HTTPS
 	if envCfg.HTTPS != nil {
@@ -2372,7 +2428,7 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		if len(deployDomains) == 0 {
 			return
 		}
-		authOpts := neoBasicAuthToRouteOpts(neoConfig)
+		authOpts := neoBasicAuthToRouteOpts(&effCfg)
 		if httpOnly {
 			caddy.UpdateRouteHTTP(cName, deployDomains, upstream, authOpts...)
 		} else {
@@ -2390,7 +2446,7 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		docker.Rename(nextName, containerName)
 		if domain != "" {
 			upstream := fmt.Sprintf("%s:%d", containerName, port)
-			authOpts := neoBasicAuthToRouteOpts(neoConfig)
+			authOpts := neoBasicAuthToRouteOpts(&effCfg)
 			if httpOnly {
 				caddy.AddRouteHTTP(containerName, deployDomains, upstream, authOpts...)
 			} else {
@@ -2414,6 +2470,7 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		Workers:      make(map[string]state.AppWorker),
 		Restart:      allRestart,
 		Health:       allHealth,
+		BasicAuth:    neoBasicAuthToState(&effCfg),
 		InstalledAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 	if isRedeploy {

@@ -169,7 +169,9 @@ func newFooCmd() *cobra.Command {
 
 **Dev env var priority** (highest wins): `dev.env` > `dev.env_file` > top-level `env` > top-level `env_file` > auto-loaded `.env`
 
-**Env interpolation** (`neo dev` only): Values like `${APP_KEY}` in `.neo.yml` are resolved from the merged env map or `os.Getenv`. Unresolved refs are left as-is. Single-pass, no circular resolution.
+**Env interpolation** (`neo dev` and `neo deploy`): Values like `${APP_KEY}` or `${APP_KEY:-default}` in `.neo.yml` are resolved from the merged env map, then `os.Getenv`. On deploy this covers the env map **and** `basic_auth` (user/password/bypass), so `basic_auth: password: ${NEO_BASIC_AUTH_PASSWORD}` works. An unset **or empty** value falls back to `:-default` when given; otherwise the reference is left as-is. Single-pass, no circular resolution.
+
+**Basic auth is persisted to state** (`state.App.BasicAuth`): applied at deploy from `.neo.yml`, then reapplied by state-driven route rebuilds (`neo domain`, `neo caddy update`) via `routeOptionsForApp`. Without this, those commands silently stripped auth from the live Caddy route.
 
 ### Project Config (`.neo.yml`):
 Optional file in project root. All fields optional:
