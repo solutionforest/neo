@@ -380,6 +380,7 @@ Server-level shared services allow multiple apps to share a single database or c
 ### Commands
 - `neo service create [type] [name]` — create a shared MySQL, Postgres, Redis, or MariaDB
 - `neo service list` — list shared services and their linked apps
+- `neo service info <svc>` — show connection details (host, port, user, **password**, database, URL)
 - `neo service link <svc> <app>` — creates a database + user in the service, injects `DATABASE_URL`/`DB_*` env vars into the app
 - `neo service unlink <svc> <app>` — removes injected env vars (keeps data)
 - `neo service start|stop|restart <svc>` — lifecycle management (warns if apps are linked)
@@ -593,7 +594,7 @@ plans/                       # Planning documents
 | `neo domain <app> <domain>` | Set/update app domain |
 | `neo env <app>` | List/set/unset/import env vars |
 | `neo volumes <app>` | List app volumes |
-| `neo service create/list/link/unlink/remove` | Shared services |
+| `neo service create/list/info/link/unlink/remove` | Shared services (`info` shows connection details + password) |
 | `neo backup <app>` | Backup app data (Neo+) |
 | `neo restore <app> <backup>` | Restore from backup (Neo+) |
 | `neo db <app> [shell]` | Interactive database browser |

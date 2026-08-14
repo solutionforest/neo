@@ -783,6 +783,9 @@ neo service create mysql
 <span class="c"># Link to your app (creates database + user, injects env vars)</span>
 neo service link mysql my-app
 
+<span class="c"># Show connection details anytime (host, port, user, password, URL)</span>
+neo service info mysql
+
 <span class="c"># Other operations</span>
 neo service list
 neo service unlink mysql my-app
@@ -792,6 +795,11 @@ neo service remove mysql</pre>
     </div>
 
     <p>Supported types: <code>mysql</code>, <code>postgres</code>, <code>redis</code>, <code>mariadb</code></p>
+
+    <div class="callout callout-tip">
+        <strong>Lost the password?</strong>
+        Run <code>neo service info &lt;name&gt;</code> — it reprints the host, port, user, password, database, and a ready-to-use connection URL for the service. The credentials are stored in server state, so you can retrieve them any time (not just at create).
+    </div>
 </section>
 
 <!-- DATABASES & DATA -->
@@ -1022,6 +1030,7 @@ neo key remove 2</pre>
         <tr><td><code>neo update &lt;app&gt;</code></td><td>Pull latest image and redeploy</td></tr>
         <tr><td><code>neo remove &lt;app&gt;</code></td><td>Remove app and routing</td></tr>
         <tr><td><code>neo service create [type]</code></td><td>Create shared service</td></tr>
+        <tr><td><code>neo service info &lt;svc&gt;</code></td><td>Show connection details (host, port, user, password, URL)</td></tr>
         <tr><td><code>neo service link &lt;svc&gt; &lt;app&gt;</code></td><td>Link service to app</td></tr>
         <tr><td><code>neo servers</code></td><td>List configured servers</td></tr>
         <tr><td><code>neo servers remove &lt;name&gt;</code></td><td>Remove server from config</td></tr>
