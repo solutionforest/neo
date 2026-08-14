@@ -390,6 +390,11 @@ neo domain my-app --temp</pre>
         <strong>Security</strong>
         Never put secrets (API keys, passwords, database credentials) directly in <code>.neo.yml</code>. Use <code>env_file</code> pointing to a <code>.env</code> file that is gitignored, or set them via <code>neo env set</code>.
     </div>
+
+    <div class="callout callout-info">
+        <strong><code>${VAR}</code> interpolation</strong>
+        Values in <code>.neo.yml</code> may reference other variables as <code>${VAR}</code> or <code>${VAR:-default}</code>. On deploy they resolve from the merged env (<code>env</code> block, <code>env_file</code>, <code>--env</code>) then the OS environment; an unset or empty value uses the <code>:-default</code> when given, otherwise the reference is left as-is. This applies to the env map and to <code>basic_auth</code>, so <code>basic_auth: password: ${NEO_BASIC_AUTH_PASSWORD}</code> can pull the secret from a gitignored <code>env_file</code>.
+    </div>
 </section>
 
 <!-- CONFIG: VOLUMES -->
