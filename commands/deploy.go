@@ -202,7 +202,10 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			for k, v := range env.Env {
 				neoConfig.Env[k] = v
 			}
-			if env.EnvFile != "" && neoConfig.EnvFile == "" {
+			// Environment env_file overrides top-level env_file (like env, ssl, volumes).
+			// Guarding on neoConfig.EnvFile == "" made a per-environment env_file
+			// impossible whenever a top-level env_file was set.
+			if env.EnvFile != "" {
 				neoConfig.EnvFile = env.EnvFile
 			}
 			// Environment SSL/proxy settings override top-level
