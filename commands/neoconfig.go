@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -286,10 +287,15 @@ func loadDeployEnvFiles(projectDir, appID string, neoConfig *NeoConfig, envKeyFl
 		if !filepath.IsAbs(envFilePath) {
 			envFilePath = filepath.Join(projectDir, envFilePath)
 		}
-		if fileEnv, err := parseEnvFile(envFilePath); err == nil {
-			for k, v := range fileEnv {
-				env[k] = v
-			}
+		fileEnv, err := parseEnvFile(envFilePath)
+		for k, v := range fileEnv {
+			env[k] = v
+		}
+		// A missing env_file stays non-fatal (long-standing behaviour), but a
+		// file that exists and failed to parse must not be dropped in silence —
+		// that used to lose every variable in it.
+		if err != nil && !os.IsNotExist(errors.Unwrap(err)) {
+			ui.Error(fmt.Sprintf("env_file %s: %s", neoConfig.EnvFile, err))
 		}
 	}
 

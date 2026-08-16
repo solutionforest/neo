@@ -22,15 +22,21 @@ func parseEnvFile(path string) (map[string]string, error) {
 
 // parseEnvContent parses .env text that is already in memory — used for
 // decrypted .env.encrypted contents, which never touch disk.
-func parseEnvContent(content string) map[string]string {
-	env, _ := parseEnvReader(strings.NewReader(content))
-	return env
+func parseEnvContent(content string) (map[string]string, error) {
+	return parseEnvReader(strings.NewReader(content))
 }
+
+// maxEnvLine caps a single .env line. bufio.Scanner defaults to 64 KB and
+// reports an error past it — which callers used to swallow, silently dropping
+// every variable in the file. A PEM certificate or a long base64 secret on one
+// line is ordinary, so allow 1 MB before giving up.
+const maxEnvLine = 1 << 20
 
 // parseEnvReader is the shared .env parser behind parseEnvFile/parseEnvContent.
 func parseEnvReader(r io.Reader) (map[string]string, error) {
 	env := make(map[string]string)
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxEnvLine)
 	lineNum := 0
 
 	for scanner.Scan() {
@@ -61,7 +67,13 @@ func parseEnvReader(r io.Reader) (map[string]string, error) {
 		env[key] = val
 	}
 
-	return env, scanner.Err()
+	if err := scanner.Err(); err != nil {
+		if err == bufio.ErrTooLong {
+			return env, fmt.Errorf("a line is longer than %d bytes — the rest of the file was not read", maxEnvLine)
+		}
+		return env, err
+	}
+	return env, nil
 }
 
 // parseEnvPairs parses KEY=VALUE strings from CLI flags.

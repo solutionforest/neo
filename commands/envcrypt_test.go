@@ -162,47 +162,83 @@ func TestResolveEnvKeyPriority(t *testing.T) {
 
 	t.Run("flag wins", func(t *testing.T) {
 		t.Setenv(envKeyVar, otherKey)
-		got, err := resolveEnvKey("my-app", testEncKey, false)
-		if err != nil || got != testEncKey {
-			t.Fatalf("got (%q, %v)", got, err)
+		got, err := resolveEnvKey([]string{"my-app"}, testEncKey, false)
+		if err != nil || got.key != testEncKey || got.source != keyFromFlag {
+			t.Fatalf("got (%q, %v, %v)", got.key, got.source, err)
 		}
 	})
 
 	t.Run("NEO_ENV_KEY beats saved key", func(t *testing.T) {
 		t.Setenv(envKeyVar, otherKey)
-		got, err := resolveEnvKey("my-app", "", false)
-		if err != nil || got != otherKey {
-			t.Fatalf("got (%q, %v)", got, err)
+		got, err := resolveEnvKey([]string{"my-app"}, "", false)
+		if err != nil || got.key != otherKey || got.source != keyFromEnvVar {
+			t.Fatalf("got (%q, %v, %v)", got.key, got.source, err)
 		}
 	})
 
 	t.Run("LARAVEL_ENV_ENCRYPTION_KEY is honoured", func(t *testing.T) {
 		t.Setenv(envKeyVar, "")
 		t.Setenv(laravelEnvKeyVar, otherKey)
-		got, err := resolveEnvKey("my-app", "", false)
-		if err != nil || got != otherKey {
-			t.Fatalf("got (%q, %v)", got, err)
+		got, err := resolveEnvKey([]string{"my-app"}, "", false)
+		if err != nil || got.key != otherKey || got.source != keyFromEnvVar {
+			t.Fatalf("got (%q, %v, %v)", got.key, got.source, err)
 		}
 	})
 
 	t.Run("falls back to the saved key", func(t *testing.T) {
-		got, err := resolveEnvKey("my-app", "", false)
-		if err != nil || got != testEncKey {
-			t.Fatalf("got (%q, %v)", got, err)
+		got, err := resolveEnvKey([]string{"my-app"}, "", false)
+		if err != nil || got.key != testEncKey || got.source != keyFromStore {
+			t.Fatalf("got (%q, %v, %v)", got.key, got.source, err)
+		}
+	})
+
+	t.Run("falls back to a later candidate app id", func(t *testing.T) {
+		// `neo env encrypt` saves under the project name; deploying an
+		// environment looks up the suffixed name first and must still find it.
+		got, err := resolveEnvKey([]string{"my-app-staging", "my-app"}, "", false)
+		if err != nil || got.key != testEncKey {
+			t.Fatalf("got (%q, %v)", got.key, err)
+		}
+		if got.appID != "my-app" {
+			t.Errorf("appID = %q, want the id the key was found under", got.appID)
 		}
 	})
 
 	t.Run("no key without a prompt is an error", func(t *testing.T) {
-		if _, err := resolveEnvKey("unknown-app", "", false); err == nil {
+		if _, err := resolveEnvKey([]string{"unknown-app"}, "", false); err == nil {
 			t.Fatal("expected an error when no key can be resolved")
 		}
 	})
 
 	t.Run("invalid key is rejected up front", func(t *testing.T) {
-		if _, err := resolveEnvKey("my-app", "not-a-valid-key", false); err == nil {
+		if _, err := resolveEnvKey([]string{"my-app"}, "not-a-valid-key", false); err == nil {
 			t.Fatal("expected an error for a malformed key")
 		}
 	})
+
+	t.Run("resolving never writes to the key store", func(t *testing.T) {
+		// A prompted key is saved by the caller only after it decrypts, so a
+		// typo can't get cached and fail every later deploy.
+		before := lookupEnvKey("never-seen")
+		_, _ = resolveEnvKey([]string{"never-seen"}, otherKey, false)
+		if after := lookupEnvKey("never-seen"); after != before {
+			t.Errorf("resolveEnvKey persisted a key: %q", after)
+		}
+	})
+}
+
+func TestLoadDeployEnvFilesDoesNotCacheBadKey(t *testing.T) {
+	isolateHome(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".env.encrypted"), testEncEnv)
+
+	wrong := "base64:" + strings.Repeat("A", 43) + "="
+	if _, err := loadDeployEnvFiles(dir, "my-app", nil, wrong, false); err == nil {
+		t.Fatal("expected the wrong key to fail")
+	}
+	if got := lookupEnvKey("my-app"); got != "" {
+		t.Errorf("a key that failed to decrypt was cached: %q", got)
+	}
 }
 
 func TestLoadDeployEnvFiles(t *testing.T) {

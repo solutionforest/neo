@@ -3,6 +3,7 @@ package commands
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/vxero/neo/internal/ssh"
@@ -341,5 +342,47 @@ func TestShellQuote(t *testing.T) {
 				t.Errorf("ShellQuote(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestParseEnvFileLongLine(t *testing.T) {
+	// A PEM cert or long base64 secret on one line used to blow past
+	// bufio.Scanner's 64 KB default, and callers swallowed the error — losing
+	// every variable in the file.
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	long := strings.Repeat("x", 200*1024)
+	content := "FIRST=one\nBIG=" + long + "\nLAST=two\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	env, err := parseEnvFile(path)
+	if err != nil {
+		t.Fatalf("parseEnvFile: %v", err)
+	}
+	if env["FIRST"] != "one" || env["LAST"] != "two" {
+		t.Errorf("variables around the long line were lost: %v", map[string]string{"FIRST": env["FIRST"], "LAST": env["LAST"]})
+	}
+	if len(env["BIG"]) != len(long) {
+		t.Errorf("BIG length = %d, want %d", len(env["BIG"]), len(long))
+	}
+}
+
+func TestParseEnvFileOverlyLongLineReportsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	content := "FIRST=one\nBIG=" + strings.Repeat("x", maxEnvLine+1) + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	env, err := parseEnvFile(path)
+	if err == nil {
+		t.Fatal("expected an error for a line past the cap")
+	}
+	// Whatever was read before the bad line is still returned.
+	if env["FIRST"] != "one" {
+		t.Errorf("FIRST = %q, want one", env["FIRST"])
 	}
 }

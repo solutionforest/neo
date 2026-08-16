@@ -104,56 +104,123 @@ func forgetEnvKey(appID string) (bool, error) {
 	return true, saveEnvKeyStore(store)
 }
 
+// envKeySource records where a resolved key came from, so callers can react
+// once they know whether it actually decrypted the file.
+type envKeySource int
+
+const (
+	keyFromFlag envKeySource = iota
+	keyFromEnvVar
+	keyFromStore
+	keyFromPrompt
+)
+
+// resolvedEnvKey is a key plus its provenance.
+type resolvedEnvKey struct {
+	key    string
+	source envKeySource
+	appID  string // identity the key would be saved under
+}
+
 // resolveEnvKey finds the decryption key for an encrypted env file.
 // Priority: --env-key flag > NEO_ENV_KEY > LARAVEL_ENV_ENCRYPTION_KEY >
 // ~/.neo/keys.json > interactive prompt.
 //
-// allowPrompt is false on code paths that run unattended or in parallel (e.g.
-// `neo deploy --all` goroutines), where a prompt would corrupt the display.
-func resolveEnvKey(appID, flagKey string, allowPrompt bool) (string, error) {
+// appIDs are tried in order against the key store; the first entry is the
+// identity a prompted key is saved under. Deploy passes the environment-suffixed
+// app name first and the bare project name second, so a key saved from the
+// project root is still found when deploying `my-app-staging`.
+//
+// A prompted key is NOT saved here — the caller saves it only after it has
+// actually decrypted the file, so a typo never gets cached.
+//
+// allowPrompt is false on code paths that run unattended or in parallel, where
+// a prompt would corrupt the display.
+func resolveEnvKey(appIDs []string, flagKey string, allowPrompt bool) (resolvedEnvKey, error) {
+	ids := dedupeStrings(appIDs)
+	if len(ids) == 0 {
+		return resolvedEnvKey{}, fmt.Errorf("no app name to look up an encryption key for")
+	}
+	primary := ids[0]
+
 	if flagKey != "" {
-		return validateEnvKey(flagKey)
+		key, err := validateEnvKey(flagKey)
+		return resolvedEnvKey{key: key, source: keyFromFlag, appID: primary}, err
 	}
-	if k := os.Getenv(envKeyVar); k != "" {
-		return validateEnvKey(k)
+	for _, name := range []string{envKeyVar, laravelEnvKeyVar} {
+		if k := os.Getenv(name); k != "" {
+			key, err := validateEnvKey(k)
+			return resolvedEnvKey{key: key, source: keyFromEnvVar, appID: primary}, err
+		}
 	}
-	if k := os.Getenv(laravelEnvKeyVar); k != "" {
-		return validateEnvKey(k)
-	}
-	if k := lookupEnvKey(appID); k != "" {
-		return validateEnvKey(k)
+	for _, id := range ids {
+		if k := lookupEnvKey(id); k != "" {
+			key, err := validateEnvKey(k)
+			return resolvedEnvKey{key: key, source: keyFromStore, appID: id}, err
+		}
 	}
 
 	if !allowPrompt || !term.IsTerminal(os.Stdin.Fd()) {
-		return "", fmt.Errorf("no encryption key for %q — pass --env-key, set %s, or run 'neo env key set %s'", appID, envKeyVar, appID)
+		return resolvedEnvKey{}, fmt.Errorf("no encryption key for %q — pass --env-key, set %s, or run 'neo env key set %s'", primary, envKeyVar, primary)
 	}
 
 	var entered string
-	err := huh.NewInput().
-		Title("Encryption key for " + appID).
+	if err := huh.NewInput().
+		Title("Encryption key for " + primary).
 		Description("From `php artisan env:encrypt` (starts with base64:)").
 		EchoMode(huh.EchoModePassword).
 		Value(&entered).
-		Run()
-	if err != nil {
-		return "", err
+		Run(); err != nil {
+		return resolvedEnvKey{}, err
 	}
 	key, err := validateEnvKey(entered)
 	if err != nil {
-		return "", err
+		return resolvedEnvKey{}, err
 	}
+	return resolvedEnvKey{key: key, source: keyFromPrompt, appID: primary}, nil
+}
 
+// offerToSaveEnvKey asks whether to cache a freshly prompted key. Called only
+// after the key has decrypted the file, so the store never holds a bad key.
+func offerToSaveEnvKey(rk resolvedEnvKey) {
+	if rk.source != keyFromPrompt || !term.IsTerminal(os.Stdin.Fd()) {
+		return
+	}
 	save := true
 	if err := huh.NewConfirm().
-		Title("Save this key for " + appID + "?").
+		Title("Save this key for " + rk.appID + "?").
 		Description("Stored in " + envKeyStorePath() + " (0600, plain text)").
 		Value(&save).
-		Run(); err == nil && save {
-		if err := rememberEnvKey(appID, key); err != nil {
-			ui.Error(fmt.Sprintf("could not save key: %s", err))
-		}
+		Run(); err != nil || !save {
+		return
 	}
-	return key, nil
+	if err := rememberEnvKey(rk.appID, rk.key); err != nil {
+		ui.Error(fmt.Sprintf("could not save key: %s", err))
+	}
+}
+
+// decryptHint points at the fix for a failed decrypt. A stale key in the store
+// would otherwise fail every deploy with no clue where the key came from.
+func decryptHint(rk resolvedEnvKey) {
+	switch rk.source {
+	case keyFromStore:
+		ui.Info(fmt.Sprintf("This key came from %s. Clear it with 'neo env key forget %s', then retry.", envKeyStorePath(), rk.appID))
+	case keyFromEnvVar:
+		ui.Info(fmt.Sprintf("This key came from the %s / %s environment variable.", envKeyVar, laravelEnvKeyVar))
+	}
+}
+
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 // validateEnvKey checks a key parses before it is used or stored, so a typo
@@ -181,7 +248,11 @@ func loadEncryptedEnvFile(path, key string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseEnvContent(plaintext), nil
+	env, err := parseEnvContent(plaintext)
+	if err != nil {
+		return nil, fmt.Errorf("parse decrypted %s: %w", filepath.Base(path), err)
+	}
+	return env, nil
 }
 
 // resolveEncryptedEnvPath decides which encrypted env file a deploy should read.
@@ -227,14 +298,18 @@ func loadDeployEncryptedEnv(projectDir, appID string, neoConfig *NeoConfig, flag
 		return nil, nil
 	}
 
-	key, err := resolveEnvKey(appID, flagKey, allowPrompt)
+	// Fall back to the bare project name so a key saved at the project root is
+	// still found when deploying an environment-suffixed app (my-app-staging).
+	rk, err := resolveEnvKey([]string{appID, defaultEnvKeyApp(projectDir)}, flagKey, allowPrompt)
 	if err != nil {
 		return nil, err
 	}
-	env, err := loadEncryptedEnvFile(path, key)
+	env, err := loadEncryptedEnvFile(path, rk.key)
 	if err != nil {
+		decryptHint(rk)
 		return nil, fmt.Errorf("decrypt %s: %w", filepath.Base(path), err)
 	}
+	offerToSaveEnvKey(rk)
 	return env, nil
 }
 
@@ -429,7 +504,7 @@ func runEnvDecrypt(source, keyFlag, appFlag string, force, toStdout bool) error 
 	if appID == "" {
 		appID = defaultEnvKeyApp(filepath.Dir(absSource))
 	}
-	key, err := resolveEnvKey(appID, keyFlag, true)
+	rk, err := resolveEnvKey([]string{appID}, keyFlag, true)
 	if err != nil {
 		return err
 	}
@@ -438,14 +513,16 @@ func runEnvDecrypt(source, keyFlag, appFlag string, force, toStdout bool) error 
 	if err != nil {
 		return fmt.Errorf("read %s: %w", source, err)
 	}
-	parsedKey, err := laravel.ParseKey(key)
+	parsedKey, err := laravel.ParseKey(rk.key)
 	if err != nil {
 		return err
 	}
 	plaintext, err := laravel.Decrypt(string(raw), parsedKey)
 	if err != nil {
+		decryptHint(rk)
 		return fmt.Errorf("decrypt %s: %w", filepath.Base(absSource), err)
 	}
+	offerToSaveEnvKey(rk)
 
 	if toStdout {
 		fmt.Print(plaintext)
@@ -467,7 +544,11 @@ func runEnvDecrypt(source, keyFlag, appFlag string, force, toStdout bool) error 
 	}
 
 	fmt.Println()
-	ui.Success(fmt.Sprintf("Decrypted → %s (%d vars)", filepath.Base(target), len(parseEnvContent(plaintext))))
+	decrypted, parseErr := parseEnvContent(plaintext)
+	if parseErr != nil {
+		ui.Error(fmt.Sprintf("decrypted, but the contents did not parse cleanly: %s", parseErr))
+	}
+	ui.Success(fmt.Sprintf("Decrypted → %s (%d vars)", filepath.Base(target), len(decrypted)))
 	ui.Info("Plaintext written with 0600 permissions. Keep it out of git.")
 	fmt.Println()
 
