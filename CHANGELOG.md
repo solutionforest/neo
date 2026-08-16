@@ -4,6 +4,18 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.24.1 — 2026-08-16
+
+### Fixes
+
+- **`neo deploy --all` no longer loses apps from server state.** `/etc/neo/state.json` is rewritten whole with no locking, so two environments deploying to the *same* server in parallel each loaded the old state and the second write dropped the first one's app entry — the container kept running while Neo forgot it existed, and the next deploy treated it as a first deploy (losing its domain and stored env vars). Targets are now grouped by server: different servers still deploy concurrently, targets sharing a server run one after another.
+- **Failed state writes are no longer silent.** `state.Save` was called for its side effect in 16 places with the error discarded, so a failed write still reported success and left `/etc/neo/state.json` describing a server that no longer matched reality. Those paths now report the failure and say what to check.
+- **A mistyped encryption key is no longer cached.** The key was written to `~/.neo/keys.json` before anything decrypted with it, so one typo made every later deploy fail the MAC check with no prompt to correct it. Keys are saved only after they decrypt the file, and a failed decrypt now says where the key came from and how to clear it.
+- **Encryption keys are found across environments.** A key saved by `neo env encrypt` at the project root was invisible to `neo deploy --to staging`, which looked up `my-app-staging` only. Lookup now falls back to the bare project name.
+- **Long `.env` lines parse correctly.** The parser used `bufio.Scanner`'s 64 KB default, so a PEM certificate or long base64 secret on a single line made it error out — and callers dropped that error, losing *every* variable in the file. The cap is now 1 MB, and an `env_file` that exists but fails to parse is reported instead of ignored.
+
+---
+
 ## v0.24.0 — 2026-08-16
 
 ### New Features
