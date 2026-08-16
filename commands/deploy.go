@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -587,7 +588,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		// Persist updated env in state
 		existing.Env = env
 		st.Apps[appName] = existing
-		state.Save(sshExec, st)
+		saveState(sshExec, st)
 
 		ui.Success(fmt.Sprintf("%s restarted with %d env variable(s)", appName, len(env)))
 		if domain != "" {
@@ -1323,7 +1324,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		stateApp.ExtraDomains = deployDomains[1:]
 	}
 	st.Apps[appName] = stateApp
-	state.Save(sshExec, st)
+	saveState(sshExec, st)
 
 	// Run post-deploy hook locally (failure is logged but does not roll back)
 	if neoConfig != nil && neoConfig.Hooks != nil {
@@ -2139,32 +2140,28 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 	}
 	sem := make(chan struct{}, maxParallel)
 
-	for envName, envCfg := range neoConfig.Environments {
-		servers := envCfg.EffectiveServers()
-		if len(servers) <= 1 {
-			// Single server (or fallback to current) — original behaviour
-			wg.Add(1)
-			go func(name string, cfg NeoEnvironment) {
-				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				url, deployErr := deployEnvFromFile(name, cfg, "", imageTag, tmpFile, absPath, flags, neoConfig)
-				results <- envResult{name: name, url: url, err: deployErr}
-			}(envName, envCfg)
-		} else {
-			// Server group — deploy to each server in parallel
-			for _, srvName := range servers {
-				wg.Add(1)
-				go func(envName, srvName string, cfg NeoEnvironment) {
-					defer wg.Done()
-					sem <- struct{}{}
-					defer func() { <-sem }()
-					label := fmt.Sprintf("%s[%s]", envName, srvName)
-					url, deployErr := deployEnvFromFile(envName, cfg, srvName, imageTag, tmpFile, absPath, flags, neoConfig)
-					results <- envResult{name: label, url: url, err: deployErr}
-				}(envName, srvName, envCfg)
+	// Group targets by the server they land on. /etc/neo/state.json is a whole-file
+	// read-modify-write, so two environments deploying to the SAME server in
+	// parallel would each load the old state and the second Save would drop the
+	// first one's app entry — the container keeps running but neo forgets it.
+	// Different servers still deploy concurrently; same-server targets are queued.
+	groups := groupTargetsByServer(neoConfig, currentServerName())
+	if len(groups) > 0 {
+		ui.Info(fmt.Sprintf("%d target(s) across %d server(s)", totalTargets, len(groups)))
+	}
+
+	for _, group := range groups {
+		wg.Add(1)
+		go func(targets []deployTarget) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			// Sequential within one server: state.json has no locking.
+			for _, t := range targets {
+				url, deployErr := deployEnvFromFile(t.envName, t.envCfg, t.server, imageTag, tmpFile, absPath, flags, neoConfig)
+				results <- envResult{name: t.label(), url: url, err: deployErr}
 			}
-		}
+		}(group)
 	}
 
 	wg.Wait()
@@ -2189,6 +2186,85 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 		return fmt.Errorf("one or more environments failed to deploy")
 	}
 	return nil
+}
+
+// deployTarget is one (environment, server) pair that `neo deploy --all` ships to.
+type deployTarget struct {
+	envName string
+	envCfg  NeoEnvironment
+	server  string // explicit server override; "" means "resolve from config"
+}
+
+// label is how the target is reported in results, matching the previous
+// "env" / "env[server]" formatting.
+func (t deployTarget) label() string {
+	if t.server == "" {
+		return t.envName
+	}
+	return fmt.Sprintf("%s[%s]", t.envName, t.server)
+}
+
+// groupTargetsByServer expands every environment into its deploy targets and
+// buckets them by the server they resolve to. Targets that share a server must
+// run sequentially — /etc/neo/state.json is rewritten whole, so concurrent
+// deploys to one server lose each other's app entries.
+//
+// currentServer normalises the "no server configured" case: an environment with
+// no server: falls back to the active server, so it belongs in that server's
+// bucket rather than a bucket of its own.
+func groupTargetsByServer(neoConfig *NeoConfig, currentServer string) [][]deployTarget {
+	byServer := make(map[string][]deployTarget)
+	var order []string // stable-ish grouping order, keyed by first appearance
+
+	add := func(key string, t deployTarget) {
+		if _, seen := byServer[key]; !seen {
+			order = append(order, key)
+		}
+		byServer[key] = append(byServer[key], t)
+	}
+
+	names := make([]string, 0, len(neoConfig.Environments))
+	for envName := range neoConfig.Environments {
+		names = append(names, envName)
+	}
+	sort.Strings(names) // deterministic grouping regardless of map order
+
+	for _, envName := range names {
+		envCfg := neoConfig.Environments[envName]
+		servers := envCfg.EffectiveServers()
+		if len(servers) <= 1 {
+			key := envCfg.Server
+			if key == "" {
+				key = neoConfig.Server
+			}
+			if key == "" {
+				key = currentServer
+			}
+			add(key, deployTarget{envName: envName, envCfg: envCfg})
+			continue
+		}
+		// Server group: one target per server, each in that server's bucket.
+		for _, srvName := range servers {
+			add(srvName, deployTarget{envName: envName, envCfg: envCfg, server: srvName})
+		}
+	}
+
+	groups := make([][]deployTarget, 0, len(order))
+	for _, key := range order {
+		groups = append(groups, byServer[key])
+	}
+	return groups
+}
+
+// currentServerName returns the active server's name, used to normalise
+// environments that don't name a server of their own. An unreadable config is
+// not fatal here — deployEnvFromFile resolves the server again and reports it.
+func currentServerName() string {
+	cfg, err := config.Load()
+	if err != nil {
+		return ""
+	}
+	return cfg.Current
 }
 
 // environmentAppName derives the container/app name for one .neo.yml
@@ -2537,7 +2613,7 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		stateApp.ExtraDomains = deployDomains[1:]
 	}
 	st.Apps[appName] = stateApp
-	state.Save(sshExec, st)
+	saveState(sshExec, st)
 
 	// Run per-environment post-deploy hook
 	hooks := resolveHooks(neoConfig.Hooks, envCfg.Hooks)

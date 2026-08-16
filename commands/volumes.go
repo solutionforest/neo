@@ -163,7 +163,7 @@ func runVolumesMount(volumeName, hostPath string) error {
 	volInfo.Mount = &hostPath
 	app.Volumes[volumeName] = volInfo
 	st.Apps[ownerApp] = app
-	state.Save(exec, st)
+	saveState(exec, st)
 
 	ui.Success(fmt.Sprintf("%s mounted to %s", volumeName, hostPath))
 	return nil

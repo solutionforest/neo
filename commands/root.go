@@ -486,6 +486,18 @@ func mustResolveAndLoadState() (*ssh.Executor, *state.State, error) {
 	return exec, st, nil
 }
 
+// saveState persists remote state and reports failures instead of swallowing
+// them. A dropped save leaves /etc/neo/state.json describing a server that no
+// longer matches reality: the container change already happened, so the next
+// command sees stale domains, env vars or app entries and "helpfully" undoes
+// them. Callers that can act on the error should call state.Save directly.
+func saveState(exec *ssh.Executor, st *state.State) {
+	if err := state.Save(exec, st); err != nil {
+		ui.Error(fmt.Sprintf("could not write server state: %s", err))
+		ui.Info("The change was applied on the server but /etc/neo/state.json is now stale. Re-run the command, or check disk space and permissions on the server.")
+	}
+}
+
 // activationExempt lists the top-level commands that run without a license.
 var activationExempt = map[string]bool{
 	"license":    true,

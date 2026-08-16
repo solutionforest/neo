@@ -222,7 +222,7 @@ func runEnvSet(appName string, pairs []string) error {
 	}
 
 	st.Apps[appName] = app
-	state.Save(exec, st)
+	saveState(exec, st)
 
 	for k := range newVars {
 		ui.Success(fmt.Sprintf("Set %s", k))
@@ -260,7 +260,7 @@ func runEnvUnset(appName string, keys []string) error {
 	}
 
 	st.Apps[appName] = app
-	state.Save(exec, st)
+	saveState(exec, st)
 
 	return restartWithNewEnv(appName, app, exec)
 }
@@ -310,7 +310,7 @@ func runEnvImport(appName, filePath string) error {
 	}
 
 	st.Apps[appName] = app
-	state.Save(exec, st)
+	saveState(exec, st)
 
 	ui.Success(fmt.Sprintf("Imported %d variables from %s (%d new, %d updated)", len(fileEnv), filePath, added, updated))
 

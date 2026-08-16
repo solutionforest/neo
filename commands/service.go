@@ -518,7 +518,7 @@ func runServiceManage(svcName, action string) error {
 	}
 
 	st.Services[svcName] = svc
-	state.Save(exec, st)
+	saveState(exec, st)
 
 	ui.Success(fmt.Sprintf("%s %sed", svcName, action))
 	return nil
@@ -571,7 +571,7 @@ func runServiceRemove(svcName string, deleteVolume bool) error {
 	spin.Stop()
 
 	delete(st.Services, svcName)
-	state.Save(exec, st)
+	saveState(exec, st)
 
 	if deleteVolume {
 		ui.Success(fmt.Sprintf("%s removed. Volume %s deleted.", svcName, volumeName))

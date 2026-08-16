@@ -195,7 +195,7 @@ func runManage(appName, action string) error {
 	}
 
 	st.Apps[appName] = app
-	state.Save(exec, st)
+	saveState(exec, st)
 
 	ui.Success(fmt.Sprintf("%s %sed", appName, action))
 	return nil
@@ -264,7 +264,7 @@ func runRemove(appName string, force bool) error {
 
 	// Update state
 	delete(st.Apps, appName)
-	state.Save(exec, st)
+	saveState(exec, st)
 
 	ui.Success(fmt.Sprintf("%s removed. Data volumes preserved on server.", appName))
 	return nil
@@ -426,7 +426,7 @@ func runWorkerManage(appName, workerName, action string) error {
 	spin.Stop()
 	app.Workers[workerName] = w
 	st.Apps[appName] = app
-	state.Save(exec, st) //nolint:errcheck
+	saveState(exec, st)
 
 	ui.Success(fmt.Sprintf("Worker %s %sed", workerName, action))
 	return nil
@@ -486,7 +486,7 @@ func runWorkerRedeploy(appName, workerName string) error {
 	w.Status = "running"
 	app.Workers[workerName] = w
 	st.Apps[appName] = app
-	state.Save(exec, st) //nolint:errcheck
+	saveState(exec, st)
 
 	ui.Success(fmt.Sprintf("Worker %s redeployed and running", workerName))
 	return nil
@@ -535,7 +535,7 @@ func runSidecarManage(appName, sidecarName, action string) error {
 	spin.Stop()
 	app.Sidecars[sidecarName] = sc
 	st.Apps[appName] = app
-	state.Save(exec, st) //nolint:errcheck
+	saveState(exec, st)
 
 	ui.Success(fmt.Sprintf("Sidecar %s %sed", sidecarName, action))
 	return nil
@@ -600,7 +600,7 @@ func runSidecarRedeploy(appName, sidecarName string) error {
 	sc.Status = "running"
 	app.Sidecars[sidecarName] = sc
 	st.Apps[appName] = app
-	state.Save(exec, st) //nolint:errcheck
+	saveState(exec, st)
 
 	ui.Success(fmt.Sprintf("Sidecar %s redeployed and running", sidecarName))
 	return nil

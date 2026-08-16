@@ -176,7 +176,7 @@ func runDomain(appName, domain string, add bool, mode domainModeOptions) error {
 	}
 
 	st.Apps[appName] = app
-	state.Save(exec, st)
+	saveState(exec, st)
 
 	scheme := "https"
 	if app.HTTPOnly {
@@ -240,7 +240,7 @@ func runDomainRemove(appName, domain string) error {
 	}
 
 	st.Apps[appName] = app
-	state.Save(exec, st)
+	saveState(exec, st)
 
 	ui.Success(fmt.Sprintf("Domain %q removed", domain))
 	if len(remaining) > 0 {
@@ -294,7 +294,7 @@ func runDomainTemp(appName string, add bool) error {
 	}
 
 	st.Apps[appName] = app
-	state.Save(exec, st)
+	saveState(exec, st)
 
 	card := ui.NewCard()
 	card.Add(ui.Bold.Render("Temporary domain ready!"))
@@ -388,7 +388,7 @@ func runDomainCustomCert(appName, domain, certFile, keyFile string) error {
 	}
 
 	st.Apps[appName] = app
-	state.Save(exec, st)
+	saveState(exec, st)
 
 	ui.Success(fmt.Sprintf("Domain set with custom SSL — https://%s", domain))
 	return nil
@@ -450,7 +450,7 @@ func runSetHTTPS(appName string, httpsOn bool, edgeHTTPS ...bool) error {
 	}
 
 	st.Apps[appName] = app
-	state.Save(exec, st)
+	saveState(exec, st)
 
 	if httpsOn {
 		ui.Success(fmt.Sprintf("HTTPS enabled — https://%s (SSL cert auto-provisioned)", app.Domain))

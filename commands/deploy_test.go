@@ -225,3 +225,103 @@ func TestCreateTarGzWithDockerignore(t *testing.T) {
 		t.Fatal("tar.gz should not be empty")
 	}
 }
+
+func TestGroupTargetsByServer(t *testing.T) {
+	// Two environments on one server must land in the same group so they deploy
+	// sequentially — /etc/neo/state.json is rewritten whole, and parallel saves
+	// drop each other's app entries.
+	t.Run("same server shares a group", func(t *testing.T) {
+		cfg := &NeoConfig{Environments: map[string]NeoEnvironment{
+			"production": {Server: "vps-1"},
+			"staging":    {Server: "vps-1"},
+		}}
+		groups := groupTargetsByServer(cfg, "")
+		if len(groups) != 1 {
+			t.Fatalf("got %d groups, want 1", len(groups))
+		}
+		if len(groups[0]) != 2 {
+			t.Fatalf("got %d targets in the group, want 2", len(groups[0]))
+		}
+	})
+
+	t.Run("different servers deploy in parallel", func(t *testing.T) {
+		cfg := &NeoConfig{Environments: map[string]NeoEnvironment{
+			"production": {Server: "vps-1"},
+			"staging":    {Server: "vps-2"},
+		}}
+		groups := groupTargetsByServer(cfg, "")
+		if len(groups) != 2 {
+			t.Fatalf("got %d groups, want 2", len(groups))
+		}
+		for _, g := range groups {
+			if len(g) != 1 {
+				t.Errorf("group has %d targets, want 1", len(g))
+			}
+		}
+	})
+
+	t.Run("unset server falls back to the current server", func(t *testing.T) {
+		// One env names the active server explicitly, the other inherits it.
+		// Both hit the same machine, so both belong in one group.
+		cfg := &NeoConfig{Environments: map[string]NeoEnvironment{
+			"production": {Server: "vps-1"},
+			"staging":    {},
+		}}
+		groups := groupTargetsByServer(cfg, "vps-1")
+		if len(groups) != 1 {
+			t.Fatalf("got %d groups, want 1", len(groups))
+		}
+	})
+
+	t.Run("top-level server applies to environments without one", func(t *testing.T) {
+		cfg := &NeoConfig{Server: "vps-1", Environments: map[string]NeoEnvironment{
+			"production": {},
+			"staging":    {},
+		}}
+		if groups := groupTargetsByServer(cfg, "other"); len(groups) != 1 {
+			t.Fatalf("got %d groups, want 1", len(groups))
+		}
+	})
+
+	t.Run("server group fans out one target per server", func(t *testing.T) {
+		cfg := &NeoConfig{Environments: map[string]NeoEnvironment{
+			"production": {Servers: []string{"vps-1", "vps-2"}},
+			"staging":    {Server: "vps-1"},
+		}}
+		groups := groupTargetsByServer(cfg, "")
+		if len(groups) != 2 {
+			t.Fatalf("got %d groups, want 2 (vps-1, vps-2)", len(groups))
+		}
+		total, labels := 0, map[string]bool{}
+		for _, g := range groups {
+			total += len(g)
+			for _, target := range g {
+				labels[target.label()] = true
+			}
+		}
+		if total != 3 {
+			t.Errorf("got %d targets, want 3", total)
+		}
+		// production is pinned to two servers, so it keeps the env[server] label.
+		for _, want := range []string{"production[vps-1]", "production[vps-2]", "staging"} {
+			if !labels[want] {
+				t.Errorf("missing target label %q (got %v)", want, labels)
+			}
+		}
+	})
+
+	t.Run("grouping is deterministic", func(t *testing.T) {
+		cfg := &NeoConfig{Environments: map[string]NeoEnvironment{
+			"a": {Server: "vps-1"}, "b": {Server: "vps-2"}, "c": {Server: "vps-3"},
+		}}
+		first := groupTargetsByServer(cfg, "")
+		for i := 0; i < 20; i++ {
+			got := groupTargetsByServer(cfg, "")
+			for gi := range first {
+				if got[gi][0].envName != first[gi][0].envName {
+					t.Fatalf("group order changed between runs: %v vs %v", got[gi][0].envName, first[gi][0].envName)
+				}
+			}
+		}
+	})
+}
