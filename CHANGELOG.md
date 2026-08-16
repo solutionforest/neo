@@ -4,6 +4,21 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.24.2 — 2026-08-16
+
+### Fixes
+
+- **"0 apps" when apps are running.** Nothing checked that `/etc/neo/state.json` matched the server, so a lost state write or a container removed with plain `docker rm` left `neo list` reporting "No apps installed" while the app was up and serving traffic. Neo now compares state against `docker ps` and reports apps that are running but untracked, tracked but missing a container, or present but stopped. The dashboard shows `⚠ N untracked` next to the app count instead of quietly undercounting, and `neo list --json` gains a `drift` object so scripts can tell an empty server from a server whose state was lost.
+- **Dashboard could crash with "concurrent map read and map write".** The cache handed callers the live map while background refresh goroutines wrote to it. Reads now take a snapshot under the lock. Verified with the race detector.
+- **A transient error no longer kicks you out of the dashboard.** An error inside the Servers, Applications or Services menu propagated all the way out, dropping you to the shell and forcing a restart of `neo`. Errors now render in place and the menu stays open — the same applies to failed worker and sidecar actions, which used to close the screen you were working in.
+
+### Internal
+
+- `make test-race` runs the suite under the race detector.
+- `plans/2026-08-16-full-screen-tui.md` proposes a persistent full-screen TUI for a future release. Proposal only — no behaviour change.
+
+---
+
 ## v0.24.1 — 2026-08-16
 
 ### Fixes
