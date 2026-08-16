@@ -4,6 +4,24 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.24.0 — 2026-08-16
+
+### New Features
+
+- **Encrypted environment files (Laravel).** Run `php artisan env:encrypt`, commit the resulting `.env.encrypted`, and point `env_encrypted:` at it in `.neo.yml` — Neo decrypts it in memory at deploy, so secrets live in git while the key lives in your password manager. Per-environment files are supported (`env_encrypted: .env.staging.encrypted` inside an `environments:` block), and a bare `.env.encrypted` is picked up automatically when it is the only env source. All four Laravel ciphers decrypt (AES-128/256 in CBC or GCM).
+- **Key lookup without prompts in CI.** `--env-key` > `NEO_ENV_KEY` > `LARAVEL_ENV_ENCRYPTION_KEY` > a key saved in `~/.neo/keys.json` (mode 0600) > an interactive prompt that offers to remember it. `LARAVEL_ENV_ENCRYPTION_KEY` is the same variable Laravel's own `env:decrypt` reads, so a pipeline that already exports it needs no Neo-specific setup.
+- **`neo env encrypt` / `neo env decrypt` / `neo env key set|list|forget`** — for machines without PHP. The files they write are byte-compatible with `php artisan env:decrypt`.
+
+### Changes
+
+- **`neo deploy --all` now loads the file env sources declared in `.neo.yml`** (`env_encrypted` and `env_file`). It previously built the environment from the `env:` block alone and silently ignored both. Keys are resolved before the parallel fan-out, so a wrong key fails before anything is shipped and prompts can't interleave.
+
+### Notes
+
+- Encryption covers your repository and your laptop. Decrypted values are still sent to the server as container environment variables and stored in `/etc/neo/state.json` (root-only) so redeploys keep them. Saved keys sit in `~/.neo/keys.json` in plain text at mode 0600 — treat that file like an SSH key. Lose the key and the file cannot be recovered.
+
+---
+
 ## v0.23.2 — 2026-08-14
 
 ### Fixes
