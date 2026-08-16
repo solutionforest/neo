@@ -184,6 +184,9 @@ func printHelp() {
 				{"neo env set <app> K=V", "Set environment variables"},
 				{"neo env unset <app> KEY", "Remove environment variables"},
 				{"neo env import <app> .env", "Import from .env file"},
+				{"neo env encrypt [file]", "Encrypt .env so it can be committed"},
+				{"neo env decrypt [file]", "Decrypt an encrypted env file"},
+				{"neo env key set <app>", "Save the env encryption key for an app"},
 			},
 		},
 		{
@@ -305,6 +308,15 @@ It handles deployment, SSL certificates, shared database services, and app lifec
 - neo env set <app> K=V         Set env var (auto-restarts)
 - neo env unset <app> KEY       Remove env var
 - neo env import <app> .env     Bulk import from file
+- neo env encrypt [file]        Encrypt .env → .env.encrypted (commit it, keep the key safe)
+- neo env decrypt [file]        Decrypt an encrypted env file
+- neo env key set|list|forget   Manage saved encryption keys (~/.neo/keys.json)
+
+Laravel encrypted env files: run "php artisan env:encrypt", commit .env.encrypted, and
+set env_encrypted: in .neo.yml — neo decrypts it at deploy. (A bare .env.encrypted is
+picked up automatically when it's the only env source.) The encrypt/decrypt commands
+above are for machines without PHP; same format either way.
+Key lookup: --env-key > NEO_ENV_KEY > LARAVEL_ENV_ENCRYPTION_KEY > saved key > prompt.
 
 ### Shared Services
 Create shared database/cache instances used by multiple apps:

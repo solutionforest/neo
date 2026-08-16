@@ -48,6 +48,9 @@ func newEnvCmd() *cobra.Command {
 		newEnvSetCmd(),
 		newEnvUnsetCmd(),
 		newEnvImportCmd(),
+		newEnvEncryptCmd(),
+		newEnvDecryptCmd(),
+		newEnvKeyCmd(),
 	)
 
 	return cmd

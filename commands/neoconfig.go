@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/vxero/neo/internal/state"
+	"github.com/vxero/neo/internal/ui"
 	"gopkg.in/yaml.v3"
 )
 
@@ -160,25 +161,26 @@ type NeoDevConfig struct {
 
 // NeoEnvironment represents a named deployment target in .neo.yml.
 type NeoEnvironment struct {
-	Name      string                `yaml:"name,omitempty"`    // override app/container name for this env
-	Server    string                `yaml:"server,omitempty"`  // single server (use servers: for a group)
-	Servers   []string              `yaml:"servers,omitempty"` // server group — deploy to all in parallel
-	Domain    string                `yaml:"domain,omitempty"`  // single domain (backward compat)
-	Domains   []string              `yaml:"domains,omitempty"` // multiple domains (takes precedence)
-	Port      int                   `yaml:"port,omitempty"`
-	HTTPS     *bool                 `yaml:"https,omitempty"`      // nil=default, true=HTTPS, false=HTTP-only
-	EdgeHTTPS bool                  `yaml:"edge_https,omitempty"` // HTTP origin behind HTTPS edge proxy (e.g. Cloudflare Flexible)
-	Env       map[string]string     `yaml:"env,omitempty"`
-	EnvFile   string                `yaml:"env_file,omitempty"`
-	SSL       *NeoSSL               `yaml:"ssl,omitempty"`
-	BasicAuth *NeoBasicAuth         `yaml:"basic_auth,omitempty"` // HTTP basic auth at proxy layer
-	Volumes   map[string]NeoVolume  `yaml:"volumes,omitempty"`    // environment-specific persistent volumes
-	Workers   map[string]NeoWorker  `yaml:"workers,omitempty"`    // environment-specific workers (override top-level)
-	Sidecars  map[string]NeoSidecar `yaml:"sidecars,omitempty"`   // environment-specific sidecars (override top-level)
-	Restart   string                `yaml:"restart,omitempty"`    // Docker restart policy override
-	Health    *NeoHealth            `yaml:"health,omitempty"`     // Docker health check override
-	Hooks     *NeoHooks             `yaml:"hooks,omitempty"`      // deploy lifecycle hooks (override top-level)
-	Scale     int                   `yaml:"scale,omitempty"`      // number of app replicas (overrides top-level)
+	Name         string                `yaml:"name,omitempty"`    // override app/container name for this env
+	Server       string                `yaml:"server,omitempty"`  // single server (use servers: for a group)
+	Servers      []string              `yaml:"servers,omitempty"` // server group — deploy to all in parallel
+	Domain       string                `yaml:"domain,omitempty"`  // single domain (backward compat)
+	Domains      []string              `yaml:"domains,omitempty"` // multiple domains (takes precedence)
+	Port         int                   `yaml:"port,omitempty"`
+	HTTPS        *bool                 `yaml:"https,omitempty"`      // nil=default, true=HTTPS, false=HTTP-only
+	EdgeHTTPS    bool                  `yaml:"edge_https,omitempty"` // HTTP origin behind HTTPS edge proxy (e.g. Cloudflare Flexible)
+	Env          map[string]string     `yaml:"env,omitempty"`
+	EnvFile      string                `yaml:"env_file,omitempty"`
+	EnvEncrypted string                `yaml:"env_encrypted,omitempty"` // Laravel-encrypted env file (php artisan env:encrypt)
+	SSL          *NeoSSL               `yaml:"ssl,omitempty"`
+	BasicAuth    *NeoBasicAuth         `yaml:"basic_auth,omitempty"` // HTTP basic auth at proxy layer
+	Volumes      map[string]NeoVolume  `yaml:"volumes,omitempty"`    // environment-specific persistent volumes
+	Workers      map[string]NeoWorker  `yaml:"workers,omitempty"`    // environment-specific workers (override top-level)
+	Sidecars     map[string]NeoSidecar `yaml:"sidecars,omitempty"`   // environment-specific sidecars (override top-level)
+	Restart      string                `yaml:"restart,omitempty"`    // Docker restart policy override
+	Health       *NeoHealth            `yaml:"health,omitempty"`     // Docker health check override
+	Hooks        *NeoHooks             `yaml:"hooks,omitempty"`      // deploy lifecycle hooks (override top-level)
+	Scale        int                   `yaml:"scale,omitempty"`      // number of app replicas (overrides top-level)
 }
 
 // NeoConfig represents a .neo.yml project configuration file.
@@ -194,7 +196,8 @@ type NeoConfig struct {
 	BasicAuth      *NeoBasicAuth             `yaml:"basic_auth,omitempty"` // HTTP basic auth at proxy layer
 	Env            map[string]string         `yaml:"env,omitempty"`
 	EnvFile        string                    `yaml:"env_file,omitempty"`
-	Dockerfile     string                    `yaml:"dockerfile,omitempty"` // Dockerfile path relative to project root (default: Dockerfile); --dockerfile overrides
+	EnvEncrypted   string                    `yaml:"env_encrypted,omitempty"` // Laravel-encrypted env file (php artisan env:encrypt); auto-detects .env.encrypted
+	Dockerfile     string                    `yaml:"dockerfile,omitempty"`    // Dockerfile path relative to project root (default: Dockerfile); --dockerfile overrides
 	ComposeService string                    `yaml:"compose_service,omitempty"`
 	Restart        string                    `yaml:"restart,omitempty"` // Docker restart policy (default: unless-stopped)
 	Health         *NeoHealth                `yaml:"health,omitempty"`  // Docker health check
@@ -254,6 +257,43 @@ func loadNeoConfig(projectDir string) (*NeoConfig, error) {
 	}
 
 	return &cfg, nil
+}
+
+// loadDeployEnvFiles loads the file-based env sources declared in .neo.yml for
+// a deploy: the encrypted env file (env_encrypted: or an auto-detected
+// .env.encrypted) first, then env_file: on top. Callers apply the result over
+// docker-compose values and under .neo.yml env:.
+//
+// A missing or unreadable env_file is skipped silently (long-standing
+// behaviour), but a failure to decrypt is fatal — deploying an app without the
+// secrets it expects is worse than stopping.
+func loadDeployEnvFiles(projectDir, appID string, neoConfig *NeoConfig, envKeyFlag string, allowPrompt bool) (map[string]string, error) {
+	env := make(map[string]string)
+
+	encEnv, err := loadDeployEncryptedEnv(projectDir, appID, neoConfig, envKeyFlag, allowPrompt)
+	if err != nil {
+		return nil, err
+	}
+	if len(encEnv) > 0 {
+		for k, v := range encEnv {
+			env[k] = v
+		}
+		ui.Info(fmt.Sprintf("Loaded %d env vars from the encrypted env file", len(encEnv)))
+	}
+
+	if neoConfig != nil && neoConfig.EnvFile != "" {
+		envFilePath := neoConfig.EnvFile
+		if !filepath.IsAbs(envFilePath) {
+			envFilePath = filepath.Join(projectDir, envFilePath)
+		}
+		if fileEnv, err := parseEnvFile(envFilePath); err == nil {
+			for k, v := range fileEnv {
+				env[k] = v
+			}
+		}
+	}
+
+	return env, nil
 }
 
 // ResolvedVolume represents a volume from .neo.yml after config resolution,

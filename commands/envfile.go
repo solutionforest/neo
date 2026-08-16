@@ -3,6 +3,7 @@ package commands
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -16,8 +17,20 @@ func parseEnvFile(path string) (map[string]string, error) {
 	}
 	defer f.Close()
 
+	return parseEnvReader(f)
+}
+
+// parseEnvContent parses .env text that is already in memory — used for
+// decrypted .env.encrypted contents, which never touch disk.
+func parseEnvContent(content string) map[string]string {
+	env, _ := parseEnvReader(strings.NewReader(content))
+	return env
+}
+
+// parseEnvReader is the shared .env parser behind parseEnvFile/parseEnvContent.
+func parseEnvReader(r io.Reader) (map[string]string, error) {
 	env := make(map[string]string)
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(r)
 	lineNum := 0
 
 	for scanner.Scan() {

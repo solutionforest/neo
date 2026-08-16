@@ -150,6 +150,7 @@
         <div class="sidebar-sub">
             <a class="sidebar-link" href="#config-name">name &amp; domain</a>
             <a class="sidebar-link" href="#config-env">env &amp; env_file</a>
+            <a class="sidebar-link" href="#config-env-encrypted">env_encrypted</a>
             <a class="sidebar-link" href="#config-volumes">volumes</a>
             <a class="sidebar-link" href="#config-workers">workers</a>
             <a class="sidebar-link" href="#config-sidecars">sidecars</a>
@@ -375,6 +376,7 @@ neo domain my-app --temp</pre>
         <tr><th>Key</th><th>Type</th><th>Description</th></tr>
         <tr><td><code>env</code></td><td>map</td><td>Key-value pairs set as container environment variables</td></tr>
         <tr><td><code>env_file</code></td><td>string</td><td>Path to a <code>.env</code> file (relative to <code>.neo.yml</code>)</td></tr>
+        <tr><td><code>env_encrypted</code></td><td>string</td><td>Path to an encrypted env file — see <a href="#config-env-encrypted">env_encrypted</a></td></tr>
     </table>
 
     <div class="codeblock">
@@ -394,6 +396,87 @@ neo domain my-app --temp</pre>
     <div class="callout callout-info">
         <strong><code>${VAR}</code> interpolation</strong>
         Values in <code>.neo.yml</code> may reference other variables as <code>${VAR}</code> or <code>${VAR:-default}</code>. On deploy they resolve from the merged env (<code>env</code> block, <code>env_file</code>, <code>--env</code>) then the OS environment; an unset or empty value uses the <code>:-default</code> when given, otherwise the reference is left as-is. This applies to the env map and to <code>basic_auth</code>, so <code>basic_auth: password: ${NEO_BASIC_AUTH_PASSWORD}</code> can pull the secret from a gitignored <code>env_file</code>.
+    </div>
+</section>
+
+<!-- CONFIG: ENCRYPTED ENV -->
+<section class="doc-section" id="config-env-encrypted">
+    <h3>env_encrypted <span class="badge badge-new">New</span></h3>
+    <p>
+        Built for Laravel's <a href="https://laravel.com/docs/configuration#encrypting-environment-files">encrypted
+        environment files</a>. Run <code>php artisan env:encrypt</code>, commit the
+        <code>.env.encrypted</code> it produces, and point <code>env_encrypted:</code> at it — neo
+        decrypts at deploy time, so secrets live in git while the key lives in your password manager.
+        <code>neo env encrypt</code> / <code>neo env decrypt</code> are there for when artisan isn't
+        handy (CI, a machine without PHP); they read and write the exact same format.
+    </p>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre><span class="c"># In your Laravel project — key is printed once, save it</span>
+php artisan env:encrypt
+
+<span class="c"># No PHP on this machine? Same file, same format</span>
+neo env encrypt
+
+<span class="c"># Read it back locally</span>
+php artisan env:decrypt
+neo env decrypt --stdout</pre>
+    </div>
+
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml</div>
+        <pre><span class="k">env_encrypted:</span> .env.encrypted   <span class="c"># committed; decrypted at deploy</span>
+
+<span class="k">environments:</span>
+  <span class="v">production:</span>
+    <span class="s">env_encrypted:</span> .env.production.encrypted
+  <span class="v">staging:</span>
+    <span class="s">env_encrypted:</span> .env.staging.encrypted</pre>
+    </div>
+
+    <p>
+        If <code>.env.encrypted</code> exists and you have no <code>env_file</code> and no plaintext
+        <code>.env</code> in the project, neo picks it up automatically — no config needed.
+    </p>
+
+    <h4>Where the key comes from</h4>
+    <p>On deploy, neo looks for the key in this order and stops at the first hit:</p>
+    <table class="doc-table">
+        <tr><th>Order</th><th>Source</th><th>Use for</th></tr>
+        <tr><td>1</td><td><code>--env-key</code> flag</td><td>One-off deploys</td></tr>
+        <tr><td>2</td><td><code>NEO_ENV_KEY</code></td><td>CI</td></tr>
+        <tr><td>3</td><td><code>LARAVEL_ENV_ENCRYPTION_KEY</code></td><td>CI that already sets it for Laravel</td></tr>
+        <tr><td>4</td><td><code>~/.neo/keys.json</code></td><td>Your machine — saved after the first prompt</td></tr>
+        <tr><td>5</td><td>Interactive prompt</td><td>First deploy; offers to save the key</td></tr>
+    </table>
+
+    <div class="codeblock">
+        <div class="codeblock-header">Shell</div>
+        <pre><span class="c"># Save the key once — later deploys never prompt</span>
+neo env key set my-app base64:xxxxx
+neo env key list
+neo env key forget my-app
+
+<span class="c"># CI</span>
+NEO_ENV_KEY=base64:xxxxx neo deploy --to production</pre>
+    </div>
+
+    <div class="callout callout-warn">
+        <strong>What this does and does not protect</strong>
+        Encryption covers the file in your repo and on your laptop. The decrypted values are still
+        sent to the server as normal container env vars and stored in
+        <code>/etc/neo/state.json</code> (root-only) so redeploys keep them. Saved keys sit in
+        <code>~/.neo/keys.json</code> in plain text, mode <code>0600</code> — treat that file like an
+        SSH key. Lose the key and the file cannot be recovered; there is no backdoor.
+    </div>
+
+    <div class="callout callout-info">
+        <strong>Cipher support</strong>
+        AES-256-CBC (Laravel's default), AES-128-CBC, AES-256-GCM and AES-128-GCM all decrypt.
+        <code>neo env encrypt</code> writes AES-CBC with an HMAC-SHA256 MAC, matching
+        <code>env:encrypt</code>. A wrong key or a tampered file fails the MAC check and aborts the
+        deploy rather than shipping partial config.
     </div>
 </section>
 
@@ -578,7 +661,7 @@ neo deploy --to staging
 neo deploy</pre>
     </div>
 
-    <p>Environment fields override top-level: <code>domain</code>, <code>server</code>, <code>port</code>, <code>https</code>, <code>env</code>, <code>env_file</code>, <code>ssl</code>.</p>
+    <p>Environment fields override top-level: <code>domain</code>, <code>server</code>, <code>port</code>, <code>https</code>, <code>env</code>, <code>env_file</code>, <code>env_encrypted</code>, <code>ssl</code>.</p>
 </section>
 
 <!-- DEPLOYING APPS -->
@@ -625,9 +708,11 @@ neo deploy ./my-project</pre>
         <tr><th>Priority</th><th>Source</th><th>Example</th></tr>
         <tr><td>1 (highest)</td><td><code>--env</code> CLI flag</td><td><code>neo deploy --env LOG=debug</code></td></tr>
         <tr><td>2</td><td><code>--env-file</code> CLI flag</td><td><code>neo deploy --env-file .env</code></td></tr>
-        <tr><td>3</td><td><code>.neo.yml</code> env / env_file</td><td>Declared in config</td></tr>
-        <tr><td>4</td><td><code>docker-compose.yml</code></td><td>Auto-detected from compose</td></tr>
-        <tr><td>5 (lowest)</td><td>Server state (redeploy)</td><td>Previous deployment values</td></tr>
+        <tr><td>3</td><td><code>.neo.yml</code> env</td><td>Declared in config</td></tr>
+        <tr><td>4</td><td><code>.neo.yml</code> env_file</td><td>Path to a <code>.env</code></td></tr>
+        <tr><td>5</td><td><code>.neo.yml</code> env_encrypted</td><td>Decrypted <code>.env.encrypted</code></td></tr>
+        <tr><td>6</td><td><code>docker-compose.yml</code></td><td>Auto-detected from compose</td></tr>
+        <tr><td>7 (lowest)</td><td>Server state (redeploy)</td><td>Previous deployment values</td></tr>
     </table>
 </section>
 
@@ -1031,6 +1116,9 @@ neo key remove 2</pre>
         <tr><td><code>neo env set &lt;app&gt; K=V</code></td><td>Set env var (auto-restarts)</td></tr>
         <tr><td><code>neo env unset &lt;app&gt; KEY</code></td><td>Remove env var</td></tr>
         <tr><td><code>neo env import &lt;app&gt; .env</code></td><td>Bulk import from file</td></tr>
+        <tr><td><code>neo env encrypt [file]</code></td><td>Encrypt <code>.env</code> → <code>.env.encrypted</code></td></tr>
+        <tr><td><code>neo env decrypt [file]</code></td><td>Decrypt an encrypted env file</td></tr>
+        <tr><td><code>neo env key set|list|forget</code></td><td>Manage saved encryption keys</td></tr>
         <tr><td><code>neo start|stop|restart &lt;app&gt;</code></td><td>App lifecycle control</td></tr>
         <tr><td><code>neo update &lt;app&gt;</code></td><td>Pull latest image and redeploy</td></tr>
         <tr><td><code>neo remove &lt;app&gt;</code></td><td>Remove app and routing</td></tr>

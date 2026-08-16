@@ -35,10 +35,16 @@ type deployFlags struct {
 	dockerfile string
 	envPairs   []string
 	envFile    string
+	envKey     string // decryption key for env_encrypted
 	target     string
 	envOnly    bool // skip rebuild, just restart with updated env
 	all        bool // build once, deploy to all .neo.yml environments in parallel
 	parallel   int  // max concurrent deploys for --all (default 3)
+
+	// preloadedEnv holds file-based env vars (encrypted env file, env_file)
+	// resolved per environment *before* --all fans out, so key prompts never
+	// land inside parallel goroutines. Keyed by environment name.
+	preloadedEnv map[string]map[string]string
 }
 
 func newDeployCmd() *cobra.Command {
@@ -66,6 +72,7 @@ func newDeployCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&flags.dockerfile, "dockerfile", "f", "", "path to Dockerfile (default: Dockerfile)")
 	cmd.Flags().StringArrayVarP(&flags.envPairs, "env", "e", nil, "environment variable (KEY=VALUE, repeatable)")
 	cmd.Flags().StringVar(&flags.envFile, "env-file", "", "path to .env file to load")
+	cmd.Flags().StringVar(&flags.envKey, "env-key", "", "key for env_encrypted (default: NEO_ENV_KEY, saved key, or prompt)")
 	cmd.Flags().StringVar(&flags.target, "to", "", "named environment from .neo.yml (e.g. staging, production)")
 	cmd.Flags().BoolVar(&flags.envOnly, "env-only", false, "restart with updated env/config only — skip rebuild and image transfer")
 	cmd.Flags().BoolVar(&flags.all, "all", false, "build once and deploy to all environments in .neo.yml simultaneously")
@@ -210,6 +217,11 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			// impossible whenever a top-level env_file was set.
 			if env.EnvFile != "" {
 				neoConfig.EnvFile = env.EnvFile
+			}
+			// Same for env_encrypted — each environment usually ships its own
+			// .env.<environment>.encrypted.
+			if env.EnvEncrypted != "" {
+				neoConfig.EnvEncrypted = env.EnvEncrypted
 			}
 			// Environment SSL/proxy settings override top-level
 			if env.HTTPS != nil {
@@ -398,19 +410,18 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		}
 	}
 
-	// 3. Load .neo.yml env_file and env if present (overrides compose)
+	// 3. Load file-based env sources declared in .neo.yml: the encrypted env
+	//    file first, then env_file on top. Both override compose.
+	fileEnv, err := loadDeployEnvFiles(absPath, appName, neoConfig, flags.envKey, true)
+	if err != nil {
+		return err
+	}
+	for k, v := range fileEnv {
+		env[k] = v
+	}
+
+	// 4. .neo.yml env: overrides everything loaded from files
 	if neoConfig != nil {
-		if neoConfig.EnvFile != "" {
-			envFilePath := neoConfig.EnvFile
-			if !filepath.IsAbs(envFilePath) {
-				envFilePath = filepath.Join(absPath, envFilePath)
-			}
-			if fileEnv, err := parseEnvFile(envFilePath); err == nil {
-				for k, v := range fileEnv {
-					env[k] = v
-				}
-			}
-		}
 		for k, v := range neoConfig.Env {
 			env[k] = v
 		}
@@ -448,6 +459,15 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	// e.g. basic_auth: password: ${NEO_BASIC_AUTH_PASSWORD}.
 	env = interpolateEnvValues(env)
 	interpolateNeoConfigBasicAuth(neoConfig, env)
+
+	// Warn loudly if a basic_auth reference didn't resolve — otherwise the literal
+	// "${...}" text becomes the credential and every login silently fails.
+	if neoConfig != nil && neoConfig.BasicAuth != nil {
+		if strings.Contains(neoConfig.BasicAuth.User, "${") || strings.Contains(neoConfig.BasicAuth.Password, "${") {
+			ui.Error("basic_auth has an unresolved ${...} reference — the variable is not set in your env, env_file, or shell")
+			ui.Info("Basic auth would use the literal text and reject every login. Set it (e.g. NEO_BASIC_AUTH_PASSWORD) in the env_file this deploy loads, or export it, then redeploy.")
+		}
+	}
 
 	// Auto-assign a temporary sslip.io domain when no domain set (first deploy only).
 	// sslip.io resolves the IP from the hostname and supports Let's Encrypt auto-SSL.
@@ -2084,6 +2104,28 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 		}
 	}
 
+	// Load each environment's file-based env sources up front. Decryption can
+	// prompt for a key, which would interleave unreadably once the deploys fan
+	// out — and a wrong key should fail before anything is shipped.
+	flags.preloadedEnv = make(map[string]map[string]string)
+	for envName, envCfg := range neoConfig.Environments {
+		envConfig := *neoConfig
+		if envCfg.EnvFile != "" {
+			envConfig.EnvFile = envCfg.EnvFile
+		}
+		if envCfg.EnvEncrypted != "" {
+			envConfig.EnvEncrypted = envCfg.EnvEncrypted
+		}
+		appID := environmentAppName(flags.appName, envName, envCfg, neoConfig, absPath)
+		fileEnv, err := loadDeployEnvFiles(absPath, appID, &envConfig, flags.envKey, true)
+		if err != nil {
+			return fmt.Errorf("[%s] %w", envName, err)
+		}
+		if len(fileEnv) > 0 {
+			flags.preloadedEnv[envName] = fileEnv
+		}
+	}
+
 	results := make(chan envResult, totalTargets)
 	var wg sync.WaitGroup
 
@@ -2149,6 +2191,29 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 	return nil
 }
 
+// environmentAppName derives the container/app name for one .neo.yml
+// environment: --name flag > environment name: > .neo.yml name: > directory,
+// with a -<environment> suffix for anything that isn't the primary environment.
+func environmentAppName(flagName, envName string, envCfg NeoEnvironment, neoConfig *NeoConfig, absPath string) string {
+	if flagName != "" {
+		return flagName
+	}
+	if envCfg.Name != "" {
+		return sanitizeName(envCfg.Name)
+	}
+	base := ""
+	if neoConfig != nil {
+		base = sanitizeName(neoConfig.Name)
+	}
+	if base == "" {
+		base = sanitizeName(filepath.Base(absPath))
+	}
+	if isProductionEnv(envName) {
+		return base
+	}
+	return base + "-" + sanitizeName(envName)
+}
+
 // deployEnvFromFile handles the transfer + container lifecycle for a single environment
 // during a parallel --all deploy. It opens its own SSH connection to the env's server,
 // loads the pre-built image from tmpFile, and does a blue-green container swap.
@@ -2157,22 +2222,7 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 // Used by runDeployAll when deploying to a server group (servers: [...]).
 func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, imageTag, tmpFile, absPath string, flags deployFlags, neoConfig *NeoConfig) (string, error) {
 	// Resolve app name for this environment
-	appName := flags.appName
-	if appName == "" {
-		if envCfg.Name != "" {
-			appName = sanitizeName(envCfg.Name)
-		} else {
-			base := sanitizeName(neoConfig.Name)
-			if base == "" {
-				base = sanitizeName(filepath.Base(absPath))
-			}
-			if isProductionEnv(envName) {
-				appName = base
-			} else {
-				appName = base + "-" + sanitizeName(envName)
-			}
-		}
-	}
+	appName := environmentAppName(flags.appName, envName, envCfg, neoConfig, absPath)
 
 	// Resolve port
 	port := flags.port
@@ -2202,8 +2252,11 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		}
 	}
 
-	// Merge env vars: base .neo.yml → environment override
+	// Merge env vars: file sources (decrypted before fan-out) → base .neo.yml → environment override
 	env := make(map[string]string)
+	for k, v := range flags.preloadedEnv[envName] {
+		env[k] = v
+	}
 	for k, v := range neoConfig.Env {
 		env[k] = v
 	}
