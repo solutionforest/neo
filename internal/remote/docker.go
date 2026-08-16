@@ -290,6 +290,48 @@ func (d *Docker) ContainerStatus(name string) string {
 	return strings.TrimSpace(out)
 }
 
+// ContainerInfo describes one container as reported by `docker ps`.
+type ContainerInfo struct {
+	Name   string
+	State  string // running, exited, created, paused, ...
+	Status string // human-readable ("Up 3 hours", "Exited (0) 2 days ago")
+	Image  string
+}
+
+// ListContainers returns every container (running or not) whose name starts
+// with prefix. Used to compare what is actually on the server against what
+// /etc/neo/state.json claims.
+func (d *Docker) ListContainers(prefix string) ([]ContainerInfo, error) {
+	out, err := d.exec.Run(fmt.Sprintf(
+		`%s ps -a --filter %s --format '{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}'`,
+		d.bin(), ssh.ShellQuote("name=^"+prefix),
+	))
+	if err != nil {
+		return nil, err
+	}
+
+	var containers []ContainerInfo
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) < 2 {
+			continue
+		}
+		info := ContainerInfo{Name: parts[0], State: parts[1]}
+		if len(parts) > 2 {
+			info.Status = parts[2]
+		}
+		if len(parts) > 3 {
+			info.Image = parts[3]
+		}
+		containers = append(containers, info)
+	}
+	return containers, nil
+}
+
 // VolumeList lists Docker volumes.
 func (d *Docker) VolumeList() (string, error) {
 	return d.exec.Run(d.bin() + " volume ls --format '{{.Name}}\t{{.Driver}}'")

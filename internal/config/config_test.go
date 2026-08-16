@@ -1,9 +1,12 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestLoadEmpty(t *testing.T) {
@@ -183,5 +186,65 @@ func TestFilePermissions(t *testing.T) {
 	dirPerm := dirInfo.Mode().Perm()
 	if dirPerm != 0o700 {
 		t.Errorf("dir permission = %o, want 0700", dirPerm)
+	}
+}
+
+func TestCacheConcurrentReadWrite(t *testing.T) {
+	// The dashboard renders from the cache on the main goroutine while up to ten
+	// background goroutines refresh server entries. Handing out the live map
+	// crashed the process with "concurrent map read and map write"; run this
+	// with -race to catch a regression.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				UpdateServerCache(fmt.Sprintf("server-%d", n), ServerCache{
+					AppCount:  j,
+					Reachable: true,
+					UpdatedAt: time.Now(),
+				})
+			}
+		}(i)
+	}
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				if c := LoadCache(); c != nil {
+					_ = c.Get(fmt.Sprintf("server-%d", n))
+					for name := range c.Servers { // iterate the snapshot
+						_ = name
+					}
+				}
+				_ = GetServerCache(fmt.Sprintf("server-%d", n))
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+func TestGetServerCacheReturnsCopy(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
+
+	UpdateServerCache("box", ServerCache{AppCount: 3, Reachable: true})
+
+	got := GetServerCache("box")
+	if got == nil || got.AppCount != 3 {
+		t.Fatalf("GetServerCache = %+v", got)
+	}
+	got.AppCount = 99 // mutating the copy must not touch the cache
+
+	if again := GetServerCache("box"); again.AppCount != 3 {
+		t.Errorf("cache was mutated through the returned pointer: %d", again.AppCount)
+	}
+	if GetServerCache("missing") != nil {
+		t.Error("unknown server should return nil")
 	}
 }

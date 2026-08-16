@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/vxero/neo/internal/remote"
 	"github.com/vxero/neo/internal/state"
 	"github.com/vxero/neo/internal/ui"
 )
@@ -43,8 +44,12 @@ func runList(format string) error {
 		return fmt.Errorf("load state: %w", err)
 	}
 
+	// Cross-check state against the containers actually on the server. A Docker
+	// failure here is not fatal — fall back to reporting state alone.
+	drift, driftErr := detectStateDrift(remote.NewDocker(exec), st)
+
 	if format == "json" {
-		return runListJSON(srv.Name, st)
+		return runListJSON(srv.Name, st, drift)
 	}
 
 	fmt.Println()
@@ -54,8 +59,14 @@ func runList(format string) error {
 	if len(st.Apps) == 0 {
 		fmt.Println("  No apps installed.")
 		fmt.Println()
-		ui.Info("Install an app: neo install")
-		fmt.Println()
+		if driftErr == nil && len(drift.Untracked) > 0 {
+			// "No apps installed" while containers are serving traffic is the
+			// confusing case this check exists for — say so instead of lying.
+			reportStateDrift(drift)
+		} else {
+			ui.Info("Install an app: neo install")
+			fmt.Println()
+		}
 		return nil
 	}
 
@@ -84,6 +95,11 @@ func runList(format string) error {
 
 	fmt.Println()
 	fmt.Printf("  %d apps · %d running · %d stopped\n", len(st.Apps), running, stopped)
+	fmt.Println()
+
+	if driftErr == nil {
+		reportStateDrift(drift)
+	}
 
 	// Show shared services
 	if len(st.Services) > 0 {
@@ -105,16 +121,32 @@ func runList(format string) error {
 
 // listOutput is the JSON structure for --format json.
 type listOutput struct {
-	Server   string                            `json:"server"`
-	Apps     map[string]state.App              `json:"apps"`
-	Services map[string]state.SharedService    `json:"services"`
+	Server   string                         `json:"server"`
+	Apps     map[string]state.App           `json:"apps"`
+	Services map[string]state.SharedService `json:"services"`
+	Drift    *driftOutput                   `json:"drift,omitempty"`
 }
 
-func runListJSON(serverName string, st *state.State) error {
+// driftOutput exposes state-vs-server disagreement to scripts, which otherwise
+// have no way to tell an empty server from a server whose state was lost.
+type driftOutput struct {
+	Untracked []string `json:"untracked,omitempty"`
+	Missing   []string `json:"missing,omitempty"`
+	Stopped   []string `json:"stopped,omitempty"`
+}
+
+func runListJSON(serverName string, st *state.State, drift stateDrift) error {
 	out := listOutput{
 		Server:   serverName,
 		Apps:     st.Apps,
 		Services: st.Services,
+	}
+	if !drift.Empty() {
+		out.Drift = &driftOutput{
+			Untracked: drift.Untracked,
+			Missing:   drift.Missing,
+			Stopped:   drift.Stopped,
+		}
 	}
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {

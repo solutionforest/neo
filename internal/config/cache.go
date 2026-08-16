@@ -17,13 +17,17 @@ var memCache *DashboardCache
 
 // ServerCache holds the last-known state for one server.
 type ServerCache struct {
-	AppCount        int       `json:"app_count"`
-	RunningApps     int       `json:"running_apps"`
-	ServiceCount    int       `json:"service_count"`
-	RunningServices int       `json:"running_services"`
-	Reachable       bool      `json:"reachable"`
-	Error           string    `json:"error,omitempty"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	AppCount        int `json:"app_count"`
+	RunningApps     int `json:"running_apps"`
+	ServiceCount    int `json:"service_count"`
+	RunningServices int `json:"running_services"`
+	// UntrackedApps counts app containers running on the server with no entry
+	// in /etc/neo/state.json. Non-zero means the dashboard counts are an
+	// undercount — the number people notice as "it says 0 but we deployed".
+	UntrackedApps int       `json:"untracked_apps,omitempty"`
+	Reachable     bool      `json:"reachable"`
+	Error         string    `json:"error,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // DashboardCache is the full cache file — one entry per server name.
@@ -57,13 +61,29 @@ func CachePath() string {
 	return filepath.Join(Dir(), "cache.json")
 }
 
-// LoadCache returns the dashboard cache from memory.
+// clone returns a deep copy so callers can read the cache without holding the
+// lock while background refreshes keep writing to the shared map.
+func (c *DashboardCache) clone() *DashboardCache {
+	out := &DashboardCache{Servers: make(map[string]ServerCache, len(c.Servers))}
+	for name, sc := range c.Servers {
+		out.Servers[name] = sc
+	}
+	return out
+}
+
+// LoadCache returns a snapshot of the dashboard cache.
 // On first call, loads from disk and caches in memory.
+//
+// The returned value is a copy, never the shared map: the dashboard renders
+// from it on the main goroutine while up to ten background goroutines refresh
+// server entries, and handing out the live map crashed the process with
+// "concurrent map read and map write".
 func LoadCache() *DashboardCache {
 	cacheMu.RLock()
 	if memCache != nil {
-		defer cacheMu.RUnlock()
-		return memCache
+		snapshot := memCache.clone()
+		cacheMu.RUnlock()
+		return snapshot
 	}
 	cacheMu.RUnlock()
 
@@ -73,7 +93,7 @@ func LoadCache() *DashboardCache {
 
 	// Double-check after acquiring write lock
 	if memCache != nil {
-		return memCache
+		return memCache.clone()
 	}
 
 	data, err := os.ReadFile(CachePath())
@@ -85,7 +105,23 @@ func LoadCache() *DashboardCache {
 		return nil
 	}
 	memCache = &c
-	return memCache
+	return memCache.clone()
+}
+
+// GetServerCache returns a copy of one server's cache entry, or nil if the
+// server has never been fetched. Prefer this over LoadCache().Get for single
+// lookups — it copies one entry instead of the whole map.
+func GetServerCache(serverName string) *ServerCache {
+	cacheMu.RLock()
+	defer cacheMu.RUnlock()
+	if memCache == nil {
+		return nil
+	}
+	sc, ok := memCache.Servers[serverName]
+	if !ok {
+		return nil
+	}
+	return &sc
 }
 
 // SaveCache writes the dashboard cache to both memory and disk.

@@ -74,18 +74,22 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 			continue // Enter=refresh: re-render menu with latest cache
 		}
 
+		// A failure inside a submenu returns to the main menu. These used to
+		// propagate out of runDashboard, so one unreachable server or transient
+		// SSH error dropped the user back to the shell and made them restart
+		// `neo` from scratch.
 		switch action {
 		case "servers":
 			if err := tuiServersMenu(cfg); err != nil {
-				return err
+				ui.Error(err.Error())
 			}
 		case "apps":
 			if err := tuiAppsMenu(cfg); err != nil {
-				return err
+				ui.Error(err.Error())
 			}
 		case "services":
 			if err := tuiServicesMenu(cfg); err != nil {
-				return err
+				ui.Error(err.Error())
 			}
 		case "metrics":
 			if err := tuiLiveMetrics(cfg); err != nil {
@@ -258,11 +262,7 @@ func cachedDashboardSummaries(cfg *config.Config) (string, string) {
 	if err != nil || srv == nil {
 		return ui.Faint.Render("—"), ui.Faint.Render("—")
 	}
-	c := config.LoadCache()
-	if c == nil {
-		return ui.Faint.Render("connecting..."), ui.Faint.Render("connecting...")
-	}
-	sc := c.Get(srv.Name)
+	sc := config.GetServerCache(srv.Name)
 	if sc == nil {
 		return ui.Faint.Render("connecting..."), ui.Faint.Render("connecting...")
 	}
@@ -272,6 +272,12 @@ func cachedDashboardSummaries(cfg *config.Config) (string, string) {
 	}
 	age := formatCacheAge(time.Since(sc.UpdatedAt))
 	app := ui.Faint.Render(fmt.Sprintf("%d apps, %d running · %s", sc.AppCount, sc.RunningApps, age))
+	if sc.UntrackedApps > 0 {
+		// The count above is an undercount — say so where it is read, rather
+		// than letting "0 apps" stand while containers are serving traffic.
+		app = ui.Faint.Render(fmt.Sprintf("%d apps, %d running", sc.AppCount, sc.RunningApps)) +
+			ui.Yellow.Render(fmt.Sprintf("  ⚠ %d untracked", sc.UntrackedApps))
+	}
 	svc := ui.Faint.Render(fmt.Sprintf("%d services, %d running · %s", sc.ServiceCount, sc.RunningServices, age))
 	return app, svc
 }
@@ -332,11 +338,19 @@ func refreshServerCache(serverName string, srv *config.Server) {
 		}
 	}
 
+	// Compare against the containers actually on the server so the dashboard can
+	// flag apps that state has lost track of instead of silently undercounting.
+	untracked := 0
+	if drift, driftErr := detectStateDrift(remote.NewDocker(exec), st); driftErr == nil {
+		untracked = len(drift.Untracked)
+	}
+
 	config.UpdateServerCache(serverName, config.ServerCache{
 		AppCount:        len(st.Apps),
 		RunningApps:     runningApps,
 		ServiceCount:    len(st.Services),
 		RunningServices: runningSvcs,
+		UntrackedApps:   untracked,
 		Reachable:       true,
 		UpdatedAt:       time.Now(),
 	})
@@ -357,9 +371,8 @@ func tuiMainMenu(cfg *config.Config, appSummary, serviceSummary string) string {
 	srv, _ := cfg.CurrentServer()
 	var title string
 	if srv != nil {
-		c := config.LoadCache()
-		if c != nil {
-			if sc := c.Get(srv.Name); sc != nil && !sc.Reachable {
+		if sc := config.GetServerCache(srv.Name); sc != nil {
+			if !sc.Reachable {
 				reason := "unreachable"
 				if sc.Error != "" {
 					// Show a short reason (e.g., "auth failed" instead of full SSH error)
@@ -436,15 +449,15 @@ func tuiServersMenu(cfg *config.Config) error {
 		switch action {
 		case "init":
 			if err := tuiAddServer(cfg); err != nil {
-				return err
+				ui.Error(err.Error())
 			}
 		case "attach":
 			if err := tuiAttachServer(cfg); err != nil {
-				return err
+				ui.Error(err.Error())
 			}
 		case "switch":
 			if err := tuiSwitchServer(cfg); err != nil {
-				return err
+				ui.Error(err.Error())
 			}
 		case "ssh":
 			if err := tuiSSHServer(); err != nil {
@@ -452,7 +465,7 @@ func tuiServersMenu(cfg *config.Config) error {
 			}
 		case "remove":
 			if err := tuiRemoveServer(cfg); err != nil {
-				return err
+				ui.Error(err.Error())
 			}
 		case "destroy":
 			if err := tuiDestroyServer(cfg); err != nil {
@@ -511,7 +524,7 @@ func tuiAttachServer(cfg *config.Config) error {
 	if host == "" {
 		return nil
 	}
-	huh.NewInput().Title("Server name (leave empty to auto-detect)").Value(&name).Run()              //nolint:errcheck
+	huh.NewInput().Title("Server name (leave empty to auto-detect)").Value(&name).Run()                    //nolint:errcheck
 	huh.NewInput().Title("SSH key path (leave empty to use your neo key / default)").Value(&keyPath).Run() //nolint:errcheck
 	return runAttach(host, name, keyPath)
 }
@@ -882,7 +895,7 @@ func tuiWorkersMenu(appName string, workers map[string]state.AppWorker) error {
 			return nil
 		}
 		if err := tuiWorkerActions(appName, selected, workers[selected]); err != nil {
-			return err
+			ui.Error(err.Error())
 		}
 	}
 }
@@ -918,14 +931,15 @@ func tuiWorkerActions(appName, workerName string, w state.AppWorker) error {
 			return nil
 		case "logs":
 			if err := runLogs(appName, 50, false, workerName, "", ""); err != nil {
-				return err
+				ui.Error(err.Error())
 			}
 			fmt.Print("\n  " + ui.Faint.Render("Press any key to return..."))
 			ui.ReadKey()
 			fmt.Println()
 		case "start", "stop", "restart":
 			if err := runWorkerManage(appName, workerName, action); err != nil {
-				return err
+				ui.Error(err.Error())
+				continue
 			}
 			// Update status for next render.
 			w.Status = action
@@ -936,7 +950,8 @@ func tuiWorkerActions(appName, workerName string, w state.AppWorker) error {
 			return runContainerTerminal(config.WorkerContainer(appName, workerName))
 		case "redeploy":
 			if err := runWorkerRedeploy(appName, workerName); err != nil {
-				return err
+				ui.Error(err.Error())
+				continue
 			}
 			w.Status = "running"
 		}
@@ -966,7 +981,7 @@ func tuiSidecarsMenu(appName string, sidecars map[string]state.AppSidecar) error
 			return nil
 		}
 		if err := tuiSidecarActions(appName, selected, sidecars[selected]); err != nil {
-			return err
+			ui.Error(err.Error())
 		}
 	}
 }
@@ -1002,14 +1017,15 @@ func tuiSidecarActions(appName, sidecarName string, sc state.AppSidecar) error {
 			return nil
 		case "logs":
 			if err := runSidecarLogs(appName, sidecarName); err != nil {
-				return err
+				ui.Error(err.Error())
 			}
 			fmt.Print("\n  " + ui.Faint.Render("Press any key to return..."))
 			ui.ReadKey()
 			fmt.Println()
 		case "start", "stop", "restart":
 			if err := runSidecarManage(appName, sidecarName, action); err != nil {
-				return err
+				ui.Error(err.Error())
+				continue
 			}
 			sc.Status = action
 			if action == "stop" {
@@ -1019,7 +1035,8 @@ func tuiSidecarActions(appName, sidecarName string, sc state.AppSidecar) error {
 			return runContainerTerminal(config.SvcContainer(appName, sidecarName))
 		case "redeploy":
 			if err := runSidecarRedeploy(appName, sidecarName); err != nil {
-				return err
+				ui.Error(err.Error())
+				continue
 			}
 			sc.Status = "running"
 		}

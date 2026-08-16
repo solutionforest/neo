@@ -54,6 +54,11 @@ clean:
 test:
 	go test ./...
 
+# Race detector. The dashboard reads the server cache on the main goroutine
+# while background goroutines refresh it, so run this before touching either.
+test-race:
+	go test -race ./...
+
 fmt:
 	gofmt -w .
 
