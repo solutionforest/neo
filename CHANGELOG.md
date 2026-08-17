@@ -4,6 +4,17 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.25.3 — 2026-08-17
+
+### Fixes
+
+- **`neo config generate` disqualified the web service it was meant to pick.** The background-process check matched "worker" anywhere in the command, so an Octane or FrankenPHP server started with `--workers=auto` was ruled out as a worker and the app role fell to whatever sorted next — on a real Laravel compose it chose the Reverb websocket server as the site. Flags are stripped before matching now. Regression from 0.25.2.
+- **`entrypoint:` was ignored.** Compose routinely splits `entrypoint: ["php","artisan"]` from `command: horizon`, and reading only `command` produced workers whose command was `horizon` — not a program. Entrypoint and command are now joined the way Docker runs them.
+- **One-shot services became looping workers.** `composer install`, an asset build, or a `migrate` step declared with `restart: "no"` was mapped to a worker, which would re-run it forever, or to a sidecar, which would exit and look broken. They are now skipped, and the output says where the work belongs: `hooks.pre_build` for build steps, `release:` for anything touching the app's own state (migrations, `key:generate`, `storage:link`).
+- **Build stage and args were dropped in silence.** A service pinning `target: development` would have deployed the development stage to production. Both are now reported as not migrated.
+
+---
+
 ## v0.25.2 — 2026-08-17
 
 ### Fixes
