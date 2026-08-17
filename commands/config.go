@@ -288,10 +288,20 @@ func runConfigGenerate(composePath string) error {
 		fmt.Printf("  %s  dockerfile: %s\n", ui.Faint.Render("●"), df)
 	}
 
+	// Neo builds the Dockerfile's final stage with no build args, so a service
+	// pinning an earlier stage would deploy something other than what compose
+	// runs — `target: development` shipped to production being the bad case.
+	if target := composeBuildTarget(appSvc.Build); target != "" {
+		fmt.Printf("  %s  build target %q not migrated — neo builds the final stage\n", ui.Yellow.Render("⚠"), target)
+	}
+	if args := composeBuildArgs(appSvc.Build); len(args) > 0 {
+		fmt.Printf("  %s  build args not migrated: %s\n", ui.Yellow.Render("⚠"), strings.Join(args, ", "))
+	}
+
 	// Carry over the app service's command:. It was previously read for sidecars
 	// only, so a compose project whose app overrode its image CMD lost that on
 	// migration and deployed the wrong process.
-	if cmd := parseComposeCommand(appSvc.Command); cmd != "" {
+	if cmd := composeFullCommand(appSvc); cmd != "" {
 		cfg.Command = CommandString(cmd)
 		fmt.Printf("  %s  command: %s\n", ui.Faint.Render("●"), cmd)
 	}
@@ -364,6 +374,20 @@ func runConfigGenerate(composePath string) error {
 			continue // skip the main app
 		}
 
+		if isOneShotService(svc) {
+			// restart: "no" with a command is compose's idiom for a step that
+			// runs once and exits. As a worker it would loop forever; as a
+			// sidecar it would exit and look broken. Point at where the work
+			// belongs in Neo instead.
+			cmd := composeFullCommand(svc)
+			hint := "hooks.pre_build (runs on your machine before the build)"
+			if looksLikeMigrationCommand(cmd) {
+				hint = "release: (runs in the new container before traffic switches)"
+			}
+			fmt.Printf("  %s  %-15s → skipped: runs once and exits — move it to %s\n", ui.Yellow.Render("⚠"), name, hint)
+			continue
+		}
+
 		if isInfra(name, svc) {
 			// Infrastructure service → sidecar
 			if cfg.Sidecars == nil {
@@ -376,7 +400,7 @@ func runConfigGenerate(composePath string) error {
 		} else if sharesAppArtifact(appSvc, svc) {
 			// Same image or build context as the app: a worker, a scheduler, or
 			// a second public site sharing one codebase.
-			cmd := parseComposeCommand(svc.Command)
+			cmd := composeFullCommand(svc)
 			svcEnv := composeServiceEnv(svc)
 			conflicts := conflictingEnvKeys(appEnv, svcEnv)
 

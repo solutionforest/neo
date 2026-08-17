@@ -24,7 +24,9 @@ type composeService struct {
 	EnvFile     interface{} `yaml:"env_file"`    // string or list
 	Volumes     []string    `yaml:"volumes"`     // "name:/path" or "/host:/path"
 	Command     interface{} `yaml:"command"`     // string or list
-	DependsOn   interface{} `yaml:"depends_on"`  // list or map
+	Entrypoint  interface{} `yaml:"entrypoint"`  // string or list
+	Restart     string      `yaml:"restart"`
+	DependsOn   interface{} `yaml:"depends_on"` // list or map
 }
 
 // parseComposeCommand extracts command as a single string.
@@ -314,14 +316,99 @@ var backgroundCommandMarkers = []string{
 
 // looksLikeBackgroundCommand reports whether a compose command runs a worker,
 // scheduler or similar rather than serving HTTP.
+//
+// Flags are stripped before matching. Octane and FrankenPHP servers take
+// --workers=N, and matching "worker" inside that flag disqualified the actual
+// web service — the one thing this must never do.
 func looksLikeBackgroundCommand(cmd string) bool {
-	lower := strings.ToLower(cmd)
+	var words []string
+	for _, token := range strings.Fields(strings.ToLower(cmd)) {
+		if strings.HasPrefix(token, "-") {
+			continue
+		}
+		words = append(words, token)
+	}
+	joined := strings.Join(words, " ")
+
 	for _, marker := range backgroundCommandMarkers {
+		if strings.Contains(joined, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// composeFullCommand joins a service's entrypoint and command the way Docker
+// runs them. Compose files routinely split them — entrypoint: ["php","artisan"]
+// with command: horizon — and reading command alone yields "horizon", which is
+// not a program.
+func composeFullCommand(svc composeService) string {
+	entrypoint := parseComposeCommand(svc.Entrypoint)
+	command := parseComposeCommand(svc.Command)
+
+	switch {
+	case entrypoint == "":
+		return command
+	case command == "":
+		return entrypoint
+	default:
+		return entrypoint + " " + command
+	}
+}
+
+// isOneShotService reports whether a service is an init/build step rather than
+// something that stays running: `restart: "no"` alongside a command is the
+// compose idiom for "run once and exit" (composer install, migrations, asset
+// builds). Deploying one as a worker would re-run it forever.
+func isOneShotService(svc composeService) bool {
+	restart := strings.ToLower(strings.TrimSpace(svc.Restart))
+	return restart == "no" || restart == "on-failure"
+}
+
+// migrationMarkers identify one-shot work that belongs in release: — it has to
+// run against the deployed container, not on the operator's machine.
+var migrationMarkers = []string{"migrate", "db:seed", "key:generate", "storage:link"}
+
+// looksLikeMigrationCommand reports whether a one-shot command touches the
+// application's own state, which decides whether it maps to release: or hooks:.
+func looksLikeMigrationCommand(cmd string) bool {
+	lower := strings.ToLower(cmd)
+	for _, marker := range migrationMarkers {
 		if strings.Contains(lower, marker) {
 			return true
 		}
 	}
 	return false
+}
+
+// composeBuildTarget returns a build stage target, when the build directive
+// pins one. Neo always builds the Dockerfile's final stage, so a service
+// targeting an earlier stage would deploy something else entirely.
+func composeBuildTarget(build interface{}) string {
+	if m, ok := build.(map[string]interface{}); ok {
+		if t, ok := m["target"].(string); ok {
+			return t
+		}
+	}
+	return ""
+}
+
+// composeBuildArgs returns the build args a build directive declares.
+func composeBuildArgs(build interface{}) []string {
+	m, ok := build.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	args, ok := m["args"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	names := make([]string, 0, len(args))
+	for name := range args {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // composeInfraPrefixes are images/names that are supporting infrastructure, not
@@ -381,7 +468,11 @@ func composeAppScore(name string, svc composeService) int {
 		score += 5
 	}
 
-	if cmd := parseComposeCommand(svc.Command); cmd != "" {
+	if isOneShotService(svc) {
+		return -1 // an init/build step, not the long-running app
+	}
+
+	if cmd := composeFullCommand(svc); cmd != "" {
 		if looksLikeBackgroundCommand(cmd) {
 			return -1 // a worker or scheduler is never the public app
 		}
@@ -418,7 +509,7 @@ func guessAppService(services map[string]composeService) (string, composeService
 func composePublicServices(services map[string]composeService) []string {
 	var public []string
 	for name, svc := range services {
-		if isInfraService(name, svc) {
+		if isInfraService(name, svc) || isOneShotService(svc) {
 			continue
 		}
 		env := composeServiceEnv(svc)

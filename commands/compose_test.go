@@ -455,3 +455,139 @@ func TestSharesAppArtifact(t *testing.T) {
 		t.Error("different build contexts should not share the artifact")
 	}
 }
+
+func TestLooksLikeBackgroundCommandIgnoresFlags(t *testing.T) {
+	// Octane/FrankenPHP take --workers=N. Matching "worker" inside that flag
+	// disqualified the actual web service and handed the app role to whatever
+	// sorted next.
+	server := "--port=80 --workers=${OCTANE_WORKERS:-auto} --max-requests=500"
+	if looksLikeBackgroundCommand(server) {
+		t.Errorf("a server with --workers= was treated as a background process: %q", server)
+	}
+	if looksLikeBackgroundCommand("php artisan reverb:start --host=0.0.0.0") {
+		t.Error("reverb:start is a server, not a background process")
+	}
+	// Real background work still matches.
+	if !looksLikeBackgroundCommand("php artisan queue:work --tries=3") {
+		t.Error("queue:work should be background")
+	}
+	if !looksLikeBackgroundCommand("node worker.js") {
+		t.Error("a bare worker program should be background")
+	}
+}
+
+func TestComposeFullCommand(t *testing.T) {
+	// Compose routinely splits these; reading command alone gives "horizon",
+	// which is not a program.
+	svc := composeService{
+		Entrypoint: []interface{}{"php", "artisan"},
+		Command:    "horizon",
+	}
+	if got := composeFullCommand(svc); got != "php artisan horizon" {
+		t.Errorf("got %q, want php artisan horizon", got)
+	}
+
+	if got := composeFullCommand(composeService{Command: "npm run build"}); got != "npm run build" {
+		t.Errorf("command only: got %q", got)
+	}
+	if got := composeFullCommand(composeService{Entrypoint: []interface{}{"composer"}}); got != "composer" {
+		t.Errorf("entrypoint only: got %q", got)
+	}
+	if got := composeFullCommand(composeService{}); got != "" {
+		t.Errorf("neither: got %q", got)
+	}
+}
+
+func TestIsOneShotService(t *testing.T) {
+	if !isOneShotService(composeService{Restart: "no"}) {
+		t.Error(`restart: "no" is a one-shot step`)
+	}
+	if !isOneShotService(composeService{Restart: "on-failure"}) {
+		t.Error("on-failure is a one-shot step")
+	}
+	if isOneShotService(composeService{Restart: "unless-stopped"}) {
+		t.Error("unless-stopped is long-running")
+	}
+	if isOneShotService(composeService{}) {
+		t.Error("no restart policy should not be treated as one-shot")
+	}
+}
+
+func TestGuessAppServiceSkipsOneShotAndPicksTheServer(t *testing.T) {
+	// Shape of a modern Laravel compose: init steps, a server, and workers all
+	// built from the same Dockerfile.
+	services := map[string]composeService{
+		"composer": {Build: "./", Entrypoint: []interface{}{"composer"}, Command: "install", Restart: "no"},
+		"setup":    {Build: "./", Command: "php artisan migrate --force", Restart: "no"},
+		"app": {
+			Build:   "./",
+			Ports:   []string{"${APP_PORT:-8080}:80"},
+			Command: "--port=80 --workers=auto",
+		},
+		"horizon":   {Build: "./", Entrypoint: []interface{}{"php", "artisan"}, Command: "horizon", Restart: "unless-stopped"},
+		"scheduler": {Build: "./", Entrypoint: []interface{}{"php", "artisan"}, Command: "schedule:work", Restart: "unless-stopped"},
+		"postgres":  {Image: "postgres:15-alpine", Ports: []string{"5432:5432"}},
+	}
+
+	name, _ := guessAppService(services)
+	if name != "app" {
+		t.Errorf("app = %q, want app", name)
+	}
+
+	// And it stays that way.
+	for i := 0; i < 25; i++ {
+		if got, _ := guessAppService(services); got != "app" {
+			t.Fatalf("selection changed to %q", got)
+		}
+	}
+
+	// One-shot steps are not public services either.
+	public := composePublicServices(services)
+	for _, name := range public {
+		if name == "composer" || name == "setup" {
+			t.Errorf("one-shot service %q reported as publicly reachable", name)
+		}
+	}
+}
+
+func TestComposeBuildTargetAndArgs(t *testing.T) {
+	build := map[string]interface{}{
+		"context":    ".",
+		"dockerfile": "Dockerfile",
+		"target":     "development",
+		"args":       map[string]interface{}{"USER_ID": "1000", "GROUP_ID": "1000"},
+	}
+
+	if got := composeBuildTarget(build); got != "development" {
+		t.Errorf("target = %q", got)
+	}
+	args := composeBuildArgs(build)
+	if len(args) != 2 || args[0] != "GROUP_ID" || args[1] != "USER_ID" {
+		t.Errorf("args = %v, want [GROUP_ID USER_ID]", args)
+	}
+
+	// String build form carries neither.
+	if got := composeBuildTarget("./"); got != "" {
+		t.Errorf("string build target = %q", got)
+	}
+	if got := composeBuildArgs("./"); got != nil {
+		t.Errorf("string build args = %v", got)
+	}
+}
+
+func TestLooksLikeMigrationCommand(t *testing.T) {
+	for _, cmd := range []string{
+		"php artisan migrate --force",
+		"php artisan key:generate",
+		"php artisan storage:link",
+	} {
+		if !looksLikeMigrationCommand(cmd) {
+			t.Errorf("looksLikeMigrationCommand(%q) = false", cmd)
+		}
+	}
+	for _, cmd := range []string{"composer install", "npm run build"} {
+		if looksLikeMigrationCommand(cmd) {
+			t.Errorf("looksLikeMigrationCommand(%q) = true", cmd)
+		}
+	}
+}
