@@ -4,6 +4,15 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.24.5 — 2026-08-17
+
+### New Features
+
+- **Per-environment `dockerfile:`.** An environment can now name its own build file, overriding the top-level `dockerfile:`. Resolution is `--dockerfile` > `environments.<env>.dockerfile` > top-level `dockerfile:` > `./Dockerfile`. A path an environment names but that doesn't exist is a hard error rather than a silent fallback to `./Dockerfile`.
+- **`neo deploy --all` checks the environments agree on a Dockerfile.** `--all` builds one image and ships it everywhere, so environments naming different Dockerfiles now stop the run with the conflict listed, instead of quietly shipping one build as if it were both. Pass `--dockerfile` to force one, or deploy the environments individually.
+
+---
+
 ## v0.24.4 — 2026-08-17
 
 ### Fixes
