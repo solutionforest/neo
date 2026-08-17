@@ -4,6 +4,20 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.24.4 — 2026-08-17
+
+### Fixes
+
+- **`neo sync` produced a `.neo.yml` that `neo deploy` refused.** Sync wrote `domain:` at the root even when the project used `environments:` — the one combination deploy rejects outright ("root-level domain:/domains: is ignored when environments: are defined"). Sync is now environment-aware: it resolves the environment (`--to`, the only one, or a prompt), derives the app name the way deploy does (including the `-<environment>` suffix), and writes into that environment block.
+- **`neo sync` no longer rewrites your whole file.** It used to re-marshal the config struct over `.neo.yml`, destroying every comment, reordering keys, re-indenting from 2 to 4 spaces and re-quoting values (`CADDY_AUTO_HTTPS: on` became `"on"`). It now edits the YAML node tree in place and touches only the keys that actually changed. Blank lines between blocks are still lost — the YAML library does not model them.
+- **`domains:` lists are left alone.** Sync rewrote a multi-domain list from a single state value, dropping the rest. It now reports the mismatch and leaves the list for you to edit.
+
+### New Features
+
+- **`neo sync --to <environment>`** — pick the environment to sync without being prompted.
+
+---
+
 ## v0.24.3 — 2026-08-16
 
 ### Fixes
