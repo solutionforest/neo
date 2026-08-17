@@ -1111,6 +1111,8 @@ neo key remove 2</pre>
         <tr><td><code>neo list</code></td><td>List apps on the server</td></tr>
         <tr><td><code>neo logs &lt;app&gt;</code></td><td>Stream container logs</td></tr>
         <tr><td><code>neo domain &lt;app&gt; [domain]</code></td><td>Set domain, <code>--temp</code> for sslip.io, <code>--cert/--key</code> for custom SSL</td></tr>
+        <tr><td><code>neo caddy routes</code></td><td>Show the routes Caddy is actually serving, and which have basic auth</td></tr>
+        <tr><td><code>neo caddy reload</code></td><td>Rebuild Caddy routes from server state (<code>--app</code> for one app)</td></tr>
         <tr><td><code>neo sync &lt;app&gt;</code></td><td>Sync server state back to .neo.yml</td></tr>
         <tr><td><code>neo env &lt;app&gt;</code></td><td>View env vars (secrets masked)</td></tr>
         <tr><td><code>neo env set &lt;app&gt; K=V</code></td><td>Set env var (auto-restarts)</td></tr>

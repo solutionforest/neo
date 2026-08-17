@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -22,7 +23,188 @@ func newCaddyCmd() *cobra.Command {
 	cmd.AddCommand(newCaddyDNSCmd())
 	cmd.AddCommand(newCaddyOnDemandCmd())
 	cmd.AddCommand(newCaddyUpdateCmd())
+	cmd.AddCommand(newCaddyReloadCmd())
+	cmd.AddCommand(newCaddyRoutesCmd())
 	return cmd
+}
+
+func newCaddyReloadCmd() *cobra.Command {
+	var appFlag string
+
+	cmd := &cobra.Command{
+		Use:   "reload",
+		Short: "Rebuild Caddy routes from server state",
+		Long: `Rewrite every app's route in the running Caddy from /etc/neo/state.json.
+
+Caddy is configured through its admin API, so changes normally apply the moment
+they are made — there is no reload step in a healthy setup. Use this when the
+live proxy has drifted from state: basic auth that isn't being enforced, a stale
+upstream after a manual container change, or routes left behind by an
+interrupted deploy.
+
+Each route is replaced with what state says it should be: domains, upstream,
+HTTP/HTTPS mode, basic auth and edge-HTTPS headers. Apps with no domain are
+skipped.`,
+		RunE: func(cmd *cobra.Command, args []string) error { return runCaddyReload(appFlag) },
+	}
+
+	cmd.Flags().StringVar(&appFlag, "app", "", "reload one app's route instead of all")
+	return cmd
+}
+
+func newCaddyRoutesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "routes",
+		Short: "Show the routes currently live in Caddy",
+		Long:  "Lists the routes Caddy is actually serving, with the auth state of each, so you can compare the live proxy against what neo thinks it configured.",
+		RunE:  func(cmd *cobra.Command, args []string) error { return runCaddyRoutes() },
+	}
+}
+
+// runCaddyReload rewrites app routes in the live Caddy from server state.
+func runCaddyReload(appFilter string) error {
+	_, srv, exec, err := mustResolveAndConnect()
+	if err != nil {
+		return err
+	}
+	defer exec.Close()
+
+	st, err := state.Load(exec)
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+
+	caddy := remote.NewCaddy(exec)
+	if !caddy.IsRunning() {
+		return fmt.Errorf("neo-caddy is not running on %s — start it with 'neo caddy update'", srv.Name)
+	}
+
+	names := make([]string, 0, len(st.Apps))
+	for name := range st.Apps {
+		if appFilter != "" && name != appFilter {
+			continue
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		if appFilter != "" {
+			return fmt.Errorf("app %q not found on %s", appFilter, srv.Name)
+		}
+		ui.Info("No apps to reload.")
+		return nil
+	}
+	sort.Strings(names)
+
+	fmt.Println()
+	reloaded, skipped, failed := 0, 0, 0
+
+	for _, name := range names {
+		app := st.Apps[name]
+		domains := app.AllDomains()
+		if len(domains) == 0 {
+			ui.Info(fmt.Sprintf("%s — no domain, skipped", name))
+			skipped++
+			continue
+		}
+
+		if err := reloadAppRoute(caddy, app); err != nil {
+			ui.Error(fmt.Sprintf("%s — %s", name, err))
+			failed++
+			continue
+		}
+
+		detail := strings.Join(domains, ", ")
+		if app.BasicAuth != nil && app.BasicAuth.User != "" {
+			detail += "  " + ui.Faint.Render("(basic auth)")
+		}
+		ui.Success(fmt.Sprintf("%s → %s", name, detail))
+		reloaded++
+	}
+
+	fmt.Println()
+	summary := fmt.Sprintf("%d route(s) rebuilt", reloaded)
+	if skipped > 0 {
+		summary += fmt.Sprintf(", %d skipped", skipped)
+	}
+	if failed > 0 {
+		summary += fmt.Sprintf(", %d failed", failed)
+		ui.Error(summary)
+		fmt.Println()
+		return fmt.Errorf("%d route(s) could not be rebuilt", failed)
+	}
+	ui.Success(summary)
+	fmt.Println()
+	return nil
+}
+
+// reloadAppRoute rewrites one app's route from its state entry, preserving
+// replica count, HTTP/HTTPS mode, basic auth and edge-HTTPS headers.
+func reloadAppRoute(caddy *remote.Caddy, app state.App) error {
+	containerName := config.AppContainer(app.Name)
+	domains := app.AllDomains()
+	opts := routeOptionsForApp(app)
+
+	// Scaled apps balance across app-<name>-0..N-1; single-container apps dial
+	// the canonical container directly.
+	if app.Scale > 1 {
+		upstreams := make([]string, app.Scale)
+		for i := 0; i < app.Scale; i++ {
+			upstreams[i] = fmt.Sprintf("%s:%d", config.ReplicaContainer(app.Name, i), app.InternalPort)
+		}
+		if app.HTTPOnly {
+			return caddy.UpdateRouteMultiHTTP(containerName, domains, upstreams, opts...)
+		}
+		return caddy.UpdateRouteMulti(containerName, domains, upstreams, opts...)
+	}
+
+	upstream := fmt.Sprintf("%s:%d", containerName, app.InternalPort)
+	if app.HTTPOnly {
+		return caddy.UpdateRouteHTTP(containerName, domains, upstream, opts...)
+	}
+	provider, _ := remote.CaddyDNSProviderFor("cloudflare")
+	return updateHTTPSRouteAllowingWildcard(caddy, provider, containerName, domains, upstream, opts...)
+}
+
+// runCaddyRoutes prints the routes Caddy is actually serving.
+func runCaddyRoutes() error {
+	_, srv, exec, err := mustResolveAndConnect()
+	if err != nil {
+		return err
+	}
+	defer exec.Close()
+
+	caddy := remote.NewCaddy(exec)
+	if !caddy.IsRunning() {
+		return fmt.Errorf("neo-caddy is not running on %s", srv.Name)
+	}
+
+	routes, err := caddy.LiveRoutes()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Printf("  Caddy routes on %s\n\n", ui.Bold.Render(srv.Name))
+	if len(routes) == 0 {
+		ui.Info("No routes configured.")
+		fmt.Println()
+		return nil
+	}
+
+	fmt.Printf("  %-24s %-34s %-10s %s\n", "ROUTE ID", "DOMAINS", "AUTH", "UPSTREAMS")
+	fmt.Println("  " + ui.Faint.Render(strings.Repeat("─", 86)))
+	for _, r := range routes {
+		auth := ui.Faint.Render("none")
+		if r.BasicAuth {
+			auth = ui.Green.Render("basic")
+		}
+		fmt.Printf("  %-24s %-34s %-10s %s\n",
+			r.ID, strings.Join(r.Domains, ", "), auth, strings.Join(r.Upstreams, ", "))
+	}
+	fmt.Println()
+	ui.Info("Disagrees with your config? Rebuild from state: neo caddy reload")
+	fmt.Println()
+	return nil
 }
 
 func newCaddyUpdateCmd() *cobra.Command {

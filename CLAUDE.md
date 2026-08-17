@@ -60,9 +60,14 @@ All Docker operations as SSH commands. Key methods:
 ### Remote Caddy (`internal/remote/caddy.go`)
 Caddy Admin API calls via `curl` over SSH:
 - `StartContainer()` — launches neo-caddy with auto-SSL
-- `AddRoute(appID, domain, upstream)` — adds reverse proxy route
+- `AddRoute(appID, domain, upstream)` — **replaces** the route with this `@id` (deletes first, then POSTs). Caddy keeps `@id` unique, so a plain POST over a live route either errors or leaves the stale route in front — that silently kept serving the old handler chain when `basic_auth` was added to an existing app.
 - `RemoveRoute(appID)` — removes route by ID
 - `UpdateRoute` — remove + add (atomic replace)
+- `LiveRoutes()` — reads back the routes Caddy is actually serving (id, domains, upstreams, whether basic auth is in the chain). Backs `neo caddy routes`.
+
+**There is no config "reload" in Caddy** — the admin API applies changes immediately. `neo caddy update` is an *image* update (pull + recreate). `neo caddy reload` exists for **drift repair**: it rewrites every app's route from `/etc/neo/state.json` via `routeOptionsForApp`. Use it when the live proxy disagrees with state.
+
+**Auth lives in a subroute.** With `basic_auth`, `handle[0]` is a `subroute` (bypass paths first, then `authentication` + `reverse_proxy`); without it, `handle[0]` is the `reverse_proxy` itself. That is why `PatchUpstream` (which patches `handle/0/upstreams/0/dial`) can only move an upstream, never add or remove auth — deploy checks for auth and does a full `UpdateRoute` instead.
 
 ### Config (`internal/config/config.go`)
 Local multi-server config at `~/.neo/config.json`:
@@ -645,6 +650,9 @@ plans/                       # Planning documents
 | `neo use <name>` | Switch active server |
 | `neo config init` | Scaffold a new `.neo.yml` (interactive, `--yes` for defaults) |
 | `neo config generate` | Generate `.neo.yml` from `docker-compose.yml` |
+| `neo caddy routes` | Show the routes Caddy is actually serving (incl. auth state) |
+| `neo caddy reload [--app x]` | Rebuild Caddy routes from server state (drift repair) |
+| `neo caddy update` | Pull the latest Caddy image and recreate the proxy |
 | `neo firewall install/status/block/unblock/list` | CrowdSec firewall |
 | `neo stealth` | Toggle stealth mode |
 | `neo activate [key]` | Activate neo (free) — by email or existing key |

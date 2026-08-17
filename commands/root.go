@@ -232,6 +232,8 @@ func printHelp() {
 				{"neo stealth", "Toggle stealth mode (hide IP welcome page)"},
 				{"neo caddy dns <domain>", "Enable wildcard SSL via DNS-01"},
 				{"neo caddy ondemand <domain>", "Enable wildcard tenant SSL on demand"},
+				{"neo caddy routes", "Show the routes Caddy is actually serving"},
+				{"neo caddy reload", "Rebuild Caddy routes from server state"},
 			},
 		},
 		{
@@ -302,6 +304,9 @@ It handles deployment, SSL certificates, shared database services, and app lifec
 - neo domain <app> <domain>     Set domain (auto-provisions SSL via Caddy)
 - neo caddy dns <domain>        Enable wildcard SSL via DNS-01
 - neo caddy ondemand <domain>   Enable wildcard tenant SSL on demand
+- neo caddy routes             Show the routes Caddy is actually serving
+- neo caddy reload             Rebuild every route from state (fixes drift,
+                               e.g. basic auth that is not being enforced)
 
 ### Environment Variables
 - neo env <app>                 View env vars (secrets masked)

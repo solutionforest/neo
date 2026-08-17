@@ -2,6 +2,7 @@ package remote
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -154,5 +155,86 @@ func TestIsDNSCaddyImage(t *testing.T) {
 		if got := isDNSCaddyImage(image); got != want {
 			t.Errorf("isDNSCaddyImage(%q) = %v, want %v", image, got, want)
 		}
+	}
+}
+
+func TestInspectHandlerPlainReverseProxy(t *testing.T) {
+	auth, ups := inspectHandler([]byte(`{"handler":"reverse_proxy","upstreams":[{"dial":"app-shop:8080"}]}`))
+	if auth {
+		t.Error("plain reverse_proxy reported basic auth")
+	}
+	if len(ups) != 1 || ups[0] != "app-shop:8080" {
+		t.Errorf("upstreams = %v", ups)
+	}
+}
+
+func TestInspectHandlerFindsAuthInsideSubroute(t *testing.T) {
+	// This is the shape buildRouteJSON emits for basic_auth: the reverse_proxy
+	// is nested inside a subroute behind an authentication handler, which is why
+	// a dial-only PATCH cannot add or remove auth.
+	subroute := []byte(`{
+		"handler":"subroute",
+		"routes":[
+			{"match":[{"path":["/api/*"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"app-shop:8080"}]}]},
+			{"handle":[
+				{"handler":"authentication","providers":{"http_basic":{"accounts":[{"username":"admin","password":"$2a$14$x"}]}}},
+				{"handler":"reverse_proxy","upstreams":[{"dial":"app-shop:8080"}]}
+			]}
+		]
+	}`)
+
+	auth, ups := inspectHandler(subroute)
+	if !auth {
+		t.Error("basic auth inside a subroute was not detected")
+	}
+	if len(ups) != 2 {
+		t.Errorf("expected upstreams from both subroutes, got %v", ups)
+	}
+}
+
+func TestInspectHandlerIgnoresOtherProviders(t *testing.T) {
+	auth, _ := inspectHandler([]byte(`{"handler":"authentication","providers":{"other":{}}}`))
+	if auth {
+		t.Error("non-basic auth provider reported as basic auth")
+	}
+}
+
+func TestInspectHandlerGarbage(t *testing.T) {
+	auth, ups := inspectHandler([]byte(`not json`))
+	if auth || ups != nil {
+		t.Errorf("garbage handler returned (%v, %v)", auth, ups)
+	}
+}
+
+func TestBuildRouteJSONBasicAuthShape(t *testing.T) {
+	// Guards the assumption the reload/routes commands rely on: with auth, the
+	// route's first handler is a subroute, not the reverse_proxy.
+	data, err := buildRouteJSON("app-shop", []string{"shop.io"}, []string{"app-shop:8080"}, RouteOptions{
+		BasicAuth: &BasicAuthConfig{Username: "admin", Password: "secret", BypassPaths: []string{"/api/*"}},
+	})
+	if err != nil {
+		t.Fatalf("buildRouteJSON: %v", err)
+	}
+
+	var route struct {
+		Handle []json.RawMessage `json:"handle"`
+	}
+	if err := json.Unmarshal(data, &route); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(route.Handle) != 1 {
+		t.Fatalf("expected a single top-level handler, got %d", len(route.Handle))
+	}
+	auth, ups := inspectHandler(route.Handle[0])
+	if !auth {
+		t.Error("round trip lost the basic auth handler")
+	}
+	if len(ups) == 0 {
+		t.Error("round trip lost the upstreams")
+	}
+
+	// The plaintext password must never reach Caddy.
+	if strings.Contains(string(data), "secret") {
+		t.Error("password was sent in plaintext instead of a bcrypt hash")
 	}
 }

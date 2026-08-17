@@ -598,11 +598,105 @@ func (c *Caddy) AddRoute(appID string, domains []string, upstream string, opts .
 		return fmt.Errorf("build route: %w", err)
 	}
 
+	// Drop any existing route with this @id first. Caddy keeps @id unique, so
+	// POSTing over a live route either errors or leaves the stale route ahead of
+	// the new one — which silently kept serving the old handler chain when
+	// basic_auth was added to an app that already had a route.
+	c.RemoveRoute(appID) //nolint:errcheck // absent route is the normal case
+
 	cmd := fmt.Sprintf(
 		`curl -sf -X POST %s/config/apps/http/servers/srv0/routes -H "Content-Type: application/json" -d %s`,
 		CaddyAdminURL, ssh.ShellQuote(string(data)),
 	)
 	return c.exec.RunQuiet(cmd)
+}
+
+// LiveRoute is one route as Caddy is currently serving it.
+type LiveRoute struct {
+	ID        string
+	Domains   []string
+	Upstreams []string
+	BasicAuth bool
+}
+
+// LiveRoutes reads the routes from the running proxy. Reading back what Caddy
+// actually has is the only way to tell a route that was configured from a route
+// that was accepted — a stale handler chain looks identical from the outside.
+func (c *Caddy) LiveRoutes() ([]LiveRoute, error) {
+	out, err := c.exec.Run(fmt.Sprintf("curl -sf %s/config/apps/http/servers/srv0/routes", CaddyAdminURL))
+	if err != nil {
+		return nil, fmt.Errorf("read Caddy routes: %w", err)
+	}
+	if strings.TrimSpace(out) == "" || strings.TrimSpace(out) == "null" {
+		return nil, nil
+	}
+
+	var raw []struct {
+		ID    string `json:"@id"`
+		Match []struct {
+			Host []string `json:"host"`
+		} `json:"match"`
+		Handle []json.RawMessage `json:"handle"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		return nil, fmt.Errorf("parse Caddy routes: %w", err)
+	}
+
+	routes := make([]LiveRoute, 0, len(raw))
+	for _, r := range raw {
+		lr := LiveRoute{ID: r.ID}
+		if lr.ID == "" {
+			lr.ID = "(no id)"
+		}
+		for _, m := range r.Match {
+			lr.Domains = append(lr.Domains, m.Host...)
+		}
+		for _, h := range r.Handle {
+			auth, ups := inspectHandler(h)
+			lr.BasicAuth = lr.BasicAuth || auth
+			lr.Upstreams = append(lr.Upstreams, ups...)
+		}
+		routes = append(routes, lr)
+	}
+	return routes, nil
+}
+
+// inspectHandler walks one handler, descending into subroutes, and reports
+// whether it authenticates and which upstreams it dials.
+func inspectHandler(data json.RawMessage) (basicAuth bool, upstreams []string) {
+	var h struct {
+		Handler   string `json:"handler"`
+		Upstreams []struct {
+			Dial string `json:"dial"`
+		} `json:"upstreams"`
+		Providers map[string]json.RawMessage `json:"providers"`
+		Routes    []struct {
+			Handle []json.RawMessage `json:"handle"`
+		} `json:"routes"`
+	}
+	if err := json.Unmarshal(data, &h); err != nil {
+		return false, nil
+	}
+
+	switch h.Handler {
+	case "reverse_proxy":
+		for _, u := range h.Upstreams {
+			upstreams = append(upstreams, u.Dial)
+		}
+	case "authentication":
+		if _, ok := h.Providers["http_basic"]; ok {
+			basicAuth = true
+		}
+	case "subroute":
+		for _, sub := range h.Routes {
+			for _, inner := range sub.Handle {
+				a, u := inspectHandler(inner)
+				basicAuth = basicAuth || a
+				upstreams = append(upstreams, u...)
+			}
+		}
+	}
+	return basicAuth, upstreams
 }
 
 // RemoveRoute removes a route by its ID.
@@ -870,6 +964,8 @@ func (c *Caddy) AddRouteMulti(appID string, domains []string, upstreams []string
 	if err != nil {
 		return fmt.Errorf("build route: %w", err)
 	}
+	// Same reasoning as AddRoute: replace, never stack a second route on an @id.
+	c.RemoveRoute(appID) //nolint:errcheck // absent route is the normal case
 	cmd := fmt.Sprintf(
 		`curl -sf -X POST %s/config/apps/http/servers/srv0/routes -H "Content-Type: application/json" -d %s`,
 		CaddyAdminURL, ssh.ShellQuote(string(data)),
