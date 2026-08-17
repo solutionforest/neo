@@ -4,6 +4,33 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.25.0 — 2026-08-17
+
+### New Features
+
+- **`release:` — commands that run inside the new container before traffic switches.** The gap `hooks:` could not fill: hooks run on your machine, so they can't run `php artisan migrate --force` or `storage:link` in the deployed container. Release commands run on the server, in the new container, after its health check and *before* Caddy switches traffic to it.
+
+  ```yaml
+  release:
+    - php artisan migrate --force
+    - php artisan config:cache
+
+  environments:
+    dev:
+      release:                       # replaces the top-level list
+        - php artisan storage:link
+  ```
+
+  - **A failure rolls the deploy back.** The new container is removed and the old one keeps serving, so a broken migration never goes live.
+  - **Scaled apps run the list once**, in the first new replica — migrations must not run concurrently.
+  - `--env-only` runs them against the live container (there is no staging container on that path), so a failure is reported rather than rolled back. Useful for `config:cache` after an env change.
+  - `--all` runs them per environment before that environment's traffic switch.
+  - Output is streamed, so a long migration shows progress instead of a frozen spinner.
+
+  Release commands must exit — a long-running process belongs in `workers:` or the image's `CMD`.
+
+---
+
 ## v0.24.5 — 2026-08-17
 
 ### New Features
