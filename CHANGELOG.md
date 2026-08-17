@@ -4,6 +4,28 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.25.1 — 2026-08-17
+
+### New Features
+
+- **`command:` for the app container.** Workers, sidecars and compose services could all override their image CMD; the app was the arbitrary exception. It now takes `command:` at the top level and per environment — useful for running Octane with different worker counts per environment, or a different entrypoint from a shared image. Both YAML forms are accepted:
+
+  ```yaml
+  command: php artisan octane:frankenphp --workers=4
+  # or, docker-compose style
+  command: ["sh", "-lc", "php artisan octane:frankenphp --workers=4"]
+  ```
+
+  The command is persisted to server state, so `--env-only` restarts keep it.
+
+- **`neo config generate` carries over the app service's `command:`.** It was read for sidecars only, so migrating a compose project whose app overrode its CMD silently dropped it and deployed the wrong process.
+
+### Fixes
+
+- **A container that exits immediately now says why.** If `command:` is set and the container dies on start, the deploy names it as the likely cause instead of reporting a bare health-check failure — a container's command is its main process, so a one-off task exits in milliseconds and takes the container with it. Use `release:` for those.
+
+---
+
 ## v0.25.0 — 2026-08-17
 
 ### New Features
