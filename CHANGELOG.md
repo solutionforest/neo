@@ -4,6 +4,23 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.24.3 — 2026-08-16
+
+### Fixes
+
+- **Basic auth could be added and never enforced.** `AddRoute` POSTed a new route without removing the existing one carrying the same `@id`. Caddy keeps route IDs unique, so adding `basic_auth` to an app that already had a route either failed silently or left the old, unauthenticated route in front of the new one — the site stayed open while Neo reported success. Route creation now replaces rather than stacks, in both the single-upstream and scaled paths.
+
+### New Features
+
+- **`neo caddy routes`** — prints what the proxy is *actually* serving: route ID, domains, upstreams, and whether basic auth is in the handler chain. Reading Caddy back is the only way to tell a route that was configured from a route that was accepted.
+- **`neo caddy reload`** — rebuilds every app's route from `/etc/neo/state.json` (domains, upstream, HTTP/HTTPS mode, basic auth, edge-HTTPS headers). Use `--app <name>` for one app. This is the repair tool when the live proxy has drifted from state after an interrupted deploy or a manual container change.
+
+### Notes
+
+- Caddy has no config "reload" to trigger: the admin API applies changes the moment they are made, and `neo caddy update` updates the Caddy *image*, not the routes. `neo caddy reload` exists for drift repair, not as a step you need in a normal deploy.
+
+---
+
 ## v0.24.2 — 2026-08-16
 
 ### Fixes
