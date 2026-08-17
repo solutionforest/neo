@@ -88,6 +88,7 @@ type App struct {
 	Workers      map[string]AppWorker  `json:"workers,omitempty"`
 	Sidecars     map[string]AppSidecar `json:"sidecars,omitempty"`
 	Restart      string                `json:"restart,omitempty"`
+	Command      string                `json:"command,omitempty"` // overrides the image CMD; persisted so env-only restarts keep it
 	Health       *HealthCheck          `json:"health,omitempty"`
 	BasicAuth    *AppBasicAuth         `json:"basic_auth,omitempty"` // HTTP basic auth at the Caddy proxy layer; persisted so route rebuilds preserve it
 	Scale        int                   `json:"scale,omitempty"`      // number of replicas; 0 or 1 means single-container mode

@@ -222,6 +222,7 @@ https: true               # nil=default, true=HTTPS, false=HTTP-only
 env_file: .env.production # load env vars from file
 env_encrypted: .env.encrypted  # committed encrypted env file (Laravel env:encrypt format)
 dockerfile: ./docker/Dockerfile  # Dockerfile path relative to project root (default: ./Dockerfile); also settable per environment; --dockerfile overrides both
+command: php artisan octane:start  # override the image CMD (string or list form); per-environment override supported
 compose_service: app      # which docker-compose service to extract from
 restart: unless-stopped   # Docker restart policy
 env:                      # env var defaults (non-sensitive)
@@ -371,6 +372,8 @@ The generator (`commands/config.go`) warns about each of these on stdout:
   field; the build **context** is not (deploy always builds from the project root).
 - **Sidecar fidelity.** Only image/env/volumes/command carry over — a sidecar's
   `ports`, `healthcheck`, and `entrypoint` are not migrated.
+
+**`command:` vs `release:`** — `command:` replaces the app container's main process and must keep running (Octane flags per environment, a different server binary from a shared image). `release:` is for one-off tasks that exit. Setting `command:` to a one-off task kills the container; deploy detects the immediate exit and says so instead of leaving you with a bare "failed health check". `command:` accepts a string or a docker-compose style list (joined with spaces), is stored in `state.App.Command` so `--env-only` restarts keep it, and is now carried over from a compose service by `neo config generate` (previously read for sidecars only).
 
 ### Release Commands (`release.go`):
 Commands run **inside the new container on the server**, not locally — the gap `hooks:` can't fill.

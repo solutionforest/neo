@@ -96,6 +96,31 @@ func (h *HookCommands) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	return nil
 }
 
+// CommandString is a container command that accepts both YAML forms:
+//
+//	command: php artisan octane:start        # string
+//	command: ["sh", "-lc", "php artisan …"]  # list (docker-compose style)
+//
+// The list form is what people copy across from docker-compose.yml, so
+// rejecting it would be a papercut for exactly the migration Neo is meant to
+// smooth. Lists are joined with spaces and run through `sh -c`, matching how
+// worker and sidecar commands already behave.
+type CommandString string
+
+func (c *CommandString) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var single string
+	if err := unmarshal(&single); err == nil {
+		*c = CommandString(single)
+		return nil
+	}
+	var list []string
+	if err := unmarshal(&list); err != nil {
+		return err
+	}
+	*c = CommandString(strings.Join(list, " "))
+	return nil
+}
+
 // NeoHooks represents deploy lifecycle hooks in .neo.yml.
 type NeoHooks struct {
 	PreBuild   HookCommands `yaml:"pre_build,omitempty"`
@@ -174,6 +199,7 @@ type NeoEnvironment struct {
 	EnvFile      string                `yaml:"env_file,omitempty"`
 	EnvEncrypted string                `yaml:"env_encrypted,omitempty"` // Laravel-encrypted env file (php artisan env:encrypt)
 	Dockerfile   string                `yaml:"dockerfile,omitempty"`    // Dockerfile path for this environment (overrides top-level)
+	Command      CommandString         `yaml:"command,omitempty"`       // override the app image CMD for this environment
 	SSL          *NeoSSL               `yaml:"ssl,omitempty"`
 	BasicAuth    *NeoBasicAuth         `yaml:"basic_auth,omitempty"` // HTTP basic auth at proxy layer
 	Volumes      map[string]NeoVolume  `yaml:"volumes,omitempty"`    // environment-specific persistent volumes
@@ -200,6 +226,7 @@ type NeoConfig struct {
 	Env            map[string]string         `yaml:"env,omitempty"`
 	EnvFile        string                    `yaml:"env_file,omitempty"`
 	EnvEncrypted   string                    `yaml:"env_encrypted,omitempty"` // Laravel-encrypted env file (php artisan env:encrypt); auto-detects .env.encrypted
+	Command        CommandString             `yaml:"command,omitempty"`       // override the app image CMD (must be a long-running process)
 	Dockerfile     string                    `yaml:"dockerfile,omitempty"`    // Dockerfile path relative to project root (default: Dockerfile); --dockerfile overrides
 	ComposeService string                    `yaml:"compose_service,omitempty"`
 	Restart        string                    `yaml:"restart,omitempty"` // Docker restart policy (default: unless-stopped)

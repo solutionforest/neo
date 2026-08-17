@@ -220,6 +220,10 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			if env.EnvEncrypted != "" {
 				neoConfig.EnvEncrypted = env.EnvEncrypted
 			}
+			// A per-environment command: replaces the top-level one.
+			if env.Command != "" {
+				neoConfig.Command = env.Command
+			}
 			// A per-environment dockerfile: wins over the top-level one, but an
 			// explicit --dockerfile still beats both. Re-resolved here because
 			// the environment isn't known when the flag is first handled.
@@ -557,6 +561,12 @@ func runDeploy(projectPath string, flags deployFlags) error {
 
 		spin = ui.NewSpinner("Starting container with new env...")
 		spin.Start()
+		// The image isn't rebuilt here, so the command comes from state — but a
+		// changed command: in .neo.yml should still take effect on this path.
+		envOnlyCommand := existing.Command
+		if neoConfig != nil && neoConfig.Command != "" {
+			envOnlyCommand = string(neoConfig.Command)
+		}
 		envOnlyOpts := remote.RunOpts{
 			Name:    containerName,
 			Image:   existing.Image,
@@ -564,6 +574,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			Restart: restartPolicy(existing.Restart),
 			Volumes: volumes,
 			Env:     env,
+			Cmd:     envOnlyCommand,
 		}
 		applyHealth(&envOnlyOpts, existing.Health)
 		_, startErr := docker.Run(envOnlyOpts)
@@ -669,9 +680,11 @@ func runDeploy(projectPath string, flags deployFlags) error {
 
 	// Resolve restart policy and health check from .neo.yml
 	appRestart := ""
+	appCommand := ""
 	var appHealth *state.HealthCheck
 	if neoConfig != nil {
 		appRestart = neoConfig.Restart
+		appCommand = string(neoConfig.Command)
 		appHealth = neoHealthToState(neoConfig.Health)
 	}
 
@@ -779,6 +792,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 				Restart: restartPolicy(appRestart),
 				Volumes: volumes,
 				Env:     env,
+				Cmd:     appCommand,
 			}
 			applyHealth(&rOpts, appHealth)
 			_, rErr := docker.Run(rOpts)
@@ -926,6 +940,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			Restart: restartPolicy(appRestart),
 			Volumes: volumes,
 			Env:     env,
+			Cmd:     appCommand,
 		}
 		applyHealth(&appOpts, appHealth)
 		_, err = docker.Run(appOpts)
@@ -943,6 +958,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 
 		if !healthy {
 			// Rollback: remove the failed new container, keep old one running
+			explainCommandExit(docker, nextName, appCommand)
 			docker.Remove(nextName)
 			ui.Error("New container failed health check — rolled back")
 			ui.Info(fmt.Sprintf("Old version still running. Debug with: neo logs %s", appName))
@@ -1357,6 +1373,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		Workers:      workerStates,
 		Sidecars:     sidecarStates,
 		Restart:      appRestart,
+		Command:      appCommand,
 		Health:       appHealth,
 		BasicAuth:    neoBasicAuthToState(neoConfig),
 		Scale:        scale,
@@ -2324,6 +2341,23 @@ func currentServerName() string {
 	return cfg.Current
 }
 
+// explainCommandExit names the likely cause when a container with a custom
+// command: dies immediately. A command is the container's main process, so a
+// one-off task (php artisan storage:link, a migration, an echo) exits in
+// milliseconds and takes the container with it. Without this the operator just
+// sees "failed health check" and has no reason to suspect their command.
+func explainCommandExit(docker *remote.Docker, containerName, command string) {
+	if command == "" {
+		return
+	}
+	if status := docker.ContainerStatus(containerName); status != "exited" && status != "unknown" {
+		return // still running: the command isn't what broke it
+	}
+	ui.Error(fmt.Sprintf("The container exited on its own. command: is set to %q.", command))
+	ui.Info("A container's command is its main process — it has to keep running.")
+	ui.Info("For one-off setup tasks (migrations, storage:link, cache warming) use release: instead, which runs them in the container and then continues the deploy.")
+}
+
 // resolveDockerfilePath resolves the Dockerfile to build from:
 // explicit (flag or config value) > ./Dockerfile, made absolute against the
 // project directory. Keeping this in one place is what lets the per-environment
@@ -2596,6 +2630,10 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 	// Resolve restart policy and health check
 	allRestart := neoConfig.Restart
 	allHealth := neoHealthToState(neoConfig.Health)
+	allCommand := string(neoConfig.Command)
+	if envCfg.Command != "" {
+		allCommand = string(envCfg.Command)
+	}
 
 	// Build volumes list
 	var allExistingApp *state.App
@@ -2615,6 +2653,7 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		Restart: restartPolicy(allRestart),
 		Volumes: volumes,
 		Env:     env,
+		Cmd:     allCommand,
 	}
 	applyHealth(&allOpts, allHealth)
 	if _, err := docker.Run(allOpts); err != nil {
@@ -2728,6 +2767,7 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		Services:     make(map[string]state.AppService),
 		Workers:      make(map[string]state.AppWorker),
 		Restart:      allRestart,
+		Command:      allCommand,
 		Health:       allHealth,
 		BasicAuth:    neoBasicAuthToState(&effCfg),
 		InstalledAt:  time.Now().UTC().Format(time.RFC3339),

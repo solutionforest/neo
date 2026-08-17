@@ -241,6 +241,14 @@ func runConfigGenerate(composePath string) error {
 		fmt.Printf("  %s  dockerfile: %s\n", ui.Faint.Render("●"), df)
 	}
 
+	// Carry over the app service's command:. It was previously read for sidecars
+	// only, so a compose project whose app overrode its image CMD lost that on
+	// migration and deployed the wrong process.
+	if cmd := parseComposeCommand(appSvc.Command); cmd != "" {
+		cfg.Command = CommandString(cmd)
+		fmt.Printf("  %s  command: %s\n", ui.Faint.Render("●"), cmd)
+	}
+
 	// Extract app env vars
 	if appSvc.Environment != nil {
 		cfg.Env = parseComposeEnvironment(appSvc.Environment)

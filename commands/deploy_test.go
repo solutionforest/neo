@@ -450,3 +450,61 @@ environments:
 		t.Errorf("environments.prod.dockerfile = %q, want empty (inherits)", got)
 	}
 }
+
+func TestAppCommandParsesFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	content := `name: my-app
+command: php artisan octane:frankenphp --workers=4
+environments:
+  dev:
+    command: php artisan octane:frankenphp --workers=1 --max-requests=50
+  prod:
+    server: prod-box
+`
+	if err := os.WriteFile(filepath.Join(dir, ".neo.yml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	cfg, err := loadNeoConfig(dir)
+	if err != nil {
+		t.Fatalf("loadNeoConfig: %v", err)
+	}
+	if string(cfg.Command) != "php artisan octane:frankenphp --workers=4" {
+		t.Errorf("top-level command = %q", cfg.Command)
+	}
+	if got := string(cfg.Environments["dev"].Command); got != "php artisan octane:frankenphp --workers=1 --max-requests=50" {
+		t.Errorf("environments.dev.command = %q", got)
+	}
+	if got := string(cfg.Environments["prod"].Command); got != "" {
+		t.Errorf("environments.prod.command = %q, want empty (inherits)", got)
+	}
+}
+
+func TestAppCommandListFormParsesFromYAML(t *testing.T) {
+	// docker-compose style list form — what people copy across when migrating.
+	dir := t.TempDir()
+	content := `name: my-app
+command:
+  - sh
+  - -lc
+  - >-
+    php artisan octane:frankenphp --workers=2
+environments:
+  dev:
+    command: ["php", "artisan", "serve"]
+`
+	if err := os.WriteFile(filepath.Join(dir, ".neo.yml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	cfg, err := loadNeoConfig(dir)
+	if err != nil {
+		t.Fatalf("loadNeoConfig: %v", err)
+	}
+	if want := "sh -lc php artisan octane:frankenphp --workers=2"; string(cfg.Command) != want {
+		t.Errorf("command = %q, want %q", cfg.Command, want)
+	}
+	if got := string(cfg.Environments["dev"].Command); got != "php artisan serve" {
+		t.Errorf("environments.dev.command = %q", got)
+	}
+}
