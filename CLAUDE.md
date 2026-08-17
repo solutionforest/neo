@@ -228,6 +228,11 @@ env:                      # env var defaults (non-sensitive)
   APP_ENV: production
   LOG_LEVEL: info
 
+# Release commands (run INSIDE the new container, on the server, before traffic switches)
+release:
+  - php artisan migrate --force
+  - php artisan config:cache
+
 # Deploy lifecycle hooks (run locally)
 hooks:
   pre_build:              # before Docker build
@@ -366,6 +371,17 @@ The generator (`commands/config.go`) warns about each of these on stdout:
   field; the build **context** is not (deploy always builds from the project root).
 - **Sidecar fidelity.** Only image/env/volumes/command carry over — a sidecar's
   `ports`, `healthcheck`, and `entrypoint` are not migrated.
+
+### Release Commands (`release.go`):
+Commands run **inside the new container on the server**, not locally — the gap `hooks:` can't fill.
+
+- `release:` at the top level, or per environment (an environment's list fully replaces the top-level one, like `hooks`).
+- Runs in `app-<name>-next` after the health check passes and **before** Caddy switches traffic. A failure removes the new container and aborts: the old version keeps serving. This is what makes `php artisan migrate --force` safe to automate.
+- Scaled apps run the list **once**, in the first new replica — migrations are not safe to run N times concurrently. A failure tears down the whole new replica set.
+- `--env-only` runs them against the live container (no `-next` exists on that path), so a failure is reported, not rolled back. Useful for `config:cache` after an env change.
+- `--all` runs them per environment before that environment's traffic switch, so one environment failing doesn't take the others down.
+- Output is streamed (`Docker.ExecStream`, stderr folded into stdout) so a long migration shows progress instead of a frozen spinner.
+- **Not** for long-running processes — these must exit. A server process belongs in the image's CMD or in `workers:`.
 
 ### Deploy Hooks (`hooks.go`):
 Local shell commands that run during deploy lifecycle:

@@ -182,6 +182,7 @@ type NeoEnvironment struct {
 	Restart      string                `yaml:"restart,omitempty"`    // Docker restart policy override
 	Health       *NeoHealth            `yaml:"health,omitempty"`     // Docker health check override
 	Hooks        *NeoHooks             `yaml:"hooks,omitempty"`      // deploy lifecycle hooks (override top-level)
+	Release      HookCommands          `yaml:"release,omitempty"`    // commands run inside the new container before traffic switches
 	Scale        int                   `yaml:"scale,omitempty"`      // number of app replicas (overrides top-level)
 }
 
@@ -204,12 +205,22 @@ type NeoConfig struct {
 	Restart        string                    `yaml:"restart,omitempty"` // Docker restart policy (default: unless-stopped)
 	Health         *NeoHealth                `yaml:"health,omitempty"`  // Docker health check
 	Hooks          *NeoHooks                 `yaml:"hooks,omitempty"`
+	Release        HookCommands              `yaml:"release,omitempty"` // commands run inside the new container before traffic switches
 	Environments   map[string]NeoEnvironment `yaml:"environments,omitempty"`
 	Workers        map[string]NeoWorker      `yaml:"workers,omitempty"`
 	Sidecars       map[string]NeoSidecar     `yaml:"sidecars,omitempty"`
 	Volumes        map[string]NeoVolume      `yaml:"volumes,omitempty"`
 	Dev            *NeoDevConfig             `yaml:"dev,omitempty"`   // dev-only settings for `neo dev`
 	Scale          int                       `yaml:"scale,omitempty"` // number of app replicas (default: 1)
+}
+
+// ReleaseCommands returns the release commands to run inside the new container,
+// nil-safe so callers don't need to guard on the config existing.
+func (c *NeoConfig) ReleaseCommands() HookCommands {
+	if c == nil {
+		return nil
+	}
+	return c.Release
 }
 
 // EffectiveServers returns the full list of servers for this environment.

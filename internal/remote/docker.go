@@ -525,6 +525,17 @@ func (d *Docker) Exec(container, cmd string) (string, error) {
 	return d.exec.Run(fmt.Sprintf("%s exec %s sh -c %s", d.bin(), ssh.ShellQuote(container), ssh.ShellQuote(cmd)))
 }
 
+// ExecStream runs a command inside a running container, streaming its output.
+// Used for release commands, where a migration can run for minutes and the
+// operator needs to see progress rather than a frozen spinner.
+func (d *Docker) ExecStream(container, cmd string, w io.Writer) error {
+	// 2>&1 so failing migrations report why: docker exec sends the command's
+	// stderr to our stderr, which Stream would otherwise drop.
+	full := fmt.Sprintf("%s exec %s sh -c %s 2>&1",
+		d.bin(), ssh.ShellQuote(container), ssh.ShellQuote(cmd))
+	return d.exec.Stream(full, w)
+}
+
 // Build builds an image from a build context directory on the remote server.
 func (d *Docker) Build(contextDir, dockerfile, tag string, w io.Writer) error {
 	cmd := fmt.Sprintf("DOCKER_BUILDKIT=1 %s build -t %s -f %s %s", d.bin(), ssh.ShellQuote(tag), ssh.ShellQuote(dockerfile), ssh.ShellQuote(contextDir))

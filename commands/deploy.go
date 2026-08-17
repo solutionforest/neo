@@ -269,6 +269,10 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			if env.Hooks != nil {
 				neoConfig.Hooks = env.Hooks
 			}
+			// Same for release: — an environment's list replaces the top-level one.
+			if len(env.Release) > 0 {
+				neoConfig.Release = env.Release
+			}
 			// Environment basic_auth overrides top-level
 			if env.BasicAuth != nil {
 				neoConfig.BasicAuth = env.BasicAuth
@@ -577,6 +581,17 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			return nil
 		}
 
+		// Release commands run here too: an env change usually needs the
+		// framework's caches rebuilt (config:cache bakes env values in). There
+		// is no -next container on this path, so a failure is reported rather
+		// than rolled back — the container is already live with the new env.
+		if release := neoConfig.ReleaseCommands(); len(release) > 0 {
+			if err := runReleaseCommands(docker, containerName, release); err != nil {
+				ui.Error(err.Error())
+				ui.Info("The container is running with the new env, but release commands did not finish.")
+			}
+		}
+
 		// Update Caddy route with fresh config from .neo.yml (e.g. basic_auth changes).
 		// basic_auth is applied at the Caddy proxy layer, not the container — so any
 		// .neo.yml changes to basic_auth/https/domains must be reflected here even
@@ -797,6 +812,22 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		}
 		ui.Success(fmt.Sprintf("All %d replicas healthy", scale))
 
+		// Release commands run ONCE, in the first new replica — migrations are
+		// not safe to run N times in parallel. Failure tears down the whole new
+		// replica set and leaves the old one serving.
+		if release := neoConfig.ReleaseCommands(); len(release) > 0 && len(nextNames) > 0 {
+			if err := runReleaseCommands(docker, nextNames[0], release); err != nil {
+				for _, n := range nextNames {
+					docker.Remove(n)
+				}
+				ui.Error(err.Error())
+				if isRedeploy {
+					ui.Info(fmt.Sprintf("Rolled back — the previous replicas are still serving. Debug with: neo logs %s", appName))
+				}
+				return nil
+			}
+		}
+
 		authOpts := neoBasicAuthToRouteOpts(neoConfig)
 
 		// For redeploy: switch Caddy to -next replicas before removing old containers
@@ -949,6 +980,20 @@ func runDeploy(projectPath string, flags deployFlags) error {
 					return nil
 				}
 				ui.Success(fmt.Sprintf("HTTP health OK (%s)", hOpts.Path))
+			}
+		}
+
+		// Release commands run in the new container while the old one still
+		// serves traffic, so a failed migration rolls back instead of taking
+		// the site down.
+		if release := neoConfig.ReleaseCommands(); len(release) > 0 {
+			if err := runReleaseCommands(docker, nextName, release); err != nil {
+				docker.Remove(nextName)
+				ui.Error(err.Error())
+				if isRedeploy {
+					ui.Info(fmt.Sprintf("Rolled back — the previous version is still serving. Debug with: neo logs %s", appName))
+				}
+				return nil
 			}
 		}
 
@@ -2579,6 +2624,15 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 	if !waitForHealthy(docker, nextName, port, 120*time.Second) {
 		docker.Remove(nextName)
 		return "", fmt.Errorf("container failed health check")
+	}
+
+	// Release commands run in the new container before traffic switches, so a
+	// failure here fails this environment only and leaves it on the old version.
+	if release := resolveRelease(neoConfig.ReleaseCommands(), envCfg.Release); len(release) > 0 {
+		if err := runReleaseCommands(docker, nextName, release); err != nil {
+			docker.Remove(nextName)
+			return "", err
+		}
 	}
 
 	// Determine HTTP mode
