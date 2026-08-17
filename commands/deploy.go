@@ -106,15 +106,11 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	// Load .neo.yml for defaults (parsed early for name/port/domain/dockerfile)
 	neoConfig, _ := loadNeoConfig(absPath)
 
-	// Resolve Dockerfile: --dockerfile flag > .neo.yml dockerfile: > ./Dockerfile
-	if dockerfile == "" && neoConfig != nil && neoConfig.Dockerfile != "" {
-		dockerfile = neoConfig.Dockerfile
-	}
-	if dockerfile == "" {
-		dockerfile = filepath.Join(absPath, "Dockerfile")
-	} else if !filepath.IsAbs(dockerfile) {
-		dockerfile = filepath.Join(absPath, dockerfile)
-	}
+	// Resolve Dockerfile: --dockerfile flag > .neo.yml dockerfile: > ./Dockerfile.
+	// A per-environment dockerfile: is applied later, once the environment is
+	// known, unless the flag pinned one here.
+	dockerfileFromFlag := dockerfile != ""
+	dockerfile = resolveDockerfilePath(absPath, dockerfile, neoConfig)
 	if _, err := os.Stat(dockerfile); err != nil {
 		ui.Error("No Dockerfile found. Create one, set dockerfile: in .neo.yml, or use --dockerfile.")
 		return nil
@@ -223,6 +219,16 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			// .env.<environment>.encrypted.
 			if env.EnvEncrypted != "" {
 				neoConfig.EnvEncrypted = env.EnvEncrypted
+			}
+			// A per-environment dockerfile: wins over the top-level one, but an
+			// explicit --dockerfile still beats both. Re-resolved here because
+			// the environment isn't known when the flag is first handled.
+			if env.Dockerfile != "" && !dockerfileFromFlag {
+				neoConfig.Dockerfile = env.Dockerfile
+				dockerfile = resolveDockerfilePath(absPath, env.Dockerfile, neoConfig)
+				if _, statErr := os.Stat(dockerfile); statErr != nil {
+					return fmt.Errorf("environment %q sets dockerfile: %s, which does not exist", envName, env.Dockerfile)
+				}
 			}
 			// Environment SSL/proxy settings override top-level
 			if env.HTTPS != nil {
@@ -2094,6 +2100,12 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 		return fmt.Errorf("every environment must specify a server:")
 	}
 
+	// --all builds one image and ships it everywhere, so the environments have to
+	// agree on which Dockerfile that image comes from.
+	if err := checkAllDockerfilesAgree(neoConfig, flags.dockerfile != ""); err != nil {
+		return err
+	}
+
 	// Count total deploy targets (each server in a group is a separate target)
 	totalTargets := 0
 	for _, envCfg := range neoConfig.Environments {
@@ -2267,6 +2279,69 @@ func currentServerName() string {
 	return cfg.Current
 }
 
+// resolveDockerfilePath resolves the Dockerfile to build from:
+// explicit (flag or config value) > ./Dockerfile, made absolute against the
+// project directory. Keeping this in one place is what lets the per-environment
+// dockerfile: be applied after the environment is known.
+func resolveDockerfilePath(projectDir, explicit string, neoConfig *NeoConfig) string {
+	path := explicit
+	if path == "" && neoConfig != nil {
+		path = neoConfig.Dockerfile
+	}
+	if path == "" {
+		return filepath.Join(projectDir, "Dockerfile")
+	}
+	if !filepath.IsAbs(path) {
+		return filepath.Join(projectDir, path)
+	}
+	return path
+}
+
+// checkAllDockerfilesAgree rejects a --all deploy whose environments would need
+// different images. --all exists to build once and ship the same artifact to
+// every environment; silently picking one Dockerfile and calling it "deployed
+// everywhere" would ship the wrong build.
+//
+// flagPinned means --dockerfile was passed, which overrides every environment
+// and therefore removes the conflict.
+func checkAllDockerfilesAgree(neoConfig *NeoConfig, flagPinned bool) error {
+	if neoConfig == nil || flagPinned {
+		return nil
+	}
+
+	base := neoConfig.Dockerfile // "" means the default ./Dockerfile
+	seen := map[string][]string{}
+	for envName, envCfg := range neoConfig.Environments {
+		path := envCfg.Dockerfile
+		if path == "" {
+			path = base
+		}
+		seen[path] = append(seen[path], envName)
+	}
+	if len(seen) <= 1 {
+		return nil
+	}
+
+	paths := make([]string, 0, len(seen))
+	for path := range seen {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	ui.Error("--all builds one image, but these environments ask for different Dockerfiles:")
+	for _, path := range paths {
+		label := path
+		if label == "" {
+			label = "Dockerfile (default)"
+		}
+		envs := seen[path]
+		sort.Strings(envs)
+		ui.Info(fmt.Sprintf("  %s → %s", label, strings.Join(envs, ", ")))
+	}
+	ui.Info("Deploy them one at a time (neo deploy --to <environment>), or pass --dockerfile to force one for every environment.")
+	return fmt.Errorf("environments disagree on dockerfile:")
+}
+
 // environmentAppName derives the container/app name for one .neo.yml
 // environment: --name flag > environment name: > .neo.yml name: > directory,
 // with a -<environment> suffix for anything that isn't the primary environment.
@@ -2309,7 +2384,8 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		case neoConfig.Port > 0:
 			port = neoConfig.Port
 		default:
-			port = detectPort(filepath.Join(absPath, "Dockerfile"))
+			// --all guarantees a single Dockerfile across environments.
+			port = detectPort(resolveDockerfilePath(absPath, "", neoConfig))
 			if port == 0 {
 				port = 8080
 			}

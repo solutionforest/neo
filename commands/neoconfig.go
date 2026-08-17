@@ -173,6 +173,7 @@ type NeoEnvironment struct {
 	Env          map[string]string     `yaml:"env,omitempty"`
 	EnvFile      string                `yaml:"env_file,omitempty"`
 	EnvEncrypted string                `yaml:"env_encrypted,omitempty"` // Laravel-encrypted env file (php artisan env:encrypt)
+	Dockerfile   string                `yaml:"dockerfile,omitempty"`    // Dockerfile path for this environment (overrides top-level)
 	SSL          *NeoSSL               `yaml:"ssl,omitempty"`
 	BasicAuth    *NeoBasicAuth         `yaml:"basic_auth,omitempty"` // HTTP basic auth at proxy layer
 	Volumes      map[string]NeoVolume  `yaml:"volumes,omitempty"`    // environment-specific persistent volumes

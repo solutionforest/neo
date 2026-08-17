@@ -20,8 +20,8 @@ func TestSanitizeName(t *testing.T) {
 		{"UPPERCASE", "uppercase"},
 		{"a.b.c", "a-b-c"},
 		{"app@v1.0", "app-v1-0"},
-		{"", "app"},       // empty → fallback
-		{"---", "app"},    // only dashes → fallback
+		{"", "app"},    // empty → fallback
+		{"---", "app"}, // only dashes → fallback
 		{"hello world", "hello-world"},
 	}
 
@@ -99,9 +99,9 @@ func TestShouldIgnore(t *testing.T) {
 	patterns := []string{".git", "node_modules", "*.log", "dist"}
 
 	tests := []struct {
-		path    string
-		isDir   bool
-		want    bool
+		path  string
+		isDir bool
+		want  bool
 	}{
 		{".git", true, true},
 		{"node_modules", true, true},
@@ -109,9 +109,9 @@ func TestShouldIgnore(t *testing.T) {
 		{"error.log", false, true},
 		{"dist", true, true},
 		{"src/app.ts", false, false},
-		{"deep/node_modules/pkg", true, true},     // nested component match
-		{"deep/.git/config", false, true},          // nested component match
-		{"my-git-project", false, false},           // should NOT match .git
+		{"deep/node_modules/pkg", true, true}, // nested component match
+		{"deep/.git/config", false, true},     // nested component match
+		{"my-git-project", false, false},      // should NOT match .git
 	}
 
 	for _, tt := range tests {
@@ -324,4 +324,129 @@ func TestGroupTargetsByServer(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestResolveDockerfilePath(t *testing.T) {
+	dir := "/project"
+
+	cases := []struct {
+		name     string
+		explicit string
+		cfg      *NeoConfig
+		want     string
+	}{
+		{"default", "", nil, "/project/Dockerfile"},
+		{"config relative", "", &NeoConfig{Dockerfile: "docker/Dockerfile"}, "/project/docker/Dockerfile"},
+		{"config with ./ prefix", "", &NeoConfig{Dockerfile: "./docker/Dockerfile"}, "/project/docker/Dockerfile"},
+		{"flag beats config", "other/Dockerfile", &NeoConfig{Dockerfile: "docker/Dockerfile"}, "/project/other/Dockerfile"},
+		{"absolute path kept", "/abs/Dockerfile", &NeoConfig{Dockerfile: "docker/Dockerfile"}, "/abs/Dockerfile"},
+		{"empty config field", "", &NeoConfig{}, "/project/Dockerfile"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveDockerfilePath(dir, tc.explicit, tc.cfg); got != tc.want {
+				t.Errorf("resolveDockerfilePath(%q, %+v) = %q, want %q", tc.explicit, tc.cfg, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCheckAllDockerfilesAgree(t *testing.T) {
+	t.Run("all environments inherit the top level", func(t *testing.T) {
+		cfg := &NeoConfig{
+			Dockerfile: "docker/Dockerfile",
+			Environments: map[string]NeoEnvironment{
+				"dev": {}, "prod": {},
+			},
+		}
+		if err := checkAllDockerfilesAgree(cfg, false); err != nil {
+			t.Errorf("expected no conflict: %v", err)
+		}
+	})
+
+	t.Run("environments agree explicitly", func(t *testing.T) {
+		cfg := &NeoConfig{
+			Environments: map[string]NeoEnvironment{
+				"dev":  {Dockerfile: "docker/Dockerfile"},
+				"prod": {Dockerfile: "docker/Dockerfile"},
+			},
+		}
+		if err := checkAllDockerfilesAgree(cfg, false); err != nil {
+			t.Errorf("expected no conflict: %v", err)
+		}
+	})
+
+	t.Run("conflicting dockerfiles are rejected", func(t *testing.T) {
+		// --all builds one image; shipping it as if it were both would be wrong.
+		cfg := &NeoConfig{
+			Environments: map[string]NeoEnvironment{
+				"dev":  {Dockerfile: "docker/Dockerfile.dev"},
+				"prod": {Dockerfile: "docker/Dockerfile"},
+			},
+		}
+		if err := checkAllDockerfilesAgree(cfg, false); err == nil {
+			t.Error("expected an error when environments disagree")
+		}
+	})
+
+	t.Run("one environment overriding the top level conflicts", func(t *testing.T) {
+		cfg := &NeoConfig{
+			Dockerfile: "docker/Dockerfile",
+			Environments: map[string]NeoEnvironment{
+				"dev":  {Dockerfile: "docker/Dockerfile.dev"},
+				"prod": {},
+			},
+		}
+		if err := checkAllDockerfilesAgree(cfg, false); err == nil {
+			t.Error("expected an error when one environment differs from the inherited default")
+		}
+	})
+
+	t.Run("--dockerfile removes the conflict", func(t *testing.T) {
+		cfg := &NeoConfig{
+			Environments: map[string]NeoEnvironment{
+				"dev":  {Dockerfile: "a/Dockerfile"},
+				"prod": {Dockerfile: "b/Dockerfile"},
+			},
+		}
+		if err := checkAllDockerfilesAgree(cfg, true); err != nil {
+			t.Errorf("--dockerfile overrides every environment: %v", err)
+		}
+	})
+
+	t.Run("nil config", func(t *testing.T) {
+		if err := checkAllDockerfilesAgree(nil, false); err != nil {
+			t.Errorf("nil config: %v", err)
+		}
+	})
+}
+
+func TestEnvironmentDockerfileParsesFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	content := `name: fsd-cms
+dockerfile: ./docker/Dockerfile
+environments:
+  dev:
+    dockerfile: ./docker/Dockerfile.dev
+  prod:
+    server: prod-box
+`
+	if err := os.WriteFile(filepath.Join(dir, ".neo.yml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	cfg, err := loadNeoConfig(dir)
+	if err != nil {
+		t.Fatalf("loadNeoConfig: %v", err)
+	}
+	if cfg.Dockerfile != "./docker/Dockerfile" {
+		t.Errorf("top-level dockerfile = %q", cfg.Dockerfile)
+	}
+	if got := cfg.Environments["dev"].Dockerfile; got != "./docker/Dockerfile.dev" {
+		t.Errorf("environments.dev.dockerfile = %q", got)
+	}
+	if got := cfg.Environments["prod"].Dockerfile; got != "" {
+		t.Errorf("environments.prod.dockerfile = %q, want empty (inherits)", got)
+	}
 }

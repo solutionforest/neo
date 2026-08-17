@@ -174,6 +174,8 @@ func newFooCmd() *cobra.Command {
 - `neo deploy --env-file .env` — load env file on deploy
 - `neo deploy --env-key base64:...` — decryption key for `env_encrypted`
 
+**Dockerfile resolution** (highest wins): `--dockerfile` flag > `environments.<env>.dockerfile` > top-level `dockerfile:` > `./Dockerfile`. The per-environment value is applied *after* the environment block is merged (`resolveDockerfilePath` in `deploy.go`), since the environment isn't known when the flag is first handled; a missing file named by an environment is a hard error. `neo deploy --all` builds one image for every environment, so `checkAllDockerfilesAgree` rejects the run when environments name different Dockerfiles — deploy them individually or pass `--dockerfile`.
+
 **Deploy env var priority** (highest wins): CLI `--env` > `--env-file` > `.neo.yml` env > `.neo.yml` env_file > `.neo.yml` env_encrypted > `docker-compose.yml` > server state (redeploy)
 
 **Dev env var priority** (highest wins): `dev.env` > `dev.env_file` > top-level `env` > top-level `env_file` > auto-loaded `.env`
@@ -219,7 +221,7 @@ port: 8080                # container port (default: Dockerfile EXPOSE)
 https: true               # nil=default, true=HTTPS, false=HTTP-only
 env_file: .env.production # load env vars from file
 env_encrypted: .env.encrypted  # committed encrypted env file (Laravel env:encrypt format)
-dockerfile: Dockerfile    # Dockerfile path relative to project root (default: Dockerfile); --dockerfile overrides
+dockerfile: ./docker/Dockerfile  # Dockerfile path relative to project root (default: ./Dockerfile); also settable per environment; --dockerfile overrides both
 compose_service: app      # which docker-compose service to extract from
 restart: unless-stopped   # Docker restart policy
 env:                      # env var defaults (non-sensitive)
@@ -293,6 +295,7 @@ environments:
   staging:
     server: staging-server
     domain: staging.example.com
+    dockerfile: ./docker/Dockerfile.staging # per-environment build file
     env_encrypted: .env.staging.encrypted   # per-environment encrypted secrets
     env:
       APP_ENV: staging
