@@ -870,7 +870,9 @@ neo/
 
 Vxero Neo is **source-available** software, licensed under the
 [Elastic License 2.0 (ELv2)](LICENSE). The source is public — read it, audit it,
-self-host it, modify it for your own use, and contribute back.
+self-host it, modify it for your own use, and contribute back — see
+[CONTRIBUTING.md](CONTRIBUTING.md). Security issues go through
+[private reporting](SECURITY.md), never a public issue.
 
 Neo is **free**, but activation is **required** — every user activates a license
 key before use (`neo activate`). There is no paid tier today; all features are
