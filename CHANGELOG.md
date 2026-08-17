@@ -4,6 +4,26 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.25.4 — 2026-08-17
+
+### New Features
+
+- **`neo config generate` now reports everything it did not carry over.** It parsed about ten service keys and discarded the rest without a word, so a `healthcheck:`, a `deploy.replicas`, or Traefik routing `labels:` vanished and you only found out when the deploy behaved differently from `docker compose up`. The file is now re-read generically and every unhandled key is listed per service, with a pointer where Neo has an equivalent:
+
+  ```
+  Not carried over — review these by hand
+  ~  app     deploy:       replicas map to scale: in .neo.yml
+  ~  app     healthcheck:  add health: to .neo.yml
+  ~  app     labels:       Traefik/proxy labels are not read — set domain: in .neo.yml
+  ~  app     user:         set the user in the Dockerfile instead
+  ```
+
+  Keys that genuinely don't affect a Neo deploy (`container_name`, `networks`, `depends_on`, `logging`) stay quiet.
+
+- **`restart:` is migrated.** It was read to detect one-shot services but never written to `.neo.yml`, so a service declared `restart: unless-stopped` silently fell back to the default.
+
+---
+
 ## v0.25.3 — 2026-08-17
 
 ### Fixes
