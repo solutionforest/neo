@@ -359,6 +359,13 @@ If a `docker-compose.yml` / `compose.yml` exists in the project dir, `neo deploy
 - Use `compose_service` in `.neo.yml` to specify which service if auto-detection fails
 
 #### `neo config generate` — limitations (best-effort, review the output)
+
+**Nothing is dropped in silence.** The typed compose parser reads ~10 service keys;
+`parseComposeRawServices` re-reads the file generically and every key that is neither
+handled nor in `composeIgnorableKeys` is listed under "Not carried over", with advice from
+`composeKeyAdvice` where a Neo equivalent exists (`healthcheck:` → `health:`, `deploy:` →
+`scale:`, `labels:` → set `domain:`). When adding support for a compose key, move it from
+`composeKeyAdvice` into `composeHandledKeys` — a test fails if a key is in both.
 Generating a `.neo.yml` from a large multi-service compose is lossy by design.
 The generator (`commands/config.go`) warns about each of these on stdout:
 - **One app + sidecars only.** Neo deploys a single public app (`build:` service)

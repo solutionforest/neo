@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+	"github.com/vxero/neo/internal/ssh"
 	"github.com/vxero/neo/internal/ui"
 )
 
@@ -298,6 +299,11 @@ func runConfigGenerate(composePath string) error {
 		fmt.Printf("  %s  build args not migrated: %s\n", ui.Yellow.Render("⚠"), strings.Join(args, ", "))
 	}
 
+	// restart: maps straight across when it is a policy Docker accepts.
+	if ssh.ValidateRestartPolicy(appSvc.Restart) {
+		cfg.Restart = appSvc.Restart
+	}
+
 	// Carry over the app service's command:. It was previously read for sidecars
 	// only, so a compose project whose app overrode its image CMD lost that on
 	// migration and deployed the wrong process.
@@ -444,6 +450,32 @@ func runConfigGenerate(composePath string) error {
 				cfg.Sidecars[name] = sidecarFromCompose(svc)
 				fmt.Printf("  %s  %-15s → sidecar (%s)\n", ui.Faint.Render("●"), name, svc.Image)
 				warnSidecarBinds(name, svc)
+			}
+		}
+	}
+
+	// Report every service key generate did not act on. The typed parser
+	// discards unknown keys, so a healthcheck or a replica count used to vanish
+	// with nothing said — the user only found out when the deploy behaved
+	// differently from `docker compose up`.
+	if rawServices, rawErr := parseComposeRawServices(composePath); rawErr == nil {
+		reported := false
+		for _, name := range svcNames {
+			unmigrated := unmigratedComposeKeys(rawServices[name])
+			if len(unmigrated) == 0 {
+				continue
+			}
+			if !reported {
+				fmt.Println()
+				fmt.Printf("  %s\n", ui.Bold.Render("Not carried over — review these by hand"))
+				reported = true
+			}
+			for _, key := range unmigrated {
+				if advice, ok := composeKeyAdvice[key]; ok {
+					fmt.Printf("  %s  %-15s %-14s %s\n", ui.Yellow.Render("~"), name, key+":", ui.Faint.Render(advice))
+				} else {
+					fmt.Printf("  %s  %-15s %-14s %s\n", ui.Yellow.Render("~"), name, key+":", ui.Faint.Render("not migrated"))
+				}
 			}
 		}
 	}

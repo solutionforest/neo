@@ -521,6 +521,92 @@ func composePublicServices(services map[string]composeService) []string {
 	return public
 }
 
+// composeHandledKeys are the service keys config generate actually reads.
+// Anything outside this set is either reported to the user or deliberately
+// ignored — nothing is dropped in silence.
+var composeHandledKeys = map[string]bool{
+	"image": true, "build": true, "ports": true, "environment": true,
+	"env_file": true, "volumes": true, "command": true, "entrypoint": true,
+	"restart": true,
+}
+
+// composeIgnorableKeys are keys with no bearing on a Neo deploy: Neo names its
+// own containers, runs one Docker network, and orders startup itself.
+var composeIgnorableKeys = map[string]bool{
+	"container_name": true, "networks": true, "depends_on": true,
+	"logging": true, "stdin_open": true, "tty": true, "platform": true,
+	"pull_policy": true, "attach": true,
+}
+
+// composeKeyAdvice maps an unmigrated compose key to what the user should do
+// about it. A key absent from this map is reported without a suggestion.
+var composeKeyAdvice = map[string]string{
+	"healthcheck": "add health: to .neo.yml",
+	"deploy":      "replicas map to scale: in .neo.yml",
+	"labels":      "Traefik/proxy labels are not read — set domain: in .neo.yml",
+	"expose":      "internal-only port; set port: if this is the app's listen port",
+	"profiles":    "profile-gated services are migrated as if they always run",
+	"user":        "set the user in the Dockerfile instead",
+	"working_dir": "set WORKDIR in the Dockerfile instead",
+	"secrets":     "use env_encrypted: or neo env set",
+	"configs":     "bake config into the image or mount a volume",
+	"extra_hosts": "no Neo equivalent",
+	"cap_add":     "no Neo equivalent",
+	"privileged":  "no Neo equivalent",
+	"devices":     "no Neo equivalent",
+	"shm_size":    "no Neo equivalent",
+	"ulimits":     "no Neo equivalent",
+	"sysctls":     "no Neo equivalent",
+	"tmpfs":       "no Neo equivalent",
+	"dns":         "no Neo equivalent",
+	"stop_signal": "no Neo equivalent",
+	"init":        "no Neo equivalent",
+	"mem_limit":   "no Neo equivalent",
+	"cpus":        "no Neo equivalent",
+}
+
+// parseComposeRawServices returns each service's keys exactly as written, so
+// generate can tell the user which parts of their file it did not carry over.
+// The typed struct silently discards unknown keys, which is how a dropped
+// healthcheck or replica count went unnoticed.
+func parseComposeRawServices(path string) (map[string][]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw struct {
+		Services map[string]map[string]interface{} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+
+	out := make(map[string][]string, len(raw.Services))
+	for name, svc := range raw.Services {
+		keys := make([]string, 0, len(svc))
+		for key := range svc {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		out[name] = keys
+	}
+	return out, nil
+}
+
+// unmigratedComposeKeys filters a service's keys down to the ones generate does
+// not act on and that are not safely ignorable.
+func unmigratedComposeKeys(keys []string) []string {
+	var out []string
+	for _, key := range keys {
+		if composeHandledKeys[key] || composeIgnorableKeys[key] {
+			continue
+		}
+		out = append(out, key)
+	}
+	return out
+}
+
 // findComposeFile looks for docker-compose files in a directory.
 func findComposeFile(dir string) string {
 	names := []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}

@@ -591,3 +591,85 @@ func TestLooksLikeMigrationCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestUnmigratedComposeKeys(t *testing.T) {
+	keys := []string{
+		// handled
+		"image", "build", "ports", "environment", "env_file", "volumes",
+		"command", "entrypoint", "restart",
+		// safely ignorable for a Neo deploy
+		"container_name", "networks", "depends_on", "logging",
+		// genuinely lost
+		"healthcheck", "deploy", "labels", "user", "working_dir", "shm_size",
+	}
+
+	got := unmigratedComposeKeys(keys)
+	want := []string{"healthcheck", "deploy", "labels", "user", "working_dir", "shm_size"}
+
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	seen := map[string]bool{}
+	for _, k := range got {
+		seen[k] = true
+	}
+	for _, k := range want {
+		if !seen[k] {
+			t.Errorf("%q should have been reported as unmigrated", k)
+		}
+	}
+}
+
+func TestUnmigratedComposeKeysNothingToReport(t *testing.T) {
+	if got := unmigratedComposeKeys([]string{"image", "ports", "container_name"}); len(got) != 0 {
+		t.Errorf("got %v, want nothing", got)
+	}
+}
+
+func TestParseComposeRawServicesSeesEveryKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	content := `services:
+  app:
+    image: app:latest
+    healthcheck:
+      test: ["CMD", "true"]
+    deploy:
+      replicas: 3
+  db:
+    image: postgres:15
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	raw, err := parseComposeRawServices(path)
+	if err != nil {
+		t.Fatalf("parseComposeRawServices: %v", err)
+	}
+	if len(raw) != 2 {
+		t.Fatalf("got %d services, want 2", len(raw))
+	}
+
+	// The typed parser drops healthcheck and deploy; the raw pass must not, or
+	// there is nothing to warn about.
+	unmigrated := unmigratedComposeKeys(raw["app"])
+	if len(unmigrated) != 2 {
+		t.Errorf("app unmigrated = %v, want healthcheck and deploy", unmigrated)
+	}
+	if len(unmigratedComposeKeys(raw["db"])) != 0 {
+		t.Errorf("db should have nothing unmigrated")
+	}
+}
+
+func TestEveryUnmigratedKeyWithAdviceIsActuallyUnmigrated(t *testing.T) {
+	// Advice for a key generate already handles would be misleading.
+	for key := range composeKeyAdvice {
+		if composeHandledKeys[key] {
+			t.Errorf("%q has advice but is handled — the advice would be wrong", key)
+		}
+		if composeIgnorableKeys[key] {
+			t.Errorf("%q has advice but is ignored — it would never be shown", key)
+		}
+	}
+}
