@@ -310,3 +310,148 @@ func TestParseComposeFileMissingService(t *testing.T) {
 		t.Error("expected error for missing service")
 	}
 }
+
+// A compose file where every service shares one prebuilt image — a web tier
+// plus queue workers and a scheduler. This shape used to pick a random service
+// as the public app on each run.
+func multiServiceOneImageCompose() map[string]composeService {
+	return map[string]composeService{
+		"admission-web": {
+			Image:       "org/project:tag",
+			Environment: []interface{}{"VIRTUAL_HOST=admission.example.com", "VIRTUAL_PORT=8080", "APP_PURPOSE=NOMINATION"},
+		},
+		"admission-queue": {
+			Image:       "org/project:tag",
+			Command:     []interface{}{"php", "artisan", "queue:work", "--queue=nomination"},
+			Environment: []interface{}{"APP_PURPOSE=NOMINATION"},
+		},
+		"study-web": {
+			Image:       "org/project:tag",
+			Environment: []interface{}{"VIRTUAL_HOST=study.example.com", "VIRTUAL_PORT=8080", "APP_PURPOSE=STUDY"},
+		},
+		"task": {
+			Image:   "org/project:tag",
+			Command: []interface{}{"php", "artisan", "schedule:work"},
+		},
+		"redis": {Image: "redis:7-alpine"},
+	}
+}
+
+func TestGuessAppServiceIsDeterministic(t *testing.T) {
+	services := multiServiceOneImageCompose()
+
+	first, _ := guessAppService(services)
+	if first == "" {
+		t.Fatal("no app service chosen")
+	}
+	for i := 0; i < 50; i++ {
+		if got, _ := guessAppService(services); got != first {
+			t.Fatalf("selection changed between runs: %q then %q", first, got)
+		}
+	}
+}
+
+func TestGuessAppServiceNeverPicksAWorker(t *testing.T) {
+	services := multiServiceOneImageCompose()
+
+	name, _ := guessAppService(services)
+	if name == "admission-queue" || name == "task" {
+		t.Errorf("picked background service %q as the public app", name)
+	}
+	// The web service with a VIRTUAL_HOST is the right answer; ties break by name.
+	if name != "admission-web" {
+		t.Errorf("app = %q, want admission-web", name)
+	}
+}
+
+func TestGuessAppServicePrefersBuildOverVirtualHost(t *testing.T) {
+	services := map[string]composeService{
+		"proxied": {Image: "org/app:tag", Environment: []interface{}{"VIRTUAL_HOST=a.example.com"}},
+		"built":   {Build: "./", Image: "org/app:tag"},
+	}
+	if name, _ := guessAppService(services); name != "built" {
+		t.Errorf("app = %q, want built", name)
+	}
+}
+
+func TestGuessAppServiceSkipsInfra(t *testing.T) {
+	services := map[string]composeService{
+		"redis": {Image: "redis:7-alpine", Ports: []string{"6379:6379"}},
+		"db":    {Image: "mysql:8", Ports: []string{"3306:3306"}},
+	}
+	if name, _ := guessAppService(services); name != "" {
+		t.Errorf("app = %q, want none — everything is infrastructure", name)
+	}
+}
+
+func TestLooksLikeBackgroundCommand(t *testing.T) {
+	background := []string{
+		"php artisan queue:work --tries=3",
+		"php /var/www/html/artisan schedule:work",
+		"php artisan horizon",
+		"supervisord -n",
+	}
+	for _, cmd := range background {
+		if !looksLikeBackgroundCommand(cmd) {
+			t.Errorf("looksLikeBackgroundCommand(%q) = false", cmd)
+		}
+	}
+
+	foreground := []string{
+		"php artisan octane:frankenphp",
+		"nginx -g 'daemon off;'",
+		"node server.js",
+	}
+	for _, cmd := range foreground {
+		if looksLikeBackgroundCommand(cmd) {
+			t.Errorf("looksLikeBackgroundCommand(%q) = true", cmd)
+		}
+	}
+}
+
+func TestComposePublicServices(t *testing.T) {
+	got := composePublicServices(multiServiceOneImageCompose())
+	want := []string{"admission-web", "study-web"}
+
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestConflictingEnvKeys(t *testing.T) {
+	app := map[string]string{"APP_PURPOSE": "NOMINATION", "DB_QUEUE": "nomination", "TZ": "Asia/Hong_Kong"}
+
+	// A worker inherits the app's env, so a service needing different values
+	// cannot be one — this is what keeps a study queue off the nomination queue.
+	conflicts := conflictingEnvKeys(app, map[string]string{"APP_PURPOSE": "STUDY", "DB_QUEUE": "study"})
+	if len(conflicts) != 2 || conflicts[0] != "APP_PURPOSE" || conflicts[1] != "DB_QUEUE" {
+		t.Errorf("conflicts = %v, want [APP_PURPOSE DB_QUEUE]", conflicts)
+	}
+
+	// Same values, or keys the app doesn't set, are not conflicts.
+	if got := conflictingEnvKeys(app, map[string]string{"APP_PURPOSE": "NOMINATION", "NEW_KEY": "x"}); len(got) != 0 {
+		t.Errorf("conflicts = %v, want none", got)
+	}
+}
+
+func TestSharesAppArtifact(t *testing.T) {
+	app := composeService{Image: "org/project:tag"}
+
+	if !sharesAppArtifact(app, composeService{Image: "org/project:tag"}) {
+		t.Error("same image should share the artifact")
+	}
+	if sharesAppArtifact(app, composeService{Image: "redis:7"}) {
+		t.Error("different image should not share the artifact")
+	}
+	if !sharesAppArtifact(composeService{Build: "./"}, composeService{Build: "./"}) {
+		t.Error("same build context should share the artifact")
+	}
+	if sharesAppArtifact(composeService{Build: "./"}, composeService{Build: "./other"}) {
+		t.Error("different build contexts should not share the artifact")
+	}
+}

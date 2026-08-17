@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -294,56 +295,139 @@ func parseComposePort(ports []string) int {
 	return port
 }
 
-// guessAppService tries to identify the main application service.
-// It prefers services with a build directive and skips known infrastructure images.
-func guessAppService(services map[string]composeService) (string, composeService) {
-	infraPrefixes := []string{
-		"mysql", "mariadb", "postgres", "mongo", "redis",
-		"memcached", "rabbitmq", "elasticsearch", "meilisearch",
-		"minio", "mailhog", "mailpit", "selenium", "phpmyadmin",
-		"adminer", "nginx", "traefik", "caddy",
+// composeServiceEnv returns a service's environment as a map, accepting both
+// the map and list forms compose allows.
+func composeServiceEnv(svc composeService) map[string]string {
+	if svc.Environment == nil {
+		return nil
 	}
+	return parseComposeEnvironment(svc.Environment)
+}
 
-	isInfra := func(name string, svc composeService) bool {
-		nameLower := strings.ToLower(name)
-		for _, prefix := range infraPrefixes {
-			if strings.Contains(nameLower, prefix) {
+// backgroundCommandMarkers identify a service whose command is a background
+// process rather than a web server. These must never be picked as the public
+// app — doing so silently deploys a queue worker where the site should be.
+var backgroundCommandMarkers = []string{
+	"queue:work", "queue:listen", "horizon", "schedule:work", "schedule:run",
+	"worker", "consume", "cron", "supervisord",
+}
+
+// looksLikeBackgroundCommand reports whether a compose command runs a worker,
+// scheduler or similar rather than serving HTTP.
+func looksLikeBackgroundCommand(cmd string) bool {
+	lower := strings.ToLower(cmd)
+	for _, marker := range backgroundCommandMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// composeInfraPrefixes are images/names that are supporting infrastructure, not
+// the application being deployed.
+var composeInfraPrefixes = []string{
+	"mysql", "mariadb", "postgres", "mongo", "redis",
+	"memcached", "rabbitmq", "elasticsearch", "meilisearch",
+	"minio", "mailhog", "mailpit", "selenium", "phpmyadmin",
+	"adminer", "nginx", "traefik", "caddy",
+}
+
+func isInfraService(name string, svc composeService) bool {
+	nameLower := strings.ToLower(name)
+	for _, prefix := range composeInfraPrefixes {
+		if strings.Contains(nameLower, prefix) {
+			return true
+		}
+	}
+	if svc.Image != "" {
+		imageLower := strings.ToLower(svc.Image)
+		for _, prefix := range composeInfraPrefixes {
+			if strings.HasPrefix(imageLower, prefix) {
 				return true
 			}
 		}
-		if svc.Image != "" {
-			imageLower := strings.ToLower(svc.Image)
-			for _, prefix := range infraPrefixes {
-				if strings.HasPrefix(imageLower, prefix) {
-					return true
-				}
-			}
-		}
-		return false
+	}
+	return false
+}
+
+// ComposeAppScore ranks how likely a service is to be the public app.
+// Negative means "never pick this".
+//
+// Ranking beats first-match iteration because compose files routinely contain
+// several services built from one image — a web container plus queue workers
+// and a scheduler. Picking whichever the map yielded first produced a different
+// answer on every run, sometimes naming a queue worker as the site.
+func composeAppScore(name string, svc composeService) int {
+	if isInfraService(name, svc) {
+		return -1
 	}
 
-	// First pass: find services with build + ports (most likely the main app)
+	score := 0
+	if svc.Build != nil {
+		score += 100 // a service built from source is almost always the app
+	}
+	if len(svc.Ports) > 0 {
+		score += 50
+	}
+
+	env := composeServiceEnv(svc)
+	// nginx-proxy / jwilder convention: no published ports, the proxy routes by
+	// VIRTUAL_HOST instead. Common enough that ignoring it mis-picks the app.
+	if env["VIRTUAL_HOST"] != "" || env["VIRTUAL_PORT"] != "" {
+		score += 40
+	}
+	if env["APP_URL"] != "" {
+		score += 5
+	}
+
+	if cmd := parseComposeCommand(svc.Command); cmd != "" {
+		if looksLikeBackgroundCommand(cmd) {
+			return -1 // a worker or scheduler is never the public app
+		}
+		score -= 20 // some other custom command: plausible, but less likely
+	}
+
+	return score
+}
+
+// guessAppService identifies the main application service deterministically:
+// highest score wins, ties broken by name so repeated runs agree.
+func guessAppService(services map[string]composeService) (string, composeService) {
+	names := make([]string, 0, len(services))
+	for name := range services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	bestName, bestScore := "", -1
+	for _, name := range names {
+		if score := composeAppScore(name, services[name]); score > bestScore {
+			bestName, bestScore = name, score
+		}
+	}
+	if bestName == "" {
+		return "", composeService{}
+	}
+	return bestName, services[bestName]
+}
+
+// composePublicServices lists every service that looks externally reachable
+// (published ports or a VIRTUAL_HOST). Neo deploys one public app, so more than
+// one means the compose file needs splitting.
+func composePublicServices(services map[string]composeService) []string {
+	var public []string
 	for name, svc := range services {
-		if svc.Build != nil && len(svc.Ports) > 0 && !isInfra(name, svc) {
-			return name, svc
+		if isInfraService(name, svc) {
+			continue
+		}
+		env := composeServiceEnv(svc)
+		if len(svc.Ports) > 0 || env["VIRTUAL_HOST"] != "" {
+			public = append(public, name)
 		}
 	}
-
-	// Second pass: find services with build that aren't infra
-	for name, svc := range services {
-		if svc.Build != nil && !isInfra(name, svc) {
-			return name, svc
-		}
-	}
-
-	// Third pass: any service that isn't infra
-	for name, svc := range services {
-		if !isInfra(name, svc) {
-			return name, svc
-		}
-	}
-
-	return "", composeService{}
+	sort.Strings(public)
+	return public
 }
 
 // findComposeFile looks for docker-compose files in a directory.

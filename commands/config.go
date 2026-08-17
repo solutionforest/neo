@@ -165,6 +165,35 @@ func sidecarFromCompose(svc composeService) NeoSidecar {
 	return sc
 }
 
+// sharesAppArtifact reports whether a service runs the same image (or is built
+// from the same context) as the app. Those services are workers or sibling
+// sites, not independent infrastructure.
+func sharesAppArtifact(app, svc composeService) bool {
+	if app.Image != "" && svc.Image == app.Image {
+		return true
+	}
+	if app.Build != nil && svc.Build != nil {
+		return fmt.Sprintf("%v", app.Build) == fmt.Sprintf("%v", svc.Build)
+	}
+	return false
+}
+
+// conflictingEnvKeys lists variables a service sets to a different value than
+// the app. Neo workers inherit the app's environment with no per-worker
+// override, so any conflict means the service cannot be modelled as a worker
+// without silently changing its behaviour — a queue bound to DB_QUEUE=study
+// would start draining the nomination queue instead.
+func conflictingEnvKeys(appEnv, svcEnv map[string]string) []string {
+	var keys []string
+	for k, v := range svcEnv {
+		if appVal, ok := appEnv[k]; ok && appVal != v {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // warnSidecarBinds prints a warning for any bind mounts a service declares, since
 // generate migrates only named volumes — bind mounts reference host paths.
 func warnSidecarBinds(name string, svc composeService) {
@@ -228,10 +257,28 @@ func runConfigGenerate(composePath string) error {
 		return nil
 	}
 
+	appEnv := composeServiceEnv(appSvc)
+
 	cfg := &NeoConfig{
 		Name: appName,
 		Port: parseComposePort(appSvc.Ports),
 		Env:  make(map[string]string),
+	}
+
+	// nginx-proxy style: no published ports, the proxy routes on VIRTUAL_HOST
+	// and forwards to VIRTUAL_PORT. Reading those saves the user re-entering
+	// values that are sitting right there in the file.
+	if cfg.Port == 0 {
+		if vp := appEnv["VIRTUAL_PORT"]; vp != "" {
+			fmt.Sscanf(vp, "%d", &cfg.Port)
+			if cfg.Port > 0 {
+				fmt.Printf("  %s  port: %d (from VIRTUAL_PORT)\n", ui.Faint.Render("●"), cfg.Port)
+			}
+		}
+	}
+	if vh := appEnv["VIRTUAL_HOST"]; vh != "" {
+		cfg.Domain = strings.Split(vh, ",")[0]
+		fmt.Printf("  %s  domain: %s (from VIRTUAL_HOST)\n", ui.Faint.Render("●"), cfg.Domain)
 	}
 
 	// Record a custom Dockerfile (e.g. build.dockerfile: Dockerfile.local) so
@@ -304,10 +351,6 @@ func runConfigGenerate(composePath string) error {
 		return false
 	}
 
-	hasBuild := func(svc composeService) bool {
-		return svc.Build != nil
-	}
-
 	// Sort service names for deterministic output
 	svcNames := make([]string, 0, len(cf.Services))
 	for name := range cf.Services {
@@ -330,17 +373,43 @@ func runConfigGenerate(composePath string) error {
 			fmt.Printf("  %s  %-15s → sidecar (%s)\n", ui.Faint.Render("●"), name, svc.Image)
 			warnSidecarBinds(name, svc)
 
-		} else if hasBuild(svc) {
-			// Same build context + custom command → worker
+		} else if sharesAppArtifact(appSvc, svc) {
+			// Same image or build context as the app: a worker, a scheduler, or
+			// a second public site sharing one codebase.
 			cmd := parseComposeCommand(svc.Command)
-			if cmd != "" {
+			svcEnv := composeServiceEnv(svc)
+			conflicts := conflictingEnvKeys(appEnv, svcEnv)
+
+			switch {
+			case cmd == "":
+				// No command means it runs the same web server as the app. With
+				// its own VIRTUAL_HOST it is a separate site, which is a separate
+				// .neo.yml — emitting it as a sidecar would run a second copy
+				// with no route to it.
+				if vh := svcEnv["VIRTUAL_HOST"]; vh != "" {
+					fmt.Printf("  %s  %-15s → skipped: separate public app (%s)\n", ui.Yellow.Render("⚠"), name, vh)
+				} else {
+					fmt.Printf("  %s  %-15s → skipped (same image as app, no command)\n", ui.Faint.Render("○"), name)
+				}
+
+			case len(conflicts) > 0:
+				// Workers inherit the app's env verbatim, so a service that needs
+				// different values can't be one. Keep it as a sidecar, which has
+				// its own env, and say why.
+				if cfg.Sidecars == nil {
+					cfg.Sidecars = make(map[string]NeoSidecar)
+				}
+				cfg.Sidecars[name] = sidecarFromCompose(svc)
+				fmt.Printf("  %s  %-15s → sidecar, not worker: needs its own %s\n",
+					ui.Yellow.Render("⚠"), name, strings.Join(conflicts, ", "))
+				warnSidecarBinds(name, svc)
+
+			default:
 				if cfg.Workers == nil {
 					cfg.Workers = make(map[string]NeoWorker)
 				}
 				cfg.Workers[name] = NeoWorker{Command: cmd}
 				fmt.Printf("  %s  %-15s → worker (%s)\n", ui.Green.Render("●"), name, cmd)
-			} else {
-				fmt.Printf("  %s  %-15s → skipped (no command, same build as app)\n", ui.Faint.Render("○"), name)
 			}
 		} else {
 			// Unknown service with image → sidecar
@@ -353,6 +422,31 @@ func runConfigGenerate(composePath string) error {
 				warnSidecarBinds(name, svc)
 			}
 		}
+	}
+
+	// A compose file with no build: anywhere describes prebuilt images. Neo
+	// deploy builds from a Dockerfile, so the generated config cannot be
+	// deployed as-is — better to say so now than to fail at deploy time with
+	// "No Dockerfile found".
+	anyBuild := false
+	for _, svc := range cf.Services {
+		if svc.Build != nil {
+			anyBuild = true
+			break
+		}
+	}
+	if !anyBuild {
+		fmt.Println()
+		ui.Error("No service in this compose file has a build: — every service uses a prebuilt image.")
+		ui.Info("neo deploy builds from a Dockerfile. Add one to this project (and a build: to the app service), or deploy the image another way.")
+	}
+
+	// Neo routes one public app per .neo.yml. Several public services means the
+	// file describes several sites that each need their own project.
+	if public := composePublicServices(cf.Services); len(public) > 1 {
+		fmt.Println()
+		ui.Error(fmt.Sprintf("%d services look publicly reachable: %s", len(public), strings.Join(public, ", ")))
+		ui.Info(fmt.Sprintf("Neo deploys one public app per .neo.yml — %s was chosen. Give each of the others its own project directory and .neo.yml.", appName))
 	}
 
 	// Rewrite DB_HOST-style env vars to use Neo's container naming

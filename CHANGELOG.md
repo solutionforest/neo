@@ -4,6 +4,23 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.25.2 — 2026-08-17
+
+### Fixes
+
+- **`neo config generate` picked a random service as the app.** All three selection passes iterated a map, so a compose file with several services built from one image produced a different `.neo.yml` on every run — including naming a queue worker as the public site. Selection is now ranked and deterministic: `build:` beats published ports, ports beat a `VIRTUAL_HOST`, ties break by name, and a service whose command is a worker or scheduler (`queue:work`, `schedule:work`, `horizon`, `supervisord`) is never eligible.
+- **Workers were only detected for services built from source.** A service sharing the app's *image* with a different command — the normal shape for a prebuilt-image compose — became a sidecar. Same image or same build context plus a command now maps to `workers:`.
+- **Except when it would change behaviour.** Neo workers inherit the app's environment with no per-worker override, so a service that sets a variable to a different value can't be one — mapping it would silently point a `--queue=study` worker at the nomination queue. Those stay sidecars, and the output names the conflicting variables.
+
+### New Features
+
+- **Reads nginx-proxy conventions.** `VIRTUAL_PORT` fills in `port:` and `VIRTUAL_HOST` fills in `domain:` when the compose file publishes no ports, instead of emitting `port 0` and making you retype values already in the file.
+- **Says when the result cannot be deployed.** A compose file with no `build:` anywhere describes prebuilt images, and `neo deploy` builds from a Dockerfile — generate now reports that instead of leaving you to hit "No Dockerfile found" later.
+- **Flags multiple public services.** Several services with ports or a `VIRTUAL_HOST` means several sites; Neo routes one public app per `.neo.yml`, so it names which one it chose and that the others need their own project.
+- **Skips sibling public apps instead of making them sidecars.** A second web service with its own `VIRTUAL_HOST` was emitted as a sidecar, which would run a second copy of the site with no route to it.
+
+---
+
 ## v0.25.1 — 2026-08-17
 
 ### New Features
