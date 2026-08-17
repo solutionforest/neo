@@ -500,7 +500,10 @@ CrowdSec intrusion prevention via SSH:
 - **`neo dev [down]`** — local development: wraps `docker compose` or builds from `Dockerfile`. Auto-loads `.env`, mounts volumes, starts workers and sidecars, supports `dev:` section. Flags: `--build`, `--detach`
 - **`neo db <app> [shell]`** — interactive TUI database browser for app's linked DB, or raw `mysql`/`psql` shell
 - **`neo ask`** — interactive skill assistant, guides through common tasks via Q&A
-- **`neo sync [app]`** — sync server state back to `.neo.yml` (shows diff before writing). Flag: `--dry-run`
+- **`neo sync [app]`** — sync server state back to `.neo.yml` (shows diff before writing). Flags: `--dry-run`, `--to <environment>`
+  - **Environment-aware.** When `environments:` exist, sync resolves the environment (`--to`, or the only one, or a prompt), derives the app name the same way deploy does (`environmentAppName`, incl. the `-<env>` suffix), and writes into that environment block. Writing `domain:` at the root would produce a file `neo deploy` rejects outright ("root-level domain:/domains: is ignored when environments: are defined").
+  - **Edits YAML in place** (`commands/yamledit.go`): the file is parsed to a `yaml.Node`, only the changed keys are replaced, then re-encoded with 2-space indent. Marshalling the `NeoConfig` struct back over the file used to destroy comments, key order and quoting (`CADDY_AUTO_HTTPS: on` → `"on"`). Blank lines between blocks are still lost — yaml.v3 does not model them.
+  - Syncs `domain`, `port`, `https` only. Env vars, volumes and workers stay source-of-truth in `.neo.yml`. A `domains:` list is left alone (rewriting it from one state value would drop the other entries).
 - **`neo backup <app>`** / **`neo restore <app> <backup>`** — volume backup/restore (Neo+ feature)
 
 ## Platform-Specific Code
@@ -643,7 +646,7 @@ plans/                       # Planning documents
 | `neo restore <app> <backup>` | Restore from backup (Neo+) |
 | `neo db <app> [shell]` | Interactive database browser |
 | `neo dev [down]` | Local development (compose or Dockerfile, with workers/sidecars) |
-| `neo sync [app]` | Sync server state to .neo.yml |
+| `neo sync [app] [--to env]` | Sync server state to .neo.yml (writes into the environment block) |
 | `neo run <cmd>` | Execute command on server |
 | `neo ssh` | SSH into server |
 | `neo servers` | List configured servers |
