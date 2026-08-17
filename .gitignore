@@ -12,3 +12,6 @@ testdata/
 
 # neo-cms is its own separate repo
 neo-cms/
+
+# Planning documents — local working notes, not part of the product
+plans/

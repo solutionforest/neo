@@ -641,7 +641,7 @@ neo-builder/                 # Build service (separate Go module)
 scripts/                     # build-template-index.go, validate-templates.go
 site/                        # Website, download server, install script
 test/sandbox/                # Docker Compose sandbox (13 distros)
-plans/                       # Planning documents
+plans/                       # Planning documents (gitignored — local working notes)
 ```
 
 ## All CLI Commands
