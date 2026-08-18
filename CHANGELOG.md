@@ -4,6 +4,17 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.25.5 — 2026-08-18
+
+### Fixes
+
+- **`servers:` groups were ignored outside `--all`.** `EffectiveServers()` exists to unify `server:` and `servers:`, but three code paths read `.Server` directly. An environment declared with `servers: [web-1]` therefore resolved to nothing and fell through to whatever `neo use` last selected — deploying production config to the active server without a word. Single-server groups now resolve correctly in `neo deploy --to`, in the `--all` grouping, and in the per-environment deploy.
+- **A multi-server environment no longer deploys to one arbitrary machine.** `neo deploy --to production` where production declares two or more servers now stops and tells you to use `--all` (whole group) or `--server` (one member), instead of silently shipping to the active server.
+- **`neo sync` read the wrong server.** It resolved which environment to write into but always connected to the active server, so syncing an environment hosted elsewhere reported "app not found" — or, where two environments share an app name, copied the wrong server's state into the environment block. It now targets the environment's server, and asks you to pick with `--server` when the environment is a group.
+- **`--server` combined with `--all` is now rejected.** It was silently ignored, since `--all` deploys every environment to the servers it declares.
+
+---
+
 ## v0.25.4 — 2026-08-17
 
 ### New Features
