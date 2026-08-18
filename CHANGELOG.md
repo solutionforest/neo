@@ -4,6 +4,18 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.25.6 — 2026-08-18
+
+### Fixes
+
+- **`neo status` counted apps from state alone.** It is the command you run to answer "is everything up?", but the numbers came only from `/etc/neo/state.json` — so an app running without a record was quietly missing from the count. It now runs the same state-vs-server check as `neo list` and reports untracked, missing or stopped apps under the summary.
+
+### Internal
+
+- The bundled app templates are now covered by tests. The existing manifest tests all parsed inline fixtures, so nothing verified that the ten templates Neo ships still load — a broken manifest, or a `go:embed` pattern that stopped matching, would have kept `make test` green and only failed at `neo install <name>`. The new tests load the real registry and assert every template has a name, title, image and usable port, is retrievable by the name a user types, and carries an explicit image tag rather than `:latest`.
+
+---
+
 ## v0.25.5 — 2026-08-18
 
 ### Fixes
