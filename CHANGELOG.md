@@ -4,6 +4,40 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.0 — 2026-08-18
+
+### New Features
+
+- **Deployments now record which build is running.** An image tag carried only a timestamp, so two deploys of different commits were indistinguishable and a redeploy of the same commit looked like a new version. Neo captures the git commit, branch, tag and dirty state at deploy and keeps them with the app.
+
+  ```
+  $ neo list
+  NAME               DOMAIN                 PORT   STATUS      VERSION
+  ● shop             shop.example.com       8080   running     v1.4.2 (a1b2c3d)
+  ● api              api.example.com        3000   running     9f01e2a *
+  ```
+
+  The image tag gains the same suffix — `neo-shop:20260818-045536-a1b2c3d`. The timestamp stays, so tags remain sortable and unique when the same commit is redeployed after a config change. Works outside git too: a scaffolded project or a tarball simply has no version to show, and CI shallow checkouts fall back to `NEO_GIT_COMMIT`, `GITHUB_SHA` or `CI_COMMIT_SHA`.
+
+- **`neo status <app>`** — full detail for one app: which build, which commit, who deployed it and when, its domains, basic auth, replicas and containers. Until now nothing showed one app in full; `neo list` truncates and `neo status` was server-only. `--json` makes it a CI gate: compare `.deployment.commit` against the sha you expected to ship.
+
+- **`neo deploys <app>`** — deployment history: what shipped, when, and from whose machine. Recorded server-side in `/etc/neo/deploys/<app>.jsonl`, so it is shared by everyone who deploys, survives a fresh clone, and is not tied to one laptop. Entries whose image has since been pruned are marked, since those can no longer be restored from the image alone.
+
+- **`NEO_*` variables in the container.** `NEO_DEPLOYMENT_ID`, `NEO_GIT_COMMIT`, `NEO_GIT_SHORT_COMMIT`, `NEO_GIT_BRANCH`, `NEO_GIT_TAG` and `NEO_DEPLOYED_AT` are injected, so `printenv` on the server answers "which release is this?". They are set *before* `.neo.yml` interpolation runs, so a project can wire them anywhere without Neo knowing about the tool:
+
+  ```yaml
+  env:
+    SENTRY_RELEASE: "${NEO_GIT_COMMIT}"
+  ```
+
+  An explicitly set value always wins.
+
+- **OCI labels on the built image** — `org.opencontainers.image.revision` and `.version`, plus the deployment id and branch. The image identifies itself through `docker inspect` even if server state is lost.
+
+- **Deploying uncommitted changes now warns.** The recorded commit describes only part of what shipped, which is how "production is broken but git says the fix is in" happens. The deployment is marked dirty in `neo list`, `neo status` and the history.
+
+---
+
 ## v0.25.6 — 2026-08-18
 
 ### Fixes
