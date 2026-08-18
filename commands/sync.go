@@ -92,6 +92,24 @@ func runSync(appName, target string, dryRun bool) error {
 		}
 	}
 
+	// Point at the server this environment actually deploys to. Without this
+	// sync connected to whatever `neo use` last selected, so syncing an
+	// environment hosted elsewhere reported "app not found" — or, when two
+	// environments share an app name, quietly copied the wrong server's state
+	// into the environment block.
+	if envName != "" && serverFlag == "" {
+		switch servers := environmentServers(cfg.Environments[envName], cfg); len(servers) {
+		case 0:
+			// Nothing declared — use the active server.
+		case 1:
+			serverFlag = servers[0]
+		default:
+			ui.Error(fmt.Sprintf("environment %q targets %d servers: %s", envName, len(servers), strings.Join(servers, ", ")))
+			ui.Info("Pick which one to read state from with '--server <name>'.")
+			return fmt.Errorf("environment %q needs --server", envName)
+		}
+	}
+
 	// Connect and load server state
 	_, _, exec, err := mustResolveAndConnect()
 	if err != nil {

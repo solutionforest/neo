@@ -193,8 +193,23 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			if env.Name != "" && flags.appName == "" {
 				flags.appName = sanitizeName(env.Name) // env name: overrides top-level name + suffix logic
 			}
-			if env.Server != "" && serverFlag == "" {
-				serverFlag = env.Server
+			// Resolve through environmentServers so a servers: group is honoured
+			// here too, not just on the --all path.
+			if serverFlag == "" {
+				switch servers := environmentServers(env, neoConfig); len(servers) {
+				case 0:
+					// Nothing declared — fall through to the active server.
+				case 1:
+					serverFlag = servers[0]
+				default:
+					// A group needs every member deployed to. Refusing is the
+					// only safe answer: picking one silently would ship a
+					// partial rollout, and falling back to the active server
+					// could deploy production config to a staging box.
+					ui.Error(fmt.Sprintf("environment %q targets %d servers: %s", envName, len(servers), strings.Join(servers, ", ")))
+					ui.Info("Deploy the whole group with 'neo deploy --all', or pick one with '--server <name>'.")
+					return fmt.Errorf("environment %q needs --all or --server", envName)
+				}
 			}
 			if env.Domain != "" && domain == "" {
 				domain = env.Domain
@@ -2162,6 +2177,15 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 		return fmt.Errorf("every environment must specify a server:")
 	}
 
+	// --all deploys every environment to its own configured servers, so a
+	// --server flag has nothing to apply to. Silently ignoring an explicit flag
+	// is worse than saying so.
+	if serverFlag != "" {
+		ui.Error(fmt.Sprintf("--server %s is ignored with --all — each environment deploys to the servers it declares", serverFlag))
+		ui.Info("Deploy one environment to one server with: neo deploy --to <environment> --server " + serverFlag)
+		return fmt.Errorf("--server cannot be combined with --all")
+	}
+
 	// --all builds one image and ships it everywhere, so the environments have to
 	// agree on which Dockerfile that image comes from.
 	if err := checkAllDockerfilesAgree(neoConfig, flags.dockerfile != ""); err != nil {
@@ -2266,13 +2290,15 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 type deployTarget struct {
 	envName string
 	envCfg  NeoEnvironment
-	server  string // explicit server override; "" means "resolve from config"
+	server  string // resolved server for this target; never empty once grouped
+	inGroup bool   // one of several servers for the same environment
 }
 
-// label is how the target is reported in results, matching the previous
-// "env" / "env[server]" formatting.
+// label is how the target is reported in results. Only a member of a
+// multi-server group needs the server spelled out; for a single-server
+// environment the name alone is unambiguous.
 func (t deployTarget) label() string {
-	if t.server == "" {
+	if !t.inGroup {
 		return t.envName
 	}
 	return fmt.Sprintf("%s[%s]", t.envName, t.server)
@@ -2307,19 +2333,27 @@ func groupTargetsByServer(neoConfig *NeoConfig, currentServer string) [][]deploy
 		envCfg := neoConfig.Environments[envName]
 		servers := envCfg.EffectiveServers()
 		if len(servers) <= 1 {
-			key := envCfg.Server
+			key := ""
+			if len(servers) == 1 {
+				key = servers[0] // servers: [one] is just server: one
+			}
+			if key == "" {
+				key = envCfg.Server
+			}
 			if key == "" {
 				key = neoConfig.Server
 			}
 			if key == "" {
 				key = currentServer
 			}
-			add(key, deployTarget{envName: envName, envCfg: envCfg})
+			// Pin the target so deployEnvFromFile doesn't re-resolve to the
+			// active server when the environment used servers: rather than server:.
+			add(key, deployTarget{envName: envName, envCfg: envCfg, server: key})
 			continue
 		}
 		// Server group: one target per server, each in that server's bucket.
 		for _, srvName := range servers {
-			add(srvName, deployTarget{envName: envName, envCfg: envCfg, server: srvName})
+			add(srvName, deployTarget{envName: envName, envCfg: envCfg, server: srvName, inGroup: true})
 		}
 	}
 
@@ -2421,6 +2455,23 @@ func checkAllDockerfilesAgree(neoConfig *NeoConfig, flagPinned bool) error {
 	return fmt.Errorf("environments disagree on dockerfile:")
 }
 
+// environmentServers resolves every server an environment deploys to:
+// servers: (a group) > server: (singular) > the root-level server:.
+//
+// EffectiveServers exists to unify the first two, but three call sites read
+// .Server directly and so ignored servers: entirely — an environment declared
+// with a one-element group resolved to nothing and fell through to whatever
+// `neo use` last selected, deploying to the wrong machine without a word.
+func environmentServers(envCfg NeoEnvironment, neoConfig *NeoConfig) []string {
+	if servers := envCfg.EffectiveServers(); len(servers) > 0 {
+		return servers
+	}
+	if neoConfig != nil && neoConfig.Server != "" {
+		return []string{neoConfig.Server}
+	}
+	return nil
+}
+
 // environmentAppName derives the container/app name for one .neo.yml
 // environment: --name flag > environment name: > .neo.yml name: > directory,
 // with a -<environment> suffix for anything that isn't the primary environment.
@@ -2519,10 +2570,9 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 	// Resolve target server: explicit override (server group) > env config > top-level config
 	serverName := serverOverride
 	if serverName == "" {
-		serverName = envCfg.Server
-	}
-	if serverName == "" {
-		serverName = neoConfig.Server
+		if servers := environmentServers(envCfg, neoConfig); len(servers) == 1 {
+			serverName = servers[0]
+		}
 	}
 
 	cfg, err := config.Load()

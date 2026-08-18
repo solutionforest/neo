@@ -508,3 +508,64 @@ environments:
 		t.Errorf("environments.dev.command = %q", got)
 	}
 }
+
+func TestGroupTargetsByServerHonoursSingleElementGroups(t *testing.T) {
+	// `servers: [web-1]` means the same thing as `server: web-1`. Reading only
+	// .Server left the target unresolved, so it fell through to whatever `neo
+	// use` last selected — a silent deploy to the wrong machine.
+	cfg := &NeoConfig{Environments: map[string]NeoEnvironment{
+		"production": {Servers: []string{"web-1"}},
+	}}
+
+	groups := groupTargetsByServer(cfg, "some-other-active-server")
+	if len(groups) != 1 || len(groups[0]) != 1 {
+		t.Fatalf("got %d groups", len(groups))
+	}
+	if got := groups[0][0].server; got != "web-1" {
+		t.Errorf("target server = %q, want web-1", got)
+	}
+}
+
+func TestGroupTargetsByServerGroupsBySharedServer(t *testing.T) {
+	// One environment pinned with server:, another with a one-element servers:
+	// list naming the same machine — they must land in the same group so the
+	// state writes serialise.
+	cfg := &NeoConfig{Environments: map[string]NeoEnvironment{
+		"a": {Server: "web-1"},
+		"b": {Servers: []string{"web-1"}},
+	}}
+
+	if groups := groupTargetsByServer(cfg, ""); len(groups) != 1 {
+		t.Fatalf("got %d groups, want 1 — both target web-1", len(groups))
+	}
+}
+
+func TestEnvironmentServersResolution(t *testing.T) {
+	cases := []struct {
+		name string
+		env  NeoEnvironment
+		cfg  *NeoConfig
+		want []string
+	}{
+		{"server: singular", NeoEnvironment{Server: "web-1"}, &NeoConfig{}, []string{"web-1"}},
+		{"servers: one entry", NeoEnvironment{Servers: []string{"web-1"}}, &NeoConfig{}, []string{"web-1"}},
+		{"servers: group", NeoEnvironment{Servers: []string{"web-1", "web-2"}}, &NeoConfig{}, []string{"web-1", "web-2"}},
+		{"servers: wins over server:", NeoEnvironment{Server: "ignored", Servers: []string{"web-1"}}, &NeoConfig{}, []string{"web-1"}},
+		{"falls back to root server:", NeoEnvironment{}, &NeoConfig{Server: "root-box"}, []string{"root-box"}},
+		{"nothing configured", NeoEnvironment{}, &NeoConfig{}, nil},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := environmentServers(tc.env, tc.cfg)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("got %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}

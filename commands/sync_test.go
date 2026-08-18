@@ -238,3 +238,31 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+func TestSyncResolvesTheEnvironmentServer(t *testing.T) {
+	// sync used to connect to whatever `neo use` had selected, so syncing an
+	// environment hosted on another machine looked at the wrong state.
+	cfg := &NeoConfig{Environments: map[string]NeoEnvironment{
+		"production": {Server: "prod-box"},
+		"staging":    {Servers: []string{"staging-box"}},
+		"dr":         {Servers: []string{"dr-a", "dr-b"}},
+		"inherited":  {},
+	}}
+	cfg.Server = "root-box"
+
+	if got := environmentServers(cfg.Environments["production"], cfg); len(got) != 1 || got[0] != "prod-box" {
+		t.Errorf("production = %v, want [prod-box]", got)
+	}
+	// A one-element servers: list must resolve, not fall through to the active server.
+	if got := environmentServers(cfg.Environments["staging"], cfg); len(got) != 1 || got[0] != "staging-box" {
+		t.Errorf("staging = %v, want [staging-box]", got)
+	}
+	// A real group is ambiguous for a read — the caller must pick.
+	if got := environmentServers(cfg.Environments["dr"], cfg); len(got) != 2 {
+		t.Errorf("dr = %v, want two servers", got)
+	}
+	// No server on the environment falls back to the root-level one.
+	if got := environmentServers(cfg.Environments["inherited"], cfg); len(got) != 1 || got[0] != "root-box" {
+		t.Errorf("inherited = %v, want [root-box]", got)
+	}
+}
