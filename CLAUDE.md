@@ -91,7 +91,10 @@ Remote server state at `/etc/neo/state.json` — read/written over SSH:
 ```
 
 ### App Registry (`internal/app/`)
-YAML manifests embedded in the binary via `//go:embed`. Each template defines:
+YAML manifests embedded in the binary via `//go:embed templates/*/manifest.yml`. `neo install`
+reads them to **scaffold a project folder** (docker-compose.yml + .neo.yml + .env with generated
+secrets) — it does not install anything on the server; `neo deploy` does that afterwards.
+Each template defines:
 - Image, port, volumes, env vars
 - Bundled services (postgres, mysql, redis, clickhouse)
 - Health check endpoint
@@ -435,8 +438,9 @@ Local shell commands that run during deploy lifecycle:
 
 ### Adding a New App Template
 
-1. Create `internal/app/templates/<name>.yml`
-2. Follow the manifest schema (see existing templates)
+1. Create `internal/app/templates/<name>/manifest.yml` (one directory per template, alongside a `README.md`)
+2. Follow the manifest schema (see existing templates); `scripts/validate-templates.go` checks it
+3. Regenerate the index with `scripts/build-template-index.go` → `templates/templates.json`
 3. The registry auto-discovers it via `//go:embed`
 
 ## Shared Services
@@ -633,7 +637,7 @@ cmd/neosandbox/main.go       # Docker sandbox test runner
 commands/                    # All command implementations (~35 files)
 internal/
   app/                       # App template system + embedded YAML manifests
-    templates/               # 10 app templates (ghost, wordpress, gitea, etc.)
+    templates/               # 10 app templates, one dir each (ghost, wordpress, gitea, …) + templates.json index
   bridge/                    # Vxero migration API (currently disabled)
   config/                    # Local config (~/.neo/config.json), cache, file locking
   laravel/                   # Laravel env:encrypt payload format (encrypt/decrypt, key parsing)
