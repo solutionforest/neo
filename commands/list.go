@@ -70,7 +70,7 @@ func runList(format string) error {
 		return nil
 	}
 
-	fmt.Println("  " + fmt.Sprintf("%-18s %-32s %-6s %-12s %s", "NAME", "DOMAIN", "PORT", "STATUS", "IMAGE"))
+	fmt.Println("  " + fmt.Sprintf("%-18s %-30s %-6s %-11s %s", "NAME", "DOMAIN", "PORT", "STATUS", "VERSION"))
 	fmt.Println("  " + ui.Faint.Render("──────────────────────────────────────────────────────────────────────────────"))
 
 	running, stopped := 0, 0
@@ -80,7 +80,14 @@ func runList(format string) error {
 			domain = "—"
 		}
 		bullet := ui.StatusBullet(a.Status)
-		fmt.Printf("  %s %-17s %-32s %-6d %-12s %s\n", bullet, a.Name, domain, a.InternalPort, a.Status, ui.Faint.Render(a.Image))
+		// Version replaces the image tag here: the tag now embeds the same
+		// timestamp and sha, and "v1.4.2 (a1b2c3d)" answers "what is running?"
+		// where a 40-character image reference did not.
+		version := a.Deployment.Describe()
+		if version == "" {
+			version = ui.Faint.Render("—")
+		}
+		fmt.Printf("  %s %-17s %-30s %-6d %-11s %s\n", bullet, a.Name, domain, a.InternalPort, a.Status, version)
 		if a.Status == "running" {
 			running++
 		} else {

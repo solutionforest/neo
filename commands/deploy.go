@@ -42,6 +42,9 @@ type deployFlags struct {
 	all        bool // build once, deploy to all .neo.yml environments in parallel
 	parallel   int  // max concurrent deploys for --all (default 3)
 
+	deploymentID string  // shared build identifier for a --all run
+	git          gitInfo // git metadata captured once for a --all run
+
 	// preloadedEnv holds file-based env vars (encrypted env file, env_file)
 	// resolved per environment *before* --all fans out, so key prompts never
 	// land inside parallel goroutines. Keyed by environment name.
@@ -412,6 +415,15 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		}
 	}
 
+	// Identify the build before the environment is assembled, so the NEO_*
+	// variables can be injected into it. The timestamp keeps image tags
+	// sortable and unique — the same commit redeployed after an env change is
+	// a distinct deployment — while the sha suffix answers "which code is this?".
+	timestamp := time.Now().UTC().Format("20060102-150405")
+	git := captureGitInfo(absPath)
+	deploymentID := deploymentIdentifier(timestamp, git)
+	warnDirtyTree(git)
+
 	// Build env vars with priority: CLI --env > --env-file > .neo.yml > docker-compose.yml > server state
 	env := make(map[string]string)
 
@@ -482,6 +494,11 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			env[k] = v
 		}
 	}
+
+	// Describe this build in the container's environment. Injected before
+	// interpolation so .neo.yml can reference these — SENTRY_RELEASE:
+	// "${NEO_GIT_COMMIT}" needs no special handling in Neo.
+	injectDeploymentEnv(env, deploymentID, git)
 
 	// Resolve ${VAR} / ${VAR:-default} references in the merged env and in
 	// .neo.yml basic_auth, using the merged env then OS env. Without this, deploy
@@ -648,8 +665,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		return nil
 	}
 
-	timestamp := time.Now().UTC().Format("20060102-150405")
-	imageTag := fmt.Sprintf("neo-%s:%s", appName, timestamp)
+	imageTag := fmt.Sprintf("neo-%s:%s", appName, deploymentID)
 
 	// Detect build strategy: local Docker or remote build
 	localDocker := isLocalDockerAvailable()
@@ -678,7 +694,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	}
 
 	if localDocker {
-		err = deployViaLocalBuild(absPath, dockerfile, imageTag, serverPlatform, sshExec, licenseKey)
+		err = deployViaLocalBuild(absPath, dockerfile, imageTag, serverPlatform, ociLabelArgs(git, deploymentID), sshExec, licenseKey)
 	} else {
 		err = deployViaRemoteBuild(absPath, dockerfile, imageTag, sshExec, docker)
 	}
@@ -1389,6 +1405,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		Sidecars:     sidecarStates,
 		Restart:      appRestart,
 		Command:      appCommand,
+		Deployment:   deploymentRecord(deploymentID, imageTag, git, env),
 		Health:       appHealth,
 		BasicAuth:    neoBasicAuthToState(neoConfig),
 		Scale:        scale,
@@ -1408,6 +1425,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	}
 	st.Apps[appName] = stateApp
 	saveState(sshExec, st)
+	recordDeployment(sshExec, appName, stateApp.Deployment)
 
 	// Run post-deploy hook locally (failure is logged but does not roll back)
 	if neoConfig != nil && neoConfig.Hooks != nil {
@@ -1463,10 +1481,10 @@ func (cr *countingReader) Read(p []byte) (int, error) {
 }
 
 // deployViaLocalBuild builds the image locally and transfers it to the server.
-func deployViaLocalBuild(projectPath, dockerfile, imageTag, platform string, sshExec *neossh.Executor, licenseKey string) error {
+func deployViaLocalBuild(projectPath, dockerfile, imageTag, platform string, labels []string, sshExec *neossh.Executor, licenseKey string) error {
 	ui.Info(fmt.Sprintf("Docker detected locally — building on this machine (%s)", platform))
 
-	if err := buildImageLocally(projectPath, dockerfile, imageTag, platform); err != nil {
+	if err := buildImageLocally(projectPath, dockerfile, imageTag, platform, labels); err != nil {
 		return err
 	}
 
@@ -1922,11 +1940,33 @@ func waitForHealthy(docker *remote.Docker, containerName string, port int, timeo
 }
 
 // buildImageLocally runs `docker build` on the local machine.
-func buildImageLocally(projectPath, dockerfile, imageTag, platform string) error {
+// ociLabelArgs describes the build in standard OCI labels, so the image itself
+// says which commit it came from. State can be lost or drift; a label travels
+// with the image and answers the question from `docker inspect` alone.
+func ociLabelArgs(git gitInfo, deploymentID string) []string {
+	var args []string
+	add := func(k, v string) {
+		if v != "" {
+			args = append(args, "--label", k+"="+v)
+		}
+	}
+	add("org.opencontainers.image.revision", git.Commit)
+	add("org.opencontainers.image.version", git.Tag)
+	add("dev.vxero.neo.deployment", deploymentID)
+	add("dev.vxero.neo.branch", git.Branch)
+	if git.Dirty {
+		add("dev.vxero.neo.dirty", "true")
+	}
+	return args
+}
+
+func buildImageLocally(projectPath, dockerfile, imageTag, platform string, labels []string) error {
 	spin := ui.NewSpinner(fmt.Sprintf("Building image locally (%s)...", platform))
 	spin.Start()
 
-	buildCmd := exec.Command("docker", "build", "--platform", platform, "-t", imageTag, "-f", dockerfile, projectPath)
+	args := append([]string{"build", "--platform", platform, "-t", imageTag, "-f", dockerfile}, labels...)
+	args = append(args, projectPath)
+	buildCmd := exec.Command("docker", args...)
 	buildCmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
 	var buildOutput bytes.Buffer
 	buildCmd.Stdout = &buildOutput
@@ -2115,6 +2155,9 @@ func (cr *atomicCountingReader) Read(p []byte) (int, error) {
 // concurrently transfers and deploys to every environment defined in .neo.yml.
 func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoConfig) error {
 	timestamp := time.Now().UTC().Format("20060102-150405")
+	git := captureGitInfo(absPath)
+	deploymentID := deploymentIdentifier(timestamp, git)
+	warnDirtyTree(git)
 
 	baseAppName := flags.appName
 	if baseAppName == "" {
@@ -2124,7 +2167,9 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 			baseAppName = sanitizeName(filepath.Base(absPath))
 		}
 	}
-	imageTag := fmt.Sprintf("neo-%s:%s", baseAppName, timestamp)
+	imageTag := fmt.Sprintf("neo-%s:%s", baseAppName, deploymentID)
+	flags.deploymentID = deploymentID
+	flags.git = git
 
 	fmt.Println()
 	fmt.Printf("  Deploying %s to %d environment(s) in parallel\n",
@@ -2140,7 +2185,7 @@ func runDeployAll(absPath, dockerfile string, flags deployFlags, neoConfig *NeoC
 	}
 
 	// Build image once for all environments (default linux/amd64; all envs must share arch).
-	if err := buildImageLocally(absPath, dockerfile, imageTag, "linux/amd64"); err != nil {
+	if err := buildImageLocally(absPath, dockerfile, imageTag, "linux/amd64", ociLabelArgs(git, deploymentID)); err != nil {
 		return err
 	}
 
@@ -2392,6 +2437,67 @@ func explainCommandExit(docker *remote.Docker, containerName, command string) {
 	ui.Info("For one-off setup tasks (migrations, storage:link, cache warming) use release: instead, which runs them in the container and then continues the deploy.")
 }
 
+// deploymentIdentifier builds the tag suffix and deployment id: a sortable
+// timestamp, plus the short commit when one is known. Keeping the timestamp
+// guarantees uniqueness — redeploying the same commit after an env change is a
+// distinct deployment and must not reuse a tag.
+func deploymentIdentifier(timestamp string, git gitInfo) string {
+	if git.ShortCommit == "" {
+		return timestamp
+	}
+	return timestamp + "-" + git.ShortCommit
+}
+
+// warnDirtyTree says so when the build contains changes that aren't committed.
+// The recorded commit then describes only part of what shipped, which is how
+// "production is broken but git says the fix is in" happens.
+func warnDirtyTree(git gitInfo) {
+	if !git.Dirty {
+		return
+	}
+	ui.Error("Uncommitted changes in the working tree — this build does not match commit " + git.ShortCommit)
+	ui.Info("The deployment will be recorded as dirty. Commit first if you want the record to be exact.")
+}
+
+// deploymentRecord assembles what gets persisted about this build.
+func deploymentRecord(id, imageTag string, git gitInfo, env map[string]string) *state.Deployment {
+	return &state.Deployment{
+		ID:          id,
+		Commit:      git.Commit,
+		ShortCommit: git.ShortCommit,
+		Branch:      git.Branch,
+		Tag:         git.Tag,
+		Dirty:       git.Dirty,
+		Image:       imageTag,
+		DeployedAt:  time.Now().UTC().Format(time.RFC3339),
+		DeployedBy:  deployedBy(),
+		EnvDigest:   envDigest(env),
+	}
+}
+
+// injectDeploymentEnv adds the NEO_* variables describing this build.
+//
+// Injected before interpolation so a project can reference them anywhere in
+// .neo.yml — `SENTRY_RELEASE: "${NEO_GIT_COMMIT}"` works without Neo knowing
+// anything about Sentry. Existing values win: an explicitly set variable is a
+// deliberate choice.
+func injectDeploymentEnv(env map[string]string, id string, git gitInfo) {
+	set := func(k, v string) {
+		if v == "" {
+			return
+		}
+		if _, exists := env[k]; !exists {
+			env[k] = v
+		}
+	}
+	set("NEO_DEPLOYMENT_ID", id)
+	set("NEO_GIT_COMMIT", git.Commit)
+	set("NEO_GIT_SHORT_COMMIT", git.ShortCommit)
+	set("NEO_GIT_BRANCH", git.Branch)
+	set("NEO_GIT_TAG", git.Tag)
+	set("NEO_DEPLOYED_AT", time.Now().UTC().Format(time.RFC3339))
+}
+
 // resolveDockerfilePath resolves the Dockerfile to build from:
 // explicit (flag or config value) > ./Dockerfile, made absolute against the
 // project directory. Keeping this in one place is what lets the per-environment
@@ -2545,6 +2651,7 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 	for k, v := range envCfg.Env {
 		env[k] = v
 	}
+	injectDeploymentEnv(env, flags.deploymentID, flags.git)
 	env = interpolateEnvValues(env)
 
 	// Effective config for this environment: basic_auth from the environment block
@@ -2818,6 +2925,7 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		Workers:      make(map[string]state.AppWorker),
 		Restart:      allRestart,
 		Command:      allCommand,
+		Deployment:   deploymentRecord(flags.deploymentID, imageTag, flags.git, env),
 		Health:       allHealth,
 		BasicAuth:    neoBasicAuthToState(&effCfg),
 		InstalledAt:  time.Now().UTC().Format(time.RFC3339),
@@ -2834,6 +2942,7 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 	}
 	st.Apps[appName] = stateApp
 	saveState(sshExec, st)
+	recordDeployment(sshExec, appName, stateApp.Deployment)
 
 	// Run per-environment post-deploy hook
 	hooks := resolveHooks(neoConfig.Hooks, envCfg.Hooks)

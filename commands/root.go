@@ -85,6 +85,7 @@ func NewRootCmd(version string) *cobra.Command {
 		newRestoreCmd(),
 		newPruneCmd(),
 		newSyncCmd(),
+		newDeploysCmd(),
 		newDestroyCmd(),
 		newLicenseCmd(),
 		newActivateCmd(),
@@ -180,6 +181,8 @@ func printHelp() {
 				{"neo domain <app> <domain>", "Set or change the domain for an app"},
 				{"neo domain <app> --temp", "Assign a temporary sslip.io domain with SSL"},
 				{"neo sync <app>", "Sync server state back to .neo.yml"},
+				{"neo status <app>", "Full detail for one app (build, domains, containers)"},
+				{"neo deploys <app>", "Deployment history — what shipped, when, by whom"},
 				{"neo env <app>", "View environment variables"},
 				{"neo env set <app> K=V", "Set environment variables"},
 				{"neo env unset <app> KEY", "Remove environment variables"},
@@ -313,6 +316,8 @@ It handles deployment, SSL certificates, shared database services, and app lifec
 - neo env set <app> K=V         Set env var (auto-restarts)
 - neo env unset <app> KEY       Remove env var
 - neo env import <app> .env     Bulk import from file
+- neo status <app>              Full detail for one app (build, domains, containers)
+- neo deploys <app>             Deployment history — what shipped, when, by whom
 - neo env encrypt [file]        Encrypt .env → .env.encrypted (commit it, keep the key safe)
 - neo env decrypt [file]        Decrypt an encrypted env file
 - neo env key set|list|forget   Manage saved encryption keys (~/.neo/keys.json)

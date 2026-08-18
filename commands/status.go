@@ -3,6 +3,8 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/vxero/neo/internal/config"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,9 +20,17 @@ func newStatusCmd() *cobra.Command {
 	var jsonFlag bool
 
 	cmd := &cobra.Command{
-		Use:   "status",
-		Short: "Show server health, resource usage, and container stats",
+		Use:   "status [app]",
+		Short: "Show server health, or full detail for one app",
+		Long: `Without an argument, shows server health, resource usage and container stats.
+
+With an app name, shows everything about that app: which build is deployed, the
+commit it came from, who deployed it, its domains, and its containers.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return runAppStatus(args[0], jsonFlag)
+			}
 			if jsonFlag {
 				return runStatusJSON()
 			}
@@ -563,4 +573,132 @@ func formatAppCounts(running, stopped int) string {
 		parts = append(parts, fmt.Sprintf("%d stopped", stopped))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// runAppStatus shows everything about one app. Until now no command did: list
+// is a truncated table, status was server-only, and env/volumes each showed a
+// single slice. "What exactly is running here?" had no answer.
+func runAppStatus(appName string, asJSON bool) error {
+	_, srv, exec, err := mustResolveAndConnect()
+	if err != nil {
+		return err
+	}
+	defer exec.Close()
+
+	st, err := state.Load(exec)
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+
+	app, ok := st.Apps[appName]
+	if !ok {
+		ui.Error(fmt.Sprintf("App %q not found on %s", appName, srv.Name))
+		if len(st.Apps) > 0 {
+			names := make([]string, 0, len(st.Apps))
+			for name := range st.Apps {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			ui.Info("Available apps: " + strings.Join(names, ", "))
+		}
+		return nil
+	}
+
+	docker := remote.NewDocker(exec)
+
+	if asJSON {
+		data, mErr := json.MarshalIndent(app, "", "  ")
+		if mErr != nil {
+			return mErr
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	fmt.Println()
+	fmt.Printf("  %s  %s  %s\n", ui.Bold.Render(appName),
+		ui.StatusBullet(app.Status), ui.Faint.Render("on "+srv.Name))
+
+	// Deployment
+	fmt.Println()
+	fmt.Printf("  %s\n", ui.Bold.Render("Deployment"))
+	if d := app.Deployment; d != nil {
+		printAppField("Version", d.Describe())
+		printAppField("Commit", d.Commit)
+		printAppField("Branch", d.Branch)
+		printAppField("Image", d.Image)
+		deployed := d.DeployedAt
+		if d.DeployedBy != "" {
+			deployed += "  by " + d.DeployedBy
+		}
+		printAppField("Deployed", deployed)
+		printAppField("Env digest", d.EnvDigest)
+		if d.Dirty {
+			ui.Error("    Built from a tree with uncommitted changes — the commit above is not the whole story")
+		}
+	} else {
+		printAppField("Image", app.Image)
+		fmt.Printf("    %s\n", ui.Faint.Render("No build metadata — deployed before version tracking, or outside git."))
+	}
+
+	// Serving
+	fmt.Println()
+	fmt.Printf("  %s\n", ui.Bold.Render("Serving"))
+	domains := app.AllDomains()
+	if len(domains) == 0 {
+		printAppField("Domain", "— (no public route)")
+	} else {
+		scheme := "https"
+		if app.HTTPOnly {
+			scheme = "http"
+		}
+		printAppField("Domain", scheme+"://"+strings.Join(domains, ", "))
+	}
+	printAppField("Port", fmt.Sprintf("%d", app.InternalPort))
+	if app.BasicAuth != nil && app.BasicAuth.User != "" {
+		printAppField("Basic auth", "on (user "+app.BasicAuth.User+")")
+	}
+	if app.Scale > 1 {
+		printAppField("Replicas", fmt.Sprintf("%d", app.Scale))
+	}
+	printAppField("Env vars", fmt.Sprintf("%d", len(app.Env)))
+
+	// Containers, read live rather than from state.
+	fmt.Println()
+	fmt.Printf("  %s\n", ui.Bold.Render("Containers"))
+	printContainerLine(docker, config.AppContainer(appName))
+	for worker := range app.Workers {
+		printContainerLine(docker, config.WorkerContainer(appName, worker))
+	}
+
+	// State and reality can disagree; say so here rather than printing
+	// confident detail from a stale record.
+	if drift, driftErr := detectStateDrift(docker, st); driftErr == nil {
+		for _, name := range drift.Missing {
+			if name == appName {
+				fmt.Println()
+				ui.Error("This app is in server state but has no container — it is not serving traffic.")
+			}
+		}
+	}
+
+	fmt.Println()
+	return nil
+}
+
+func printAppField(label, value string) {
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+	fmt.Printf("    %-12s %s\n", label, value)
+}
+
+func printContainerLine(docker *remote.Docker, name string) {
+	status := docker.ContainerStatus(name)
+	bullet := ui.StatusBullet(status)
+	if status == "unknown" {
+		bullet = ui.Red.Render("○")
+		status = "missing"
+	}
+	fmt.Printf("    %s %-34s %s\n", bullet, name, ui.Faint.Render(status))
 }

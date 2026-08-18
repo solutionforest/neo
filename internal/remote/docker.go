@@ -332,6 +332,26 @@ func (d *Docker) ListContainers(prefix string) ([]ContainerInfo, error) {
 	return containers, nil
 }
 
+// ListImages returns the full repo:tag of every image whose repository starts
+// with prefix. Used to tell which deployments can still be restored from an
+// image that is actually present.
+func (d *Docker) ListImages(prefix string) ([]string, error) {
+	out, err := d.exec.Run(fmt.Sprintf(
+		"%s images --format '{{.Repository}}:{{.Tag}}' | grep -E %s || true",
+		d.bin(), ssh.ShellQuote("^"+prefix+":"),
+	))
+	if err != nil {
+		return nil, err
+	}
+	var images []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			images = append(images, line)
+		}
+	}
+	return images, nil
+}
+
 // VolumeList lists Docker volumes.
 func (d *Docker) VolumeList() (string, error) {
 	return d.exec.Run(d.bin() + " volume ls --format '{{.Name}}\t{{.Driver}}'")

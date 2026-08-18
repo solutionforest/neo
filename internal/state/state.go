@@ -36,6 +36,49 @@ type Link struct {
 	EnvVars  map[string]string `json:"env_vars,omitempty"` // injected into the app
 }
 
+// Deployment records which build of an app is running. Without it the only
+// evidence of what was deployed is an image timestamp, which answers "when"
+// and never "what" — two deploys of different commits look identical.
+type Deployment struct {
+	ID          string `json:"id"`                     // 20260818-045536-a1b2c3d
+	Commit      string `json:"commit,omitempty"`       // full git sha
+	ShortCommit string `json:"short_commit,omitempty"` // 7-char sha, for display
+	Branch      string `json:"branch,omitempty"`
+	Tag         string `json:"tag,omitempty"`   // git describe --tags, when the commit is tagged
+	Dirty       bool   `json:"dirty,omitempty"` // built from a tree with uncommitted changes
+	Image       string `json:"image,omitempty"`
+	DeployedAt  string `json:"deployed_at"`
+	DeployedBy  string `json:"deployed_by,omitempty"` // user@host of the machine that deployed
+	// EnvDigest fingerprints the environment this build ran with, so the same
+	// commit deployed twice with different config is distinguishable. NEO_*
+	// variables are excluded: they change every deploy and would make every
+	// digest unique, defeating the point.
+	EnvDigest string `json:"env_digest,omitempty"`
+}
+
+// Describe renders a deployment for a table or summary line: the tag when the
+// commit is tagged, otherwise the short sha, marked when the tree was dirty.
+func (d *Deployment) Describe() string {
+	if d == nil {
+		return ""
+	}
+	var out string
+	switch {
+	case d.Tag != "" && d.ShortCommit != "":
+		out = d.Tag + " (" + d.ShortCommit + ")"
+	case d.Tag != "":
+		out = d.Tag
+	case d.ShortCommit != "":
+		out = d.ShortCommit
+	default:
+		return d.ID
+	}
+	if d.Dirty {
+		out += " *"
+	}
+	return out
+}
+
 // VolumeInfo describes a volume and its optional host mount.
 type VolumeInfo struct {
 	ContainerPath string  `json:"container_path"`
@@ -92,6 +135,7 @@ type App struct {
 	Health       *HealthCheck          `json:"health,omitempty"`
 	BasicAuth    *AppBasicAuth         `json:"basic_auth,omitempty"` // HTTP basic auth at the Caddy proxy layer; persisted so route rebuilds preserve it
 	Scale        int                   `json:"scale,omitempty"`      // number of replicas; 0 or 1 means single-container mode
+	Deployment   *Deployment           `json:"deployment,omitempty"` // which build is running
 	InstalledAt  string                `json:"installed_at"`
 }
 

@@ -385,6 +385,17 @@ The generator (`commands/config.go`) warns about each of these on stdout:
 
 **`command:` vs `release:`** — `command:` replaces the app container's main process and must keep running (Octane flags per environment, a different server binary from a shared image). `release:` is for one-off tasks that exit. Setting `command:` to a one-off task kills the container; deploy detects the immediate exit and says so instead of leaving you with a bare "failed health check". `command:` accepts a string or a docker-compose style list (joined with spaces), is stored in `state.App.Command` so `--env-only` restarts keep it, and is now carried over from a compose service by `neo config generate` (previously read for sidecars only).
 
+### Deployment Tracking (`gitinfo.go`, `deploys.go`):
+Answers "which build is running?" — previously unanswerable, since image tags carried only a timestamp.
+
+- **Image tag** is now `neo-<app>:<timestamp>-<shortsha>`. The timestamp stays for sortability and uniqueness: the same commit redeployed after an env change is a distinct deployment and must not reuse a tag.
+- **`captureGitInfo`** reads commit/branch/tag/dirty locally, falling back to `NEO_GIT_COMMIT`, `GITHUB_SHA`, `CI_COMMIT_SHA` when git can't answer (shallow CI checkouts). `git describe --tags --exact-match` — without `--exact-match` an untagged commit inherits an ancestor's tag and the UI claims v1.4.2 is deployed when it isn't.
+- **`state.App.Deployment`** persists it. `EnvDigest` fingerprints the env so the same commit with different config is distinguishable; `injectedEnvKeys` (exact names, not a `NEO_` prefix) are excluded, since projects use that prefix for their own config (`NEO_LS_STORE_ID` in neo-cms).
+- **`NEO_*` env injection** happens *before* `interpolateEnvValues`, so `.neo.yml` can reference them: `SENTRY_RELEASE: "${NEO_GIT_COMMIT}"` needs no special-casing. Explicit values are never overwritten.
+- **OCI labels** (`org.opencontainers.image.revision`) go on the built image, so it identifies itself via `docker inspect` even if state is lost.
+- **History** is `/etc/neo/deploys/<app>.jsonl`, append-only and capped at 50 entries. Deliberately not in `state.json`: that is a whole-file read-modify-write (the structure behind the v0.24.1 lost-update bug), and an append has no read step, so concurrent deploys can't clobber each other's history. Server-side rather than in the project folder because two laptops and CI must share one record, and rollback can only offer images that exist on that server.
+- A dirty tree warns at deploy and is recorded, since the commit then describes only part of what shipped.
+
 ### Release Commands (`release.go`):
 Commands run **inside the new container on the server**, not locally — the gap `hooks:` can't fill.
 
@@ -680,6 +691,8 @@ plans/                       # Planning documents (gitignored — local working 
 | `neo db <app> [shell]` | Interactive database browser |
 | `neo dev [down]` | Local development (compose or Dockerfile, with workers/sidecars) |
 | `neo sync [app] [--to env]` | Sync server state to .neo.yml (writes into the environment block) |
+| `neo status [app]` | Server health, or full detail for one app |
+| `neo deploys [app]` | Deployment history (build, commit, who, when) |
 | `neo run <cmd>` | Execute command on server |
 | `neo ssh` | SSH into server |
 | `neo servers` | List configured servers |
