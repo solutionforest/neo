@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/vxero/neo/internal/remote"
 	"github.com/vxero/neo/internal/ssh"
 	"github.com/vxero/neo/internal/state"
 	"github.com/vxero/neo/internal/ui"
@@ -127,6 +128,15 @@ func runStatus() error {
 	fmt.Println()
 	fmt.Printf("  %-11s %s\n", "Apps:", formatAppCounts(runningApps, stoppedApps))
 	fmt.Printf("  %-11s %d running\n", "Services:", runningServices)
+
+	// These counts come from /etc/neo/state.json, so they are only as good as
+	// that file. Status is the command you run to answer "is everything up?" —
+	// it should say when state and the server disagree rather than quietly
+	// undercounting an app that is serving traffic without a record.
+	if drift, driftErr := detectStateDrift(remote.NewDocker(exec), st); driftErr == nil && !drift.Empty() {
+		fmt.Println()
+		reportStateDrift(drift)
+	}
 
 	// Resource advisories
 	printResourceAdvisory(cpuPct, memPct, diskPct)
