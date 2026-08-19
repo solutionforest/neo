@@ -482,7 +482,7 @@ func TestAdminSetPatchesExistingKeyWithoutFallingBackToPUT(t *testing.T) {
 func TestAdminSetFallsBackToPUTWhenPATCHFails(t *testing.T) {
 	fake := &fakeExecutor{responses: []fakeResponse{
 		{out: "{\"error\":\"invalid traversal path\"}\n500"}, // PATCH fails: key absent
-		{out: "\n200"},                                       // PUT creates it
+		{out: "\n200"}, // PUT creates it
 	}}
 	c := &Caddy{exec: fake}
 
@@ -615,5 +615,64 @@ func TestEnsureHTTPServerCreatesWhenGetFails(t *testing.T) {
 	}
 	if len(fake.calls) != 2 {
 		t.Fatalf("expected a GET followed by a create call, got %d calls: %v", len(fake.calls), fake.calls)
+	}
+}
+
+// LoadCertificate used to POST its certificate block to Caddy's /load
+// endpoint. /load replaces the *entire* active configuration, and the payload
+// carried only apps.tls — no apps.http, no servers, no routes — so setting a
+// custom certificate on one app silently deleted every route on the server,
+// including other apps'. `neo domain` then rebuilt only the app being
+// configured, which is what made the loss easy to miss.
+//
+// Pins two things: /load is never called, and the write targets the specific
+// certificates key instead.
+func TestLoadCertificateNeverReplacesTheWholeConfig(t *testing.T) {
+	fake := &fakeExecutor{responses: []fakeResponse{
+		{out: "{}"},    // ensureTLSApp: GET, already an object
+		{out: "{}"},    // ensureTLSCertificates: GET, already an object
+		{out: "\n200"}, // adminSet PATCH of the certificates key
+	}}
+	c := &Caddy{exec: fake}
+
+	if err := c.applyCertificateConfig(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, cmd := range fake.calls {
+		if strings.Contains(cmd, CaddyAdminURL+"/load") || strings.Contains(cmd, "'"+CaddyAdminURL+"/load'") {
+			t.Fatalf("LoadCertificate must never POST to /load — that replaces the whole config and drops every route: %s", cmd)
+		}
+	}
+
+	var wrote bool
+	for _, cmd := range fake.calls {
+		if strings.Contains(cmd, "/config/apps/tls/certificates") && strings.Contains(cmd, "load_files") {
+			wrote = true
+		}
+	}
+	if !wrote {
+		t.Errorf("expected a targeted write to /config/apps/tls/certificates, got calls: %v", fake.calls)
+	}
+}
+
+// A route @id is derived from an app name, so it reaches the shell inside the
+// admin URL. It must be quoted there.
+func TestAdminWriteQuotesTheURL(t *testing.T) {
+	fake := &fakeExecutor{responses: []fakeResponse{{out: "\n200"}}}
+	c := &Caddy{exec: fake}
+
+	if err := c.adminWrite("PATCH", CaddyAdminURL+"/id/app-x;touch /tmp/pwned/handle", "{}"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(fake.calls) != 1 {
+		t.Fatalf("expected one call, got %d", len(fake.calls))
+	}
+	// The metacharacter must sit inside a quoted argument, not terminate it.
+	if strings.Contains(fake.calls[0], "; touch") || strings.Contains(fake.calls[0], ";touch /tmp/pwned' ") {
+		t.Errorf("URL reached the shell unquoted: %s", fake.calls[0])
+	}
+	if !strings.Contains(fake.calls[0], "'"+CaddyAdminURL+"/id/app-x;touch /tmp/pwned/handle'") {
+		t.Errorf("expected the URL to be shell-quoted as a single argument, got: %s", fake.calls[0])
 	}
 }

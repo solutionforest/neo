@@ -4,6 +4,18 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.2 — 2026-08-19
+
+### Fixes
+
+- **Setting a custom SSL certificate wiped every other app's route.** `neo domain --cert/--key` sent its certificate block to Caddy's `/load` endpoint, which replaces the *entire* active configuration — and the payload carried only `apps.tls`, with no `apps.http`, no servers and no routes. Every route on the server was dropped. `neo domain` then rebuilt the route for the app being configured, so the app in front of you came back and the others silently did not. Certificates are now pointed at with a targeted write to `/config/apps/tls/certificates`.
+
+- **A route ID reached the shell unquoted.** Admin API URLs embed a route `@id` derived from the app name, and the URL was interpolated into the `curl` command without quoting — so an app name containing shell metacharacters could break out of the command. The URL is now quoted as a single argument.
+
+- **The remaining admin calls no longer discard Caddy's error.** `PatchUpstream`, `PatchUpstreams` and the welcome-page route write still ran through `curl -sf`, which suppresses the response body. They now report Caddy's own message like the rest. The four `DELETE` calls are deliberately left as they were: an absent route is the expected case there and callers ignore it by design.
+
+---
+
 ## v0.26.1 — 2026-08-19
 
 ### Fixes

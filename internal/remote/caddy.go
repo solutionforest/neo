@@ -33,11 +33,28 @@ const (
 // real reason was visible only in the Caddy container's log. Dropping -f and
 // reading the status line back is what makes these failures self-describing.
 func (c *Caddy) adminWrite(method, url, payload string) error {
-	cmd := fmt.Sprintf(`curl -s -w '\n%%{http_code}' -X %s %s`, method, url)
+	// Quote the URL: callers embed a route @id (derived from an app name) in the
+	// path, so an unquoted interpolation here would be a shell injection vector.
+	cmd := fmt.Sprintf(`curl -s -w '\n%%{http_code}' -X %s %s`, method, ssh.ShellQuote(url))
 	if payload != "" {
 		cmd += fmt.Sprintf(` -H 'Content-Type: application/json' -d %s`, ssh.ShellQuote(payload))
 	}
 
+	out, err := c.exec.Run(cmd)
+	if err != nil {
+		return fmt.Errorf("caddy admin %s %s: %w", method, adminPath(url), err)
+	}
+	return parseAdminResponse(method, url, out)
+}
+
+// adminWriteFile is adminWrite for a payload too large to pass inline — the
+// welcome page HTML is written to a temp file and handed to curl as -d @path
+// rather than risking ARG_MAX on the command line.
+func (c *Caddy) adminWriteFile(method, url, path string) error {
+	cmd := fmt.Sprintf(
+		`curl -s -w '\n%%{http_code}' -X %s %s -H 'Content-Type: application/json' -d @%s`,
+		method, ssh.ShellQuote(url), ssh.ShellQuote(path),
+	)
 	out, err := c.exec.Run(cmd)
 	if err != nil {
 		return fmt.Errorf("caddy admin %s %s: %w", method, adminPath(url), err)
@@ -613,6 +630,18 @@ func (c *Caddy) ensureHTTPServer() error {
 	)
 }
 
+// ensureTLSCertificates makes /config/apps/tls/certificates hold an object, so
+// load_files underneath it is writable. Assumes ensureTLSApp has already run.
+func (c *Caddy) ensureTLSCertificates() error {
+	out, err := c.exec.Run(fmt.Sprintf("curl -s %s/config/apps/tls/certificates", CaddyAdminURL))
+	if err == nil {
+		if body := strings.TrimSpace(out); body != "" && body != "null" {
+			return nil
+		}
+	}
+	return c.adminSet(CaddyAdminURL+"/config/apps/tls/certificates", "{}")
+}
+
 // ensureTLSApp makes /config/apps/tls hold an object, so the automation path
 // underneath it is writable.
 //
@@ -1054,11 +1083,9 @@ func (c *Caddy) PatchUpstream(appID string, dial string) error {
 	if err != nil {
 		return err
 	}
-	cmd := fmt.Sprintf(
-		`curl -sf -X PATCH %s/id/%s/handle/0/upstreams/0/dial -H "Content-Type: application/json" -d %s`,
-		CaddyAdminURL, ssh.ShellQuote(appID), ssh.ShellQuote(string(dialJSON)),
-	)
-	return c.exec.RunQuiet(cmd)
+	return c.adminWrite("PATCH",
+		fmt.Sprintf("%s/id/%s/handle/0/upstreams/0/dial", CaddyAdminURL, appID),
+		string(dialJSON))
 }
 
 // PatchUpstreams atomically replaces the entire upstreams list for an existing route.
@@ -1077,11 +1104,8 @@ func (c *Caddy) PatchUpstreams(appID string, dials []string, domains []string, h
 	// patching, and PUT answers 409 there. The fallback below hid that — every
 	// scaled deploy silently took the full route-replacement path (and its
 	// brief routing gap) instead of the atomic swap this exists to provide.
-	cmd := fmt.Sprintf(
-		`curl -sf -X PATCH %s/id/%s/handle/0/upstreams -H "Content-Type: application/json" -d %s`,
-		CaddyAdminURL, ssh.ShellQuote(appID), ssh.ShellQuote(string(data)),
-	)
-	if err := c.exec.RunQuiet(cmd); err != nil {
+	patchURL := fmt.Sprintf("%s/id/%s/handle/0/upstreams", CaddyAdminURL, appID)
+	if err := c.adminWrite("PATCH", patchURL, string(data)); err != nil {
 		// Fallback: full route replacement (e.g. route has basic_auth subroute structure)
 		if httpOnly {
 			return c.UpdateRouteMultiHTTP(appID, domains, dials, opts...)
@@ -1155,24 +1179,37 @@ func (c *Caddy) LoadCertificate(certPath, keyPath string) error {
 		c.exec.RunQuiet(fmt.Sprintf("docker cp %s %s:/etc/caddy/certs/key.pem", ssh.ShellQuote(keyPath), ssh.ShellQuote(CaddyContainer)))
 	}
 
-	// Load certificate via Caddy Admin API
-	cmd := fmt.Sprintf(
-		`curl -sf -X POST %s/load -H "Content-Type: application/json" -d '{
-			"apps": {
-				"tls": {
-					"certificates": {
-						"load_files": [{
-							"certificate": "/etc/caddy/certs/cert.pem",
-							"key": "/etc/caddy/certs/key.pem"
-						}]
-					}
-				}
-			}
-		}' 2>/dev/null;
-		curl -sf -X PATCH %s/config/apps/tls/certificates/load_files -H "Content-Type: application/json" -d '[{"certificate": "/etc/caddy/certs/cert.pem", "key": "/etc/caddy/certs/key.pem"}]'`,
-		CaddyAdminURL, CaddyAdminURL,
-	)
-	return c.exec.RunQuiet(cmd)
+	return c.applyCertificateConfig()
+}
+
+// applyCertificateConfig points Caddy at the certificate pair already copied
+// into the container, using targeted writes.
+//
+// Split out from LoadCertificate so it can be tested without Docker: the file
+// copying above goes through NewDocker, which is not seamed.
+//
+// This used to POST the certificate block to /load. That endpoint replaces the
+// *entire* active configuration, and the payload carried only apps.tls — no
+// apps.http, no servers, no routes — so loading a custom certificate for one
+// app silently deleted every route on the server, including other apps'. The
+// route rebuild that follows in `neo domain` restored only the app being
+// configured, which is what made the loss easy to miss.
+func (c *Caddy) applyCertificateConfig() error {
+	if err := c.ensureTLSApp(); err != nil {
+		return fmt.Errorf("ensure Caddy TLS app: %w", err)
+	}
+	if err := c.ensureTLSCertificates(); err != nil {
+		return fmt.Errorf("ensure Caddy TLS certificates: %w", err)
+	}
+
+	loadFiles, err := json.Marshal([]map[string]string{{
+		"certificate": "/etc/caddy/certs/cert.pem",
+		"key":         "/etc/caddy/certs/key.pem",
+	}})
+	if err != nil {
+		return fmt.Errorf("build certificate config: %w", err)
+	}
+	return c.adminSet(CaddyAdminURL+"/config/apps/tls/certificates", fmt.Sprintf(`{"load_files":%s}`, loadFiles))
 }
 
 // IsRunning checks if the Caddy container is running.
@@ -1318,9 +1355,5 @@ hr{border:none;border-top:1px solid var(--border);margin:24px 0}
 
 	// Remove old welcome route if exists, then add new
 	c.exec.RunQuiet(fmt.Sprintf("curl -sf -X DELETE %s/id/neo-welcome 2>/dev/null || true", CaddyAdminURL))
-	cmd := fmt.Sprintf(
-		`curl -sf -X POST %s/config/apps/http/servers/srv0/routes -H "Content-Type: application/json" -d @/tmp/neo-welcome.json`,
-		CaddyAdminURL,
-	)
-	return c.exec.RunQuiet(cmd)
+	return c.adminWriteFile("POST", CaddyAdminURL+"/config/apps/http/servers/srv0/routes", "/tmp/neo-welcome.json")
 }
