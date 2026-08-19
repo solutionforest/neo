@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 
@@ -141,14 +142,32 @@ func WildcardDomain(baseDomain string) string {
 	return "*." + strings.TrimPrefix(strings.TrimSpace(baseDomain), "*.")
 }
 
+// caddyExecutor is the subset of *ssh.Executor that Caddy calls directly
+// (adminWrite, ensureHTTPServer, ensureTLSApp, and the various route helpers).
+// It exists purely as a test seam: a fake implementing these four methods lets
+// the PATCH/PUT fallback logic and the body-based existence checks be unit
+// tested without a live SSH connection. *ssh.Executor satisfies this
+// implicitly, so NewCaddy's signature — and every one of its callers — is
+// unchanged.
+type caddyExecutor interface {
+	Run(cmd string) (string, error)
+	RunQuiet(cmd string) error
+	WriteFileElevated(remotePath string, data []byte, mode os.FileMode) error
+	FileExists(path string) bool
+}
+
 // Caddy wraps SSH-based Caddy Admin API operations.
 type Caddy struct {
-	exec *ssh.Executor
+	exec caddyExecutor
+	// raw is the same executor as exec, kept as a concrete *ssh.Executor
+	// because NewDocker (and everything downstream of it) is not seamed —
+	// only Caddy's own direct SSH calls needed to be testable.
+	raw *ssh.Executor
 }
 
 // NewCaddy creates a Caddy remote executor.
 func NewCaddy(exec *ssh.Executor) *Caddy {
-	return &Caddy{exec: exec}
+	return &Caddy{exec: exec, raw: exec}
 }
 
 // BasicAuthConfig configures HTTP basic authentication for a Caddy route.
@@ -273,7 +292,7 @@ func buildRouteJSON(appID string, domains []string, upstreams []string, opts Rou
 
 // StartContainer starts the Caddy container on the remote server.
 func (c *Caddy) StartContainer() error {
-	docker := NewDocker(c.exec)
+	docker := NewDocker(c.raw)
 
 	// Pull caddy image
 	if err := docker.Pull(CaddyImage); err != nil {
@@ -324,7 +343,7 @@ func isDNSCaddyImage(image string) bool {
 // DNS-enabled build, its image is rebuilt from the stored Dockerfile with a
 // fresh base layer instead of pulling caddy:2-alpine. Returns the image used.
 func (c *Caddy) Update(w io.Writer) (string, error) {
-	docker := NewDocker(c.exec)
+	docker := NewDocker(c.raw)
 	current := docker.ImageOf(CaddyContainer)
 
 	// Custom DNS build (e.g. neo-caddy-dns-cloudflare:latest): rebuild from the
@@ -379,7 +398,7 @@ COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 	}
 
 	image := dnsCaddyImagePrefix + provider.Name + ":latest"
-	if err := NewDocker(c.exec).Build(caddyDNSBuildDir, caddyDNSBuildDir+"/Dockerfile", image, w); err != nil {
+	if err := NewDocker(c.raw).Build(caddyDNSBuildDir, caddyDNSBuildDir+"/Dockerfile", image, w); err != nil {
 		return "", fmt.Errorf("build Caddy DNS image: %w", err)
 	}
 	return image, nil
@@ -388,7 +407,7 @@ COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 // RecreateWithImage recreates the neo-caddy container using the given image while
 // preserving Neo's Caddy data/config volumes and routes.
 func (c *Caddy) RecreateWithImage(image string, envFiles []string) error {
-	docker := NewDocker(c.exec)
+	docker := NewDocker(c.raw)
 	_ = docker.Remove(CaddyContainer)
 	_, err := docker.Run(RunOpts{
 		Name:    CaddyContainer,
@@ -680,7 +699,7 @@ func (c *Caddy) HasDNSProvider(provider string) bool {
 	if provider == "" {
 		return false
 	}
-	out, err := NewDocker(c.exec).Exec(CaddyContainer, "caddy list-modules 2>/dev/null || true")
+	out, err := NewDocker(c.raw).Exec(CaddyContainer, "caddy list-modules 2>/dev/null || true")
 	if err != nil {
 		return false
 	}
@@ -689,7 +708,7 @@ func (c *Caddy) HasDNSProvider(provider string) bool {
 
 // Version returns the Caddy version.
 func (c *Caddy) Version() (string, error) {
-	docker := NewDocker(c.exec)
+	docker := NewDocker(c.raw)
 	out, err := docker.Exec(CaddyContainer, "caddy version")
 	if err != nil {
 		return "", err
@@ -1126,7 +1145,7 @@ func (c *Caddy) UpdateRouteMultiHTTP(appID string, domains []string, upstreams [
 // The cert and key files must already exist on the remote server.
 func (c *Caddy) LoadCertificate(certPath, keyPath string) error {
 	// Copy cert files into Caddy container
-	docker := NewDocker(c.exec)
+	docker := NewDocker(c.raw)
 	c.exec.RunQuiet(fmt.Sprintf("docker exec %s mkdir -p /etc/caddy/certs", ssh.ShellQuote(CaddyContainer)))
 	if _, err := docker.Exec(CaddyContainer, fmt.Sprintf("sh -c 'cat > /etc/caddy/certs/cert.pem' < %s", ssh.ShellQuote(certPath))); err != nil {
 		// Fallback: copy via docker cp
@@ -1158,7 +1177,7 @@ func (c *Caddy) LoadCertificate(certPath, keyPath string) error {
 
 // IsRunning checks if the Caddy container is running.
 func (c *Caddy) IsRunning() bool {
-	docker := NewDocker(c.exec)
+	docker := NewDocker(c.raw)
 	return docker.IsRunning(CaddyContainer)
 }
 
