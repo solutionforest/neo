@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"strconv"
 	"strings"
 
 	"golang.org/x/crypto/bcrypt"
@@ -20,6 +21,97 @@ const (
 	CaddyDNSEnvFile  = "/etc/neo/secrets/caddy-dns.env"
 	caddyDNSBuildDir = "/etc/neo/caddy-dns"
 )
+
+// adminWrite performs a mutating call against Caddy's admin API and returns
+// Caddy's own error message when it rejects the change.
+//
+// Every admin call used to run through `curl -sf`. The -f flag suppresses the
+// response body and reports only a non-zero exit status, so an admin-API
+// rejection was indistinguishable from a network failure — a 409 carrying
+// `{"error":"key already exists: srv0"}` surfaced as a bare exit code, and the
+// real reason was visible only in the Caddy container's log. Dropping -f and
+// reading the status line back is what makes these failures self-describing.
+func (c *Caddy) adminWrite(method, url, payload string) error {
+	cmd := fmt.Sprintf(`curl -s -w '\n%%{http_code}' -X %s %s`, method, url)
+	if payload != "" {
+		cmd += fmt.Sprintf(` -H 'Content-Type: application/json' -d %s`, ssh.ShellQuote(payload))
+	}
+
+	out, err := c.exec.Run(cmd)
+	if err != nil {
+		return fmt.Errorf("caddy admin %s %s: %w", method, adminPath(url), err)
+	}
+	return parseAdminResponse(method, url, out)
+}
+
+// adminSet writes a value to a config path whether or not the key already
+// exists.
+//
+// Neither verb alone can express "make this key hold this value": to Caddy PUT
+// means create, and answers 409 `key already exists` when the key is present;
+// PATCH means replace, and answers 500 `invalid traversal path` when it is not.
+// Try the replace first, since on a live server the key almost always exists,
+// and fall back to create for a fresh one.
+func (c *Caddy) adminSet(url, payload string) error {
+	replaceErr := c.adminWrite("PATCH", url, payload)
+	if replaceErr == nil {
+		return nil
+	}
+	if createErr := c.adminWrite("PUT", url, payload); createErr == nil {
+		return nil
+	}
+	// Report the replace failure — the key existing is the common case, so that
+	// error describes what actually went wrong far more often.
+	return replaceErr
+}
+
+// parseAdminResponse splits the trailing `-w '%{http_code}'` status line from
+// the body and turns a non-2xx status into an error carrying Caddy's message.
+func parseAdminResponse(method, url, out string) error {
+	trimmed := strings.TrimRight(out, "\n")
+	body := ""
+	status := trimmed
+	if idx := strings.LastIndex(trimmed, "\n"); idx >= 0 {
+		body = strings.TrimSpace(trimmed[:idx])
+		status = trimmed[idx+1:]
+	}
+
+	code, err := strconv.Atoi(strings.TrimSpace(status))
+	if err != nil {
+		return fmt.Errorf("caddy admin %s %s: unreadable response %q", method, adminPath(url), out)
+	}
+	if code >= 200 && code < 300 {
+		return nil
+	}
+	if msg := caddyErrorMessage(body); msg != "" {
+		return fmt.Errorf("caddy admin %s %s: HTTP %d: %s", method, adminPath(url), code, msg)
+	}
+	return fmt.Errorf("caddy admin %s %s: HTTP %d", method, adminPath(url), code)
+}
+
+// caddyErrorMessage pulls the message out of Caddy's `{"error":"..."}` body,
+// falling back to the raw body so an unexpected shape is still reported.
+func caddyErrorMessage(body string) string {
+	if body == "" {
+		return ""
+	}
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err == nil && payload.Error != "" {
+		return payload.Error
+	}
+	if len(body) > 200 {
+		return body[:200] + "..."
+	}
+	return body
+}
+
+// adminPath trims the admin base URL so errors read as a config path rather
+// than repeating http://localhost:2019 in every message.
+func adminPath(url string) string {
+	return strings.TrimPrefix(url, CaddyAdminURL)
+}
 
 // CaddyDNSProvider describes a Caddy DNS challenge plugin.
 type CaddyDNSProvider struct {
@@ -452,11 +544,7 @@ func (c *Caddy) upsertTLSPolicy(baseDomain string, newPolicy, onDemand map[strin
 	wildcard := WildcardDomain(base)
 
 	// Ensure the TLS app exists so the automation path is writable.
-	ensureTLS := fmt.Sprintf(
-		`curl -sf %s/config/apps/tls >/dev/null 2>&1 || curl -sf -X PUT %s/config/apps/tls -H 'Content-Type: application/json' -d '{}'`,
-		CaddyAdminURL, CaddyAdminURL,
-	)
-	if err := c.exec.RunQuiet(ensureTLS); err != nil {
+	if err := c.ensureTLSApp(); err != nil {
 		return fmt.Errorf("ensure Caddy TLS app: %w", err)
 	}
 
@@ -483,11 +571,46 @@ func (c *Caddy) upsertTLSPolicy(baseDomain string, newPolicy, onDemand map[strin
 	if err != nil {
 		return fmt.Errorf("build TLS automation config: %w", err)
 	}
-	cmd := fmt.Sprintf(
-		`curl -sf -X PUT %s/config/apps/tls/automation -H "Content-Type: application/json" -d %s`,
-		CaddyAdminURL, ssh.ShellQuote(string(data)),
+	return c.adminSet(CaddyAdminURL+"/config/apps/tls/automation", string(data))
+}
+
+// ensureHTTPServer makes /config/apps/http/servers/srv0 hold a server object,
+// so routes can be appended underneath it.
+//
+// Same flaw as ensureTLSApp had: the inline guard this replaces tested curl's
+// exit status, and Caddy answers 200 with a literal `null` body for a missing
+// key, so the create step was skipped and every later write failed with
+// `invalid traversal path`. Check the body.
+func (c *Caddy) ensureHTTPServer() error {
+	out, err := c.exec.Run(fmt.Sprintf("curl -s %s/config/apps/http/servers/srv0", CaddyAdminURL))
+	if err == nil {
+		if body := strings.TrimSpace(out); body != "" && body != "null" {
+			return nil
+		}
+	}
+	return c.adminSet(
+		CaddyAdminURL+"/config/apps/http/servers/srv0",
+		`{"listen":[":443",":80"],"routes":[]}`,
 	)
-	return c.exec.RunQuiet(cmd)
+}
+
+// ensureTLSApp makes /config/apps/tls hold an object, so the automation path
+// underneath it is writable.
+//
+// The previous guard was `curl -sf /config/apps/tls || curl -X PUT ... '{}'`.
+// Caddy answers 200 with a literal `null` body when the app is absent, so -f
+// saw success, the PUT never ran, and every later write to
+// /config/apps/tls/automation failed with `invalid traversal path` — wildcard
+// and on-demand TLS setup could not work on such a server. Checking the body
+// rather than the exit status is the fix.
+func (c *Caddy) ensureTLSApp() error {
+	out, err := c.exec.Run(fmt.Sprintf("curl -s %s/config/apps/tls", CaddyAdminURL))
+	if err == nil {
+		if body := strings.TrimSpace(out); body != "" && body != "null" {
+			return nil
+		}
+	}
+	return c.adminSet(CaddyAdminURL+"/config/apps/tls", "{}")
 }
 
 // HasOnDemandTLS reports whether Caddy has guarded on-demand TLS configured for
@@ -582,11 +705,9 @@ func (c *Caddy) AddRoute(appID string, domains []string, upstream string, opts .
 		return fmt.Errorf("at least one domain is required")
 	}
 	// Ensure the HTTPS server exists (create if missing, no-op if present)
-	ensure := fmt.Sprintf(
-		`curl -sf %s/config/apps/http/servers/srv0 >/dev/null 2>&1 || curl -sf -X PUT %s/config/apps/http/servers/srv0 -H 'Content-Type: application/json' -d '{"listen":[":443",":80"],"routes":[]}'`,
-		CaddyAdminURL, CaddyAdminURL,
-	)
-	c.exec.RunQuiet(ensure)
+	if err := c.ensureHTTPServer(); err != nil {
+		return fmt.Errorf("ensure Caddy HTTP server: %w", err)
+	}
 
 	var routeOpts RouteOptions
 	if len(opts) > 0 {
@@ -604,11 +725,7 @@ func (c *Caddy) AddRoute(appID string, domains []string, upstream string, opts .
 	// basic_auth was added to an app that already had a route.
 	c.RemoveRoute(appID) //nolint:errcheck // absent route is the normal case
 
-	cmd := fmt.Sprintf(
-		`curl -sf -X POST %s/config/apps/http/servers/srv0/routes -H "Content-Type: application/json" -d %s`,
-		CaddyAdminURL, ssh.ShellQuote(string(data)),
-	)
-	return c.exec.RunQuiet(cmd)
+	return c.adminWrite("POST", CaddyAdminURL+"/config/apps/http/servers/srv0/routes", string(data))
 }
 
 // LiveRoute is one route as Caddy is currently serving it.
@@ -716,11 +833,9 @@ func redirectRouteID(fromDomain string) string {
 // Auto-SSL is provisioned for fromDomain by Caddy automatically.
 func (c *Caddy) AddRedirect(fromDomain, toURL string, code int) error {
 	// Ensure srv0 exists
-	ensure := fmt.Sprintf(
-		`curl -sf %s/config/apps/http/servers/srv0 >/dev/null 2>&1 || curl -sf -X PUT %s/config/apps/http/servers/srv0 -H 'Content-Type: application/json' -d '{"listen":[":443",":80"],"routes":[]}'`,
-		CaddyAdminURL, CaddyAdminURL,
-	)
-	c.exec.RunQuiet(ensure)
+	if err := c.ensureHTTPServer(); err != nil {
+		return fmt.Errorf("ensure Caddy HTTP server: %w", err)
+	}
 
 	route := map[string]interface{}{
 		"@id":   redirectRouteID(fromDomain),
@@ -751,11 +866,7 @@ func (c *Caddy) AddRedirect(fromDomain, toURL string, code int) error {
 		return fmt.Errorf("build redirect route: %w", err)
 	}
 
-	cmd := fmt.Sprintf(
-		`curl -sf -X POST %s/config/apps/http/servers/srv0/routes -H "Content-Type: application/json" -d %s`,
-		CaddyAdminURL, ssh.ShellQuote(string(data)),
-	)
-	return c.exec.RunQuiet(cmd)
+	return c.adminWrite("POST", CaddyAdminURL+"/config/apps/http/servers/srv0/routes", string(data))
 }
 
 // RemoveRedirect removes a redirect route for the given source domain.
@@ -767,7 +878,9 @@ func (c *Caddy) RemoveRedirect(fromDomain string) error {
 // UpdateRoute replaces an existing route's domains and upstream (HTTPS).
 func (c *Caddy) UpdateRoute(appID string, domains []string, upstream string, opts ...RouteOptions) error {
 	c.RemoveRoute(appID) // ignore error if doesn't exist
-	c.removeFromAutoHTTPSSkip(domains)
+	if err := c.removeFromAutoHTTPSSkip(domains); err != nil {
+		return fmt.Errorf("re-enable auto-https: %w", err)
+	}
 	return c.AddRoute(appID, domains, upstream, opts...)
 }
 
@@ -818,14 +931,18 @@ func (c *Caddy) addToAutoHTTPSSkip(domains []string) error {
 
 // removeFromAutoHTTPSSkip removes domains from srv0's automatic_https.skip list
 // so Caddy resumes certificate provisioning and HTTPS redirects for them.
-func (c *Caddy) removeFromAutoHTTPSSkip(domains []string) {
+//
+// Returns an error rather than swallowing one: when the write silently failed,
+// a domain moved from HTTP-only back to HTTPS kept its skip entry, so Caddy
+// never provisioned a certificate and the switch looked like it had worked.
+func (c *Caddy) removeFromAutoHTTPSSkip(domains []string) error {
 	server, err := c.loadHTTPServerConfig()
 	if err != nil {
-		return
+		return err
 	}
 	skip := autoHTTPSSkip(server)
 	if len(skip) == 0 {
-		return
+		return nil
 	}
 
 	remove := make(map[string]bool, len(domains))
@@ -840,7 +957,7 @@ func (c *Caddy) removeFromAutoHTTPSSkip(domains []string) {
 	}
 
 	setAutoHTTPSSkip(server, newSkip)
-	_ = c.saveHTTPServerConfig(server)
+	return c.saveHTTPServerConfig(server)
 }
 
 func (c *Caddy) loadHTTPServerConfig() (map[string]interface{}, error) {
@@ -858,16 +975,20 @@ func (c *Caddy) loadHTTPServerConfig() (map[string]interface{}, error) {
 	return server, nil
 }
 
+// saveHTTPServerConfig writes srv0 back to Caddy.
+//
+// This used to PUT, which Caddy defines as "create a new value" — it answers
+// 409 `key already exists: srv0` when the key is present, and srv0 is created
+// by `neo init`, so the call could never succeed on a real server. Because
+// AddRouteHTTP propagates the failure, `neo domain` aborted before adding the
+// route: the app stayed running with no route in Caddy at all. adminSet uses
+// the replace semantics this always wanted.
 func (c *Caddy) saveHTTPServerConfig(server map[string]interface{}) error {
 	data, err := json.Marshal(server)
 	if err != nil {
 		return fmt.Errorf("build Caddy HTTP server config: %w", err)
 	}
-	cmd := fmt.Sprintf(
-		`curl -sf -X PUT %s/config/apps/http/servers/srv0 -H "Content-Type: application/json" -d %s`,
-		CaddyAdminURL, ssh.ShellQuote(string(data)),
-	)
-	return c.exec.RunQuiet(cmd)
+	return c.adminSet(CaddyAdminURL+"/config/apps/http/servers/srv0", string(data))
 }
 
 func autoHTTPSSkip(server map[string]interface{}) []string {
@@ -933,8 +1054,12 @@ func (c *Caddy) PatchUpstreams(appID string, dials []string, domains []string, h
 	if err != nil {
 		return err
 	}
+	// PATCH, not PUT: the upstreams key already exists on any route worth
+	// patching, and PUT answers 409 there. The fallback below hid that — every
+	// scaled deploy silently took the full route-replacement path (and its
+	// brief routing gap) instead of the atomic swap this exists to provide.
 	cmd := fmt.Sprintf(
-		`curl -sf -X PUT %s/id/%s/handle/0/upstreams -H "Content-Type: application/json" -d %s`,
+		`curl -sf -X PATCH %s/id/%s/handle/0/upstreams -H "Content-Type: application/json" -d %s`,
 		CaddyAdminURL, ssh.ShellQuote(appID), ssh.ShellQuote(string(data)),
 	)
 	if err := c.exec.RunQuiet(cmd); err != nil {
@@ -952,10 +1077,9 @@ func (c *Caddy) AddRouteMulti(appID string, domains []string, upstreams []string
 	if len(domains) == 0 {
 		return fmt.Errorf("at least one domain is required")
 	}
-	c.exec.RunQuiet(fmt.Sprintf(
-		`curl -sf %s/config/apps/http/servers/srv0 >/dev/null 2>&1 || curl -sf -X PUT %s/config/apps/http/servers/srv0 -H 'Content-Type: application/json' -d '{"listen":[":443",":80"],"routes":[]}'`,
-		CaddyAdminURL, CaddyAdminURL,
-	))
+	if err := c.ensureHTTPServer(); err != nil {
+		return fmt.Errorf("ensure Caddy HTTP server: %w", err)
+	}
 	var routeOpts RouteOptions
 	if len(opts) > 0 {
 		routeOpts = opts[0]
@@ -966,11 +1090,7 @@ func (c *Caddy) AddRouteMulti(appID string, domains []string, upstreams []string
 	}
 	// Same reasoning as AddRoute: replace, never stack a second route on an @id.
 	c.RemoveRoute(appID) //nolint:errcheck // absent route is the normal case
-	cmd := fmt.Sprintf(
-		`curl -sf -X POST %s/config/apps/http/servers/srv0/routes -H "Content-Type: application/json" -d %s`,
-		CaddyAdminURL, ssh.ShellQuote(string(data)),
-	)
-	return c.exec.RunQuiet(cmd)
+	return c.adminWrite("POST", CaddyAdminURL+"/config/apps/http/servers/srv0/routes", string(data))
 }
 
 // AddRouteMultiHTTP adds an HTTP-only reverse proxy route with multiple upstreams.
@@ -987,7 +1107,9 @@ func (c *Caddy) AddRouteMultiHTTP(appID string, domains []string, upstreams []st
 // UpdateRouteMulti replaces an existing route with a multi-upstream HTTPS route.
 func (c *Caddy) UpdateRouteMulti(appID string, domains []string, upstreams []string, opts ...RouteOptions) error {
 	c.RemoveRoute(appID)
-	c.removeFromAutoHTTPSSkip(domains)
+	if err := c.removeFromAutoHTTPSSkip(domains); err != nil {
+		return fmt.Errorf("re-enable auto-https: %w", err)
+	}
 	return c.AddRouteMulti(appID, domains, upstreams, opts...)
 }
 
@@ -1171,11 +1293,9 @@ hr{border:none;border-top:1px solid var(--border);margin:24px 0}
 	c.exec.RunQuiet(writeCmd)
 
 	// Ensure srv0 exists
-	ensure := fmt.Sprintf(
-		`curl -sf %s/config/apps/http/servers/srv0 >/dev/null 2>&1 || curl -sf -X PUT %s/config/apps/http/servers/srv0 -H 'Content-Type: application/json' -d '{"listen":[":443",":80"],"routes":[]}'`,
-		CaddyAdminURL, CaddyAdminURL,
-	)
-	c.exec.RunQuiet(ensure)
+	if err := c.ensureHTTPServer(); err != nil {
+		return fmt.Errorf("ensure Caddy HTTP server: %w", err)
+	}
 
 	// Remove old welcome route if exists, then add new
 	c.exec.RunQuiet(fmt.Sprintf("curl -sf -X DELETE %s/id/neo-welcome 2>/dev/null || true", CaddyAdminURL))

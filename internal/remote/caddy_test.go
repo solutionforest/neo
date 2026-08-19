@@ -238,3 +238,44 @@ func TestBuildRouteJSONBasicAuthShape(t *testing.T) {
 		t.Error("password was sent in plaintext instead of a bcrypt hash")
 	}
 }
+
+// The 409 that broke `neo domain`. Caddy answers PUT-on-an-existing-key with
+// `{"error":"key already exists: srv0"}`, and the old code ran every admin call
+// through `curl -sf`, which discards the body and reports only a non-zero exit —
+// so this reason was invisible outside the Caddy container's own log.
+func TestParseAdminResponseSurfacesCaddyError(t *testing.T) {
+	err := parseAdminResponse("PUT", CaddyAdminURL+"/config/apps/http/servers/srv0",
+		"{\"error\":\"[/config/apps/http/servers/srv0] key already exists: srv0\"}\n409")
+	if err == nil {
+		t.Fatal("expected an error for a 409 response")
+	}
+	if !strings.Contains(err.Error(), "key already exists: srv0") {
+		t.Errorf("error must carry Caddy's message, got %q", err)
+	}
+	if !strings.Contains(err.Error(), "409") {
+		t.Errorf("error must carry the status code, got %q", err)
+	}
+	// The admin base URL is noise in every message; the config path is the signal.
+	if strings.Contains(err.Error(), CaddyAdminURL) {
+		t.Errorf("error should report the config path, not the full admin URL: %q", err)
+	}
+}
+
+func TestParseAdminResponseAcceptsSuccess(t *testing.T) {
+	for _, status := range []string{"200", "201", "204"} {
+		if err := parseAdminResponse("PATCH", CaddyAdminURL+"/config/apps/tls", "\n"+status); err != nil {
+			t.Errorf("status %s should succeed, got %v", status, err)
+		}
+	}
+}
+
+// A body-less failure still has to report the status rather than silently pass.
+func TestParseAdminResponseHandlesEmptyBody(t *testing.T) {
+	err := parseAdminResponse("POST", CaddyAdminURL+"/config/apps/http/servers/srv0/routes", "\n500")
+	if err == nil {
+		t.Fatal("expected an error for a 500 response")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("expected the status in the error, got %q", err)
+	}
+}

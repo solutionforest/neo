@@ -4,6 +4,24 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.1 — 2026-08-19
+
+### Fixes
+
+- **`neo domain` could not add a domain.** Setting or adding a domain failed, and the app kept running with no route in Caddy at all. Neo wrote Caddy's server config with `PUT`, which Caddy defines as *create* — it answers `409 key already exists: srv0` whenever the key is present, and `srv0` is created by `neo init`, so the call could never succeed on a real server.
+
+  Every path that adjusts `automatic_https.skip` went through that write, which is why it hit `--http`, `--cloudflare-flexible` (`edge_https`) and plain HTTPS alike. On the HTTP-only paths the error propagated and aborted the command before the route was added; on the HTTPS path it was discarded, so a domain moved back from HTTP-only silently kept its skip entry and never got a certificate.
+
+  Writes now use replace semantics, falling back to create for a genuinely new key.
+
+- **Caddy's error message is no longer thrown away.** Admin API calls ran through `curl -sf`, and `-f` suppresses the response body while reporting only a non-zero exit — so an admin-API rejection was indistinguishable from a network failure, and the actual reason was visible only inside the Caddy container's log. Failures now report Caddy's own message and status, e.g. `caddy admin PATCH /config/apps/http/servers/srv0: HTTP 409: key already exists: srv0`.
+
+- **Wildcard and on-demand TLS setup could not write its config.** The guard that creates the TLS app tested curl's exit status, but Caddy answers `200` with a literal `null` body for a missing key, so `-f` saw success, the create step was skipped, and every later write to `/config/apps/tls/automation` failed with `invalid traversal path`. The same flaw affected the four copies of the `srv0` guard, now a single body-checking helper.
+
+- **Scaled apps always took the slow path when switching upstreams.** `PatchUpstreams` used `PUT` on a key that already exists, so it always failed and fell through to a full route replacement — including its brief routing gap — instead of the atomic swap it exists to provide.
+
+---
+
 ## v0.26.0 — 2026-08-18
 
 ### New Features
