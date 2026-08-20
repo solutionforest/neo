@@ -654,13 +654,14 @@ func TestEnsureHTTPServerCreatesWhenGetFails(t *testing.T) {
 // certificates key instead.
 func TestLoadCertificateNeverReplacesTheWholeConfig(t *testing.T) {
 	fake := &fakeExecutor{responses: []fakeResponse{
-		{out: "{}"},    // ensureTLSApp: GET, already an object
-		{out: "{}"},    // ensureTLSCertificates: GET, already an object
-		{out: "\n200"}, // adminSet PATCH of the certificates key
+		{out: "{}"},        // ensureTLSApp: GET, already an object
+		{out: "{}"},        // ensureTLSCertificates: GET, already an object
+		{out: "null\n200"}, // load_files GET: none configured yet
+		{out: "\n200"},     // adminSet PATCH of load_files
 	}}
 	c := &Caddy{exec: fake}
 
-	if err := c.applyCertificateConfig(); err != nil {
+	if err := c.applyCertificateConfig("/etc/caddy/certs/app-a/cert.pem", "/etc/caddy/certs/app-a/key.pem"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -767,13 +768,14 @@ func TestUpdateRouteDoesNotDeleteTheRouteBeforeAFallibleStep(t *testing.T) {
 // with it. The write must target the load_files array itself.
 func TestApplyCertificateConfigWritesOnlyLoadFiles(t *testing.T) {
 	fake := &fakeExecutor{responses: []fakeResponse{
-		{out: "{}"},    // ensureTLSApp GET
-		{out: "{}"},    // ensureTLSCertificates GET
-		{out: "\n200"}, // adminSet PATCH
+		{out: "{}"},        // ensureTLSApp GET
+		{out: "{}"},        // ensureTLSCertificates GET
+		{out: "null\n200"}, // load_files GET: none configured yet
+		{out: "\n200"},     // adminSet PATCH
 	}}
 	c := &Caddy{exec: fake}
 
-	if err := c.applyCertificateConfig(); err != nil {
+	if err := c.applyCertificateConfig("/etc/caddy/certs/app-a/cert.pem", "/etc/caddy/certs/app-a/key.pem"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -791,5 +793,94 @@ func TestApplyCertificateConfigWritesOnlyLoadFiles(t *testing.T) {
 	}
 	if strings.Contains(write, `{"load_files"`) {
 		t.Errorf("write replaced the parent certificates object, clobbering siblings: %s", write)
+	}
+}
+
+// Two apps each with a custom certificate must coexist. The cert files used to
+// go to a single shared /etc/caddy/certs/cert.pem regardless of app, so the
+// second app overwrote the first app's file, and the config write replaced the
+// whole load_files array, dropping its entry too.
+func TestApplyCertificateConfigKeepsOtherAppsCertificates(t *testing.T) {
+	existing := `[{"certificate":"/etc/caddy/certs/app-a/cert.pem","key":"/etc/caddy/certs/app-a/key.pem"}]`
+	fake := &fakeExecutor{responses: []fakeResponse{
+		{out: "{}"},               // ensureTLSApp
+		{out: "{}"},               // ensureTLSCertificates
+		{out: existing + "\n200"}, // load_files GET: app-a already configured
+		{out: "\n200"},            // adminSet PATCH
+	}}
+	c := &Caddy{exec: fake}
+
+	if err := c.applyCertificateConfig("/etc/caddy/certs/app-b/cert.pem", "/etc/caddy/certs/app-b/key.pem"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	write := fake.calls[len(fake.calls)-1]
+	if !strings.Contains(write, "/etc/caddy/certs/app-a/cert.pem") {
+		t.Errorf("app-a's certificate was dropped by app-b's write: %s", write)
+	}
+	if !strings.Contains(write, "/etc/caddy/certs/app-b/cert.pem") {
+		t.Errorf("app-b's certificate was not written: %s", write)
+	}
+}
+
+// Re-applying a renewed certificate for the same app must replace its entry,
+// not append a duplicate that grows on every renewal.
+func TestApplyCertificateConfigReplacesItsOwnEntry(t *testing.T) {
+	existing := `[{"certificate":"/etc/caddy/certs/app-a/cert.pem","key":"/etc/caddy/certs/app-a/key.pem"}]`
+	fake := &fakeExecutor{responses: []fakeResponse{
+		{out: "{}"},
+		{out: "{}"},
+		{out: existing + "\n200"},
+		{out: "\n200"},
+	}}
+	c := &Caddy{exec: fake}
+
+	if err := c.applyCertificateConfig("/etc/caddy/certs/app-a/cert.pem", "/etc/caddy/certs/app-a/key.pem"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	write := fake.calls[len(fake.calls)-1]
+	if strings.Count(write, "/etc/caddy/certs/app-a/cert.pem") != 1 {
+		t.Errorf("expected exactly one entry for this app, got: %s", write)
+	}
+}
+
+// certDirFor scopes certificates per app and must not let a name escape the
+// directory — the value becomes a filesystem path inside the container.
+func TestCertDirForIsScopedAndSafe(t *testing.T) {
+	if a, b := certDirFor("app-a"), certDirFor("app-b"); a == b {
+		t.Errorf("two apps must not share a certificate directory, both got %s", a)
+	}
+	for _, hostile := range []string{"../../etc/passwd", "a/b", "a$(whoami)", ""} {
+		got := certDirFor(hostile)
+		if !strings.HasPrefix(got, "/etc/caddy/certs/") {
+			t.Errorf("certDirFor(%q) escaped the certs directory: %s", hostile, got)
+		}
+		if strings.Contains(strings.TrimPrefix(got, "/etc/caddy/certs/"), "/") {
+			t.Errorf("certDirFor(%q) produced a nested path: %s", hostile, got)
+		}
+	}
+}
+
+// PatchUpstreams' PUT->PATCH fix had no test: a regression back to PUT would
+// 409 on every call and silently fall through to the full route replacement,
+// reintroducing the routing gap the atomic swap exists to avoid.
+func TestPatchUpstreamsUsesPatchNotPut(t *testing.T) {
+	fake := &fakeExecutor{responses: []fakeResponse{{out: "\n200"}}}
+	c := &Caddy{exec: fake}
+
+	err := c.PatchUpstreams("app-x", []string{"app-x-1:8080", "app-x-2:8080"},
+		[]string{"example.com"}, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(fake.calls) != 1 {
+		t.Fatalf("expected exactly one call (no fallback), got %d: %v", len(fake.calls), fake.calls)
+	}
+	if !strings.Contains(fake.calls[0], "-X PATCH") {
+		t.Errorf("must PATCH — PUT 409s on the existing upstreams key: %s", fake.calls[0])
+	}
+	if !strings.Contains(fake.calls[0], "/handle/0/upstreams") {
+		t.Errorf("expected the upstreams path, got: %s", fake.calls[0])
 	}
 }

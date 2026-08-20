@@ -4,6 +4,25 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.4 — 2026-08-20
+
+Closes the two items left open after v0.26.3.
+
+### Fixes
+
+- **Two apps can now each have their own custom SSL certificate.** The cert and key were copied into the Caddy container at a single shared `/etc/caddy/certs/cert.pem` regardless of which app they belonged to, so a second `neo domain --cert` overwrote the first app's file — and the config write replaced the whole `load_files` list, dropping its entry too. Certificates now live at `/etc/caddy/certs/<app>/`, matching how they were already stored on the host, and the config write merges: it upserts this app's entry and leaves every other app's alone. Re-applying a renewed certificate replaces that app's entry rather than appending a duplicate.
+
+### Tests
+
+- `PatchUpstreams` now has the test its v0.26.1 verb fix never got — a regression to `PUT` would 409 on every call and silently fall back to full route replacement, restoring the routing gap the atomic swap exists to avoid.
+- Certificate merging, per-app scoping, and path-escape safety are covered.
+
+### Known gap
+
+`LoadCertificate`'s file-copy half runs through Docker, which has no test seam, so the one-line wiring from it into the per-app path helper is asserted only indirectly. The helper itself and the config merge are covered directly.
+
+---
+
 ## v0.26.3 — 2026-08-20
 
 Four defects found by an independent review of v0.26.1/v0.26.2. Two of them were introduced by those releases.

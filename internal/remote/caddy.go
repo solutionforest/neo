@@ -1220,21 +1220,48 @@ func (c *Caddy) UpdateRouteMultiHTTP(appID string, domains []string, upstreams [
 	return c.AddRouteMulti(appID, domains, upstreams, opts...)
 }
 
-// LoadCertificate loads a custom TLS certificate and key into Caddy.
+// certDirFor returns the in-container directory holding one app's custom
+// certificate. Sanitised here rather than trusted from the caller: the value
+// becomes a filesystem path, so `..` or a slash would escape the directory.
+func certDirFor(certID string) string {
+	safe := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			return r
+		}
+		return '-'
+	}, strings.ToLower(certID))
+	safe = strings.Trim(safe, "-")
+	if safe == "" {
+		safe = "app"
+	}
+	return "/etc/caddy/certs/" + safe
+}
+
+// LoadCertificate loads one app's custom TLS certificate and key into Caddy.
 // The cert and key files must already exist on the remote server.
-func (c *Caddy) LoadCertificate(certPath, keyPath string) error {
+//
+// certID scopes the files to this app. They previously went to a single shared
+// /etc/caddy/certs/cert.pem regardless of app, so a second app setting a custom
+// certificate overwrote the first app's file — and, because the config write
+// replaced the whole load_files array, its config entry too. The host side was
+// already per-app (/etc/neo/certs/<app>/); only the container side collapsed.
+func (c *Caddy) LoadCertificate(certID, certPath, keyPath string) error {
+	dir := certDirFor(certID)
+	containerCert := dir + "/cert.pem"
+	containerKey := dir + "/key.pem"
+
 	// Copy cert files into Caddy container
 	docker := NewDocker(c.raw)
-	c.exec.RunQuiet(fmt.Sprintf("docker exec %s mkdir -p /etc/caddy/certs", ssh.ShellQuote(CaddyContainer)))
-	if _, err := docker.Exec(CaddyContainer, fmt.Sprintf("sh -c 'cat > /etc/caddy/certs/cert.pem' < %s", ssh.ShellQuote(certPath))); err != nil {
+	c.exec.RunQuiet(fmt.Sprintf("docker exec %s mkdir -p %s", ssh.ShellQuote(CaddyContainer), ssh.ShellQuote(dir)))
+	if _, err := docker.Exec(CaddyContainer, fmt.Sprintf("sh -c 'cat > %s' < %s", containerCert, ssh.ShellQuote(certPath))); err != nil {
 		// Fallback: copy via docker cp
-		c.exec.RunQuiet(fmt.Sprintf("docker cp %s %s:/etc/caddy/certs/cert.pem", ssh.ShellQuote(certPath), ssh.ShellQuote(CaddyContainer)))
+		c.exec.RunQuiet(fmt.Sprintf("docker cp %s %s:%s", ssh.ShellQuote(certPath), ssh.ShellQuote(CaddyContainer), ssh.ShellQuote(containerCert)))
 	}
-	if _, err := docker.Exec(CaddyContainer, fmt.Sprintf("sh -c 'cat > /etc/caddy/certs/key.pem' < %s", ssh.ShellQuote(keyPath))); err != nil {
-		c.exec.RunQuiet(fmt.Sprintf("docker cp %s %s:/etc/caddy/certs/key.pem", ssh.ShellQuote(keyPath), ssh.ShellQuote(CaddyContainer)))
+	if _, err := docker.Exec(CaddyContainer, fmt.Sprintf("sh -c 'cat > %s' < %s", containerKey, ssh.ShellQuote(keyPath))); err != nil {
+		c.exec.RunQuiet(fmt.Sprintf("docker cp %s %s:%s", ssh.ShellQuote(keyPath), ssh.ShellQuote(CaddyContainer), ssh.ShellQuote(containerKey)))
 	}
 
-	return c.applyCertificateConfig()
+	return c.applyCertificateConfig(containerCert, containerKey)
 }
 
 // applyCertificateConfig points Caddy at the certificate pair already copied
@@ -1249,7 +1276,15 @@ func (c *Caddy) LoadCertificate(certPath, keyPath string) error {
 // app silently deleted every route on the server, including other apps'. The
 // route rebuild that follows in `neo domain` restored only the app being
 // configured, which is what made the loss easy to miss.
-func (c *Caddy) applyCertificateConfig() error {
+// applyCertificateConfig points Caddy at one certificate pair, preserving any
+// already configured for other apps.
+//
+// Caddy replaces the whole value at whatever path it is given, so this reads
+// load_files, upserts this app's entry and writes the merged list back.
+// Writing the entry alone would drop every other app's certificate; writing the
+// parent `certificates` object would additionally drop `automate`,
+// `load_folders` and `load_pem`.
+func (c *Caddy) applyCertificateConfig(certFile, keyFile string) error {
 	if err := c.ensureTLSApp(); err != nil {
 		return fmt.Errorf("ensure Caddy TLS app: %w", err)
 	}
@@ -1257,18 +1292,38 @@ func (c *Caddy) applyCertificateConfig() error {
 		return fmt.Errorf("ensure Caddy TLS certificates: %w", err)
 	}
 
-	loadFiles, err := json.Marshal([]map[string]string{{
-		"certificate": "/etc/caddy/certs/cert.pem",
-		"key":         "/etc/caddy/certs/key.pem",
-	}})
+	const loadFilesPath = "/config/apps/tls/certificates/load_files"
+	body, err := c.adminRead(CaddyAdminURL + loadFilesPath)
+	if err != nil {
+		return fmt.Errorf("read existing certificates: %w", err)
+	}
+
+	var existing []map[string]interface{}
+	if body != "" {
+		if err := json.Unmarshal([]byte(body), &existing); err != nil {
+			return fmt.Errorf("parse existing certificates: %w", err)
+		}
+	}
+
+	// Drop any prior entry for this same certificate path, so re-applying a
+	// renewed certificate replaces it rather than appending a duplicate.
+	merged := make([]map[string]interface{}, 0, len(existing)+1)
+	for _, entry := range existing {
+		if cert, _ := entry["certificate"].(string); cert == certFile {
+			continue
+		}
+		merged = append(merged, entry)
+	}
+	merged = append(merged, map[string]interface{}{
+		"certificate": certFile,
+		"key":         keyFile,
+	})
+
+	loadFiles, err := json.Marshal(merged)
 	if err != nil {
 		return fmt.Errorf("build certificate config: %w", err)
 	}
-	// Target load_files, not its parent. Caddy replaces the whole value at the
-	// path it is given, so writing the `certificates` object would take
-	// `automate`, `load_folders` and `load_pem` with it — a narrower repeat of
-	// the /load mistake this function exists to undo.
-	return c.adminSet(CaddyAdminURL+"/config/apps/tls/certificates/load_files", string(loadFiles))
+	return c.adminSet(CaddyAdminURL+loadFilesPath, string(loadFiles))
 }
 
 // IsRunning checks if the Caddy container is running.

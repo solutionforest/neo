@@ -370,7 +370,7 @@ func runDomainCustomCert(appName, domain, certFile, keyFile string) error {
 
 	spin = ui.NewSpinner("Configuring SSL...")
 	spin.Start()
-	loadErr := caddy.LoadCertificate(certPath, keyPath)
+	loadErr := caddy.LoadCertificate(appName, certPath, keyPath)
 	spin.Stop()
 	if loadErr != nil {
 		return fmt.Errorf("load certificate into Caddy: %w", loadErr)
