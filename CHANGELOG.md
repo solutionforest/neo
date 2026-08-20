@@ -4,6 +4,26 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.3 — 2026-08-20
+
+Four defects found by an independent review of v0.26.1/v0.26.2. Two of them were introduced by those releases.
+
+### Fixes
+
+- **A transient read failure could delete every route on the server.** `loadHTTPServerConfig` answered a failed GET of `srv0` with a fabricated empty server and no error. Its callers edit that value and write it straight back, and Caddy replaces the whole value at a path rather than merging — so one hiccup during any `--http` or `--cloudflare-flexible` domain change wiped every app's route. This was dormant until v0.26.1: the write used `PUT` and always failed with 409, so the bad config could never land. Fixing the verb made it land. A failed read is now an error; only a genuinely absent `srv0` yields an empty server, where there is nothing to lose.
+
+- **`neo domain` and `neo deploy` could leave an app with no route at all.** `UpdateRoute`, `UpdateRouteMulti` and `UpdateRouteMultiHTTP` deleted the live route *before* the auto-HTTPS edit that v0.26.1 made fallible. If that edit failed, the function returned having deleted the route and never re-added it — and most deploy call sites discard the error, so the deploy reported success while the app was offline. The fallible step now runs first, so a failure changes nothing.
+
+- **Caddy returning `null` for a missing `srv0` crashed the CLI.** `json.Unmarshal` leaves the map nil, and the next write into it panicked with `assignment to entry in nil map` instead of reporting a problem.
+
+- **Setting a custom SSL certificate clobbered neighbouring TLS config.** v0.26.2 wrote the whole `certificates` object, taking `automate`, `load_folders` and `load_pem` with it — a narrower repeat of the `/load` mistake it was fixing. The write now targets `load_files` alone, as the pre-v0.26.2 code did.
+
+### Tests
+
+Five existing tests asserted only how many calls were made, never which URL — a wrong path passed silently. They now assert the path. Each of the four fixes above has a regression test that was confirmed to fail against the reintroduced defect.
+
+---
+
 ## v0.26.2 — 2026-08-19
 
 ### Fixes

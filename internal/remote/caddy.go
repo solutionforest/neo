@@ -47,6 +47,34 @@ func (c *Caddy) adminWrite(method, url, payload string) error {
 	return parseAdminResponse(method, url, out)
 }
 
+// adminRead GETs a config path and returns the body, distinguishing "the read
+// failed" from "the key is absent".
+//
+// That distinction is load-bearing: a caller that reads config, edits it and
+// writes it back must never treat a failed read as an empty config, because the
+// write then replaces real config with the fabricated stand-in.
+// Returns ("", nil) when Caddy reports the key as absent (HTTP 200 with a
+// literal `null` body, or an empty body).
+func (c *Caddy) adminRead(url string) (string, error) {
+	out, err := c.exec.Run(fmt.Sprintf(`curl -s -w '\n%%{http_code}' %s`, ssh.ShellQuote(url)))
+	if err != nil {
+		return "", fmt.Errorf("caddy admin GET %s: %w", adminPath(url), err)
+	}
+	if err := parseAdminResponse("GET", url, out); err != nil {
+		return "", err
+	}
+
+	trimmed := strings.TrimRight(out, "\n")
+	body := ""
+	if idx := strings.LastIndex(trimmed, "\n"); idx >= 0 {
+		body = strings.TrimSpace(trimmed[:idx])
+	}
+	if body == "null" {
+		return "", nil
+	}
+	return body, nil
+}
+
 // adminWriteFile is adminWrite for a payload too large to pass inline — the
 // welcome page HTML is written to a temp file and handed to curl as -d @path
 // rather than risking ARG_MAX on the command line.
@@ -924,11 +952,16 @@ func (c *Caddy) RemoveRedirect(fromDomain string) error {
 }
 
 // UpdateRoute replaces an existing route's domains and upstream (HTTPS).
+// The auto-https edit comes first, before the route is removed. It can fail,
+// and doing it after the delete leaves the app with no route at all when it
+// does — most deploy call sites discard this error, so that would be a silent
+// outage rather than a reported one. Ordering it first means a failure aborts
+// having changed nothing.
 func (c *Caddy) UpdateRoute(appID string, domains []string, upstream string, opts ...RouteOptions) error {
-	c.RemoveRoute(appID) // ignore error if doesn't exist
 	if err := c.removeFromAutoHTTPSSkip(domains); err != nil {
 		return fmt.Errorf("re-enable auto-https: %w", err)
 	}
+	c.RemoveRoute(appID) // ignore error if doesn't exist
 	return c.AddRoute(appID, domains, upstream, opts...)
 }
 
@@ -1008,17 +1041,37 @@ func (c *Caddy) removeFromAutoHTTPSSkip(domains []string) error {
 	return c.saveHTTPServerConfig(server)
 }
 
+// loadHTTPServerConfig reads srv0 so a caller can edit it and write it back.
+//
+// A failed read must be an error, never a fabricated empty server. Callers
+// (addToAutoHTTPSSkip, removeFromAutoHTTPSSkip) unconditionally write the
+// result back through saveHTTPServerConfig, and Caddy replaces the whole value
+// at that path rather than merging — so returning a skeleton on a transient
+// read failure would delete every route on the server. That was previously
+// masked: saveHTTPServerConfig used PUT, which always 409'd, so the bad write
+// could never land. Fixing the verb made the write succeed, which made this
+// live. An *absent* srv0 is different and still yields a skeleton: there is no
+// existing config to lose.
 func (c *Caddy) loadHTTPServerConfig() (map[string]interface{}, error) {
-	out, err := c.exec.Run(fmt.Sprintf("curl -sf %s/config/apps/http/servers/srv0 2>/dev/null", CaddyAdminURL))
-	if err != nil || strings.TrimSpace(out) == "" {
+	body, err := c.adminRead(CaddyAdminURL + "/config/apps/http/servers/srv0")
+	if err != nil {
+		return nil, fmt.Errorf("read Caddy HTTP server config: %w", err)
+	}
+	if body == "" {
 		return map[string]interface{}{
 			"listen": []interface{}{":443", ":80"},
 			"routes": []interface{}{},
 		}, nil
 	}
+
 	var server map[string]interface{}
-	if err := json.Unmarshal([]byte(out), &server); err != nil {
+	if err := json.Unmarshal([]byte(body), &server); err != nil {
 		return nil, fmt.Errorf("parse Caddy HTTP server config: %w", err)
+	}
+	if server == nil {
+		// Valid JSON that decodes to a nil map (e.g. a bare `null` that slipped
+		// past the check above). Writing into it would panic.
+		return nil, fmt.Errorf("Caddy returned no HTTP server config for srv0")
 	}
 	return server, nil
 }
@@ -1149,19 +1202,21 @@ func (c *Caddy) AddRouteMultiHTTP(appID string, domains []string, upstreams []st
 
 // UpdateRouteMulti replaces an existing route with a multi-upstream HTTPS route.
 func (c *Caddy) UpdateRouteMulti(appID string, domains []string, upstreams []string, opts ...RouteOptions) error {
-	c.RemoveRoute(appID)
+	// Fallible step before the delete — see UpdateRoute.
 	if err := c.removeFromAutoHTTPSSkip(domains); err != nil {
 		return fmt.Errorf("re-enable auto-https: %w", err)
 	}
+	c.RemoveRoute(appID)
 	return c.AddRouteMulti(appID, domains, upstreams, opts...)
 }
 
 // UpdateRouteMultiHTTP replaces an existing route with a multi-upstream HTTP-only route.
 func (c *Caddy) UpdateRouteMultiHTTP(appID string, domains []string, upstreams []string, opts ...RouteOptions) error {
-	c.RemoveRoute(appID)
+	// Fallible step before the delete — see UpdateRoute.
 	if err := c.addToAutoHTTPSSkip(domains); err != nil {
 		return fmt.Errorf("disable auto-https: %w", err)
 	}
+	c.RemoveRoute(appID)
 	return c.AddRouteMulti(appID, domains, upstreams, opts...)
 }
 
@@ -1209,7 +1264,11 @@ func (c *Caddy) applyCertificateConfig() error {
 	if err != nil {
 		return fmt.Errorf("build certificate config: %w", err)
 	}
-	return c.adminSet(CaddyAdminURL+"/config/apps/tls/certificates", fmt.Sprintf(`{"load_files":%s}`, loadFiles))
+	// Target load_files, not its parent. Caddy replaces the whole value at the
+	// path it is given, so writing the `certificates` object would take
+	// `automate`, `load_folders` and `load_pem` with it — a narrower repeat of
+	// the /load mistake this function exists to undo.
+	return c.adminSet(CaddyAdminURL+"/config/apps/tls/certificates/load_files", string(loadFiles))
 }
 
 // IsRunning checks if the Caddy container is running.

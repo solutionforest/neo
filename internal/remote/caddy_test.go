@@ -554,6 +554,11 @@ func TestEnsureHTTPServerCreatesWhenBodyIsNull(t *testing.T) {
 	if len(fake.calls) != 2 {
 		t.Fatalf("expected a GET followed by a create call, got %d calls: %v", len(fake.calls), fake.calls)
 	}
+	// Assert the path, not just the call count: the fake replies
+	// positionally, so a wrong URL would otherwise pass silently.
+	if !strings.Contains(fake.calls[0], "/config/apps/http/servers/srv0") {
+		t.Errorf("expected the GET to target /config/apps/http/servers/srv0, got: %s", fake.calls[0])
+	}
 }
 
 func TestEnsureHTTPServerNoopsWhenBodyIsPresent(t *testing.T) {
@@ -567,6 +572,11 @@ func TestEnsureHTTPServerNoopsWhenBodyIsPresent(t *testing.T) {
 	}
 	if len(fake.calls) != 1 {
 		t.Fatalf("expected only the GET check with no create call, got %d calls: %v", len(fake.calls), fake.calls)
+	}
+	// Assert the path, not just the call count: the fake replies
+	// positionally, so a wrong URL would otherwise pass silently.
+	if !strings.Contains(fake.calls[0], "/config/apps/http/servers/srv0") {
+		t.Errorf("expected the GET to target /config/apps/http/servers/srv0, got: %s", fake.calls[0])
 	}
 }
 
@@ -583,6 +593,11 @@ func TestEnsureTLSAppCreatesWhenBodyIsNull(t *testing.T) {
 	if len(fake.calls) != 2 {
 		t.Fatalf("expected a GET followed by a create call, got %d calls: %v", len(fake.calls), fake.calls)
 	}
+	// Assert the path, not just the call count: the fake replies
+	// positionally, so a wrong URL would otherwise pass silently.
+	if !strings.Contains(fake.calls[0], "/config/apps/tls") {
+		t.Errorf("expected the GET to target /config/apps/tls, got: %s", fake.calls[0])
+	}
 }
 
 func TestEnsureTLSAppNoopsWhenBodyIsPresent(t *testing.T) {
@@ -596,6 +611,11 @@ func TestEnsureTLSAppNoopsWhenBodyIsPresent(t *testing.T) {
 	}
 	if len(fake.calls) != 1 {
 		t.Fatalf("expected only the GET check with no create call, got %d calls: %v", len(fake.calls), fake.calls)
+	}
+	// Assert the path, not just the call count: the fake replies
+	// positionally, so a wrong URL would otherwise pass silently.
+	if !strings.Contains(fake.calls[0], "/config/apps/tls") {
+		t.Errorf("expected the GET to target /config/apps/tls, got: %s", fake.calls[0])
 	}
 }
 
@@ -615,6 +635,11 @@ func TestEnsureHTTPServerCreatesWhenGetFails(t *testing.T) {
 	}
 	if len(fake.calls) != 2 {
 		t.Fatalf("expected a GET followed by a create call, got %d calls: %v", len(fake.calls), fake.calls)
+	}
+	// Assert the path, not just the call count: the fake replies
+	// positionally, so a wrong URL would otherwise pass silently.
+	if !strings.Contains(fake.calls[0], "/config/apps/http/servers/srv0") {
+		t.Errorf("expected the GET to target /config/apps/http/servers/srv0, got: %s", fake.calls[0])
 	}
 }
 
@@ -668,11 +693,103 @@ func TestAdminWriteQuotesTheURL(t *testing.T) {
 	if len(fake.calls) != 1 {
 		t.Fatalf("expected one call, got %d", len(fake.calls))
 	}
-	// The metacharacter must sit inside a quoted argument, not terminate it.
-	if strings.Contains(fake.calls[0], "; touch") || strings.Contains(fake.calls[0], ";touch /tmp/pwned' ") {
-		t.Errorf("URL reached the shell unquoted: %s", fake.calls[0])
-	}
+	// The dead assertion that used to sit here could never match the payload
+	// below, so it contributed nothing. The check that follows is the one with
+	// teeth: the whole URL must be a single quoted argument.
 	if !strings.Contains(fake.calls[0], "'"+CaddyAdminURL+"/id/app-x;touch /tmp/pwned/handle'") {
 		t.Errorf("expected the URL to be shell-quoted as a single argument, got: %s", fake.calls[0])
+	}
+}
+
+// A failed read of srv0 must not be mistaken for an empty server.
+//
+// loadHTTPServerConfig used to answer a failed GET with a fabricated skeleton
+// and a nil error. Its callers edit that value and write it straight back, and
+// Caddy replaces the whole value at a path rather than merging — so a single
+// transient read failure during any --http or --cloudflare-flexible domain
+// change deleted every route on the server. It was dormant only because
+// saveHTTPServerConfig used PUT and always 409'd; fixing the verb made the bad
+// write land.
+func TestAddToAutoHTTPSSkipNeverWritesBackAFabricatedServer(t *testing.T) {
+	fake := &fakeExecutor{responses: []fakeResponse{
+		{out: "", err: fmt.Errorf("transient ssh failure")}, // GET srv0 fails
+	}}
+	c := &Caddy{exec: fake}
+
+	err := c.addToAutoHTTPSSkip([]string{"example.com"})
+	if err == nil {
+		t.Fatal("a failed read must surface as an error, not a silent empty config")
+	}
+	for _, cmd := range fake.calls {
+		if strings.Contains(cmd, "-X PATCH") || strings.Contains(cmd, "-X PUT") {
+			t.Errorf("no write may follow a failed read, got: %s", cmd)
+		}
+	}
+}
+
+// Caddy answers a missing key with HTTP 200 and a literal `null` body.
+// json.Unmarshal leaves the map nil, and writing into a nil map panics.
+func TestLoadHTTPServerConfigHandlesNullBodyWithoutPanicking(t *testing.T) {
+	fake := &fakeExecutor{responses: []fakeResponse{{out: "null\n200"}}}
+	c := &Caddy{exec: fake}
+
+	server, err := c.loadHTTPServerConfig()
+	if err != nil {
+		t.Fatalf("an absent srv0 is not an error: %v", err)
+	}
+	if server == nil {
+		t.Fatal("must return a usable map, not nil — callers write into it")
+	}
+	// Proves the nil-map panic is gone: this is what the callers do next.
+	setAutoHTTPSSkip(server, []string{"example.com"})
+}
+
+// UpdateRoute deletes the live route before re-adding it. Anything fallible
+// must happen before that delete, or a failure leaves the app with no route —
+// and most deploy call sites discard this error, so it would be silent.
+func TestUpdateRouteDoesNotDeleteTheRouteBeforeAFallibleStep(t *testing.T) {
+	fake := &fakeExecutor{responses: []fakeResponse{
+		{out: "", err: fmt.Errorf("transient ssh failure")}, // GET srv0 fails
+	}}
+	c := &Caddy{exec: fake}
+
+	if err := c.UpdateRoute("app-x", []string{"example.com"}, "app-x:8080"); err == nil {
+		t.Fatal("expected the failure to surface")
+	}
+	for _, cmd := range fake.calls {
+		if strings.Contains(cmd, "-X DELETE") {
+			t.Errorf("route was deleted before the step that failed: %s", cmd)
+		}
+	}
+}
+
+// Writing the certificates object would take automate/load_folders/load_pem
+// with it. The write must target the load_files array itself.
+func TestApplyCertificateConfigWritesOnlyLoadFiles(t *testing.T) {
+	fake := &fakeExecutor{responses: []fakeResponse{
+		{out: "{}"},    // ensureTLSApp GET
+		{out: "{}"},    // ensureTLSCertificates GET
+		{out: "\n200"}, // adminSet PATCH
+	}}
+	c := &Caddy{exec: fake}
+
+	if err := c.applyCertificateConfig(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var write string
+	for _, cmd := range fake.calls {
+		if strings.Contains(cmd, "-X PATCH") || strings.Contains(cmd, "-X PUT") {
+			write = cmd
+		}
+	}
+	if write == "" {
+		t.Fatal("expected a write")
+	}
+	if !strings.Contains(write, "/config/apps/tls/certificates/load_files") {
+		t.Errorf("write must target the load_files array, got: %s", write)
+	}
+	if strings.Contains(write, `{"load_files"`) {
+		t.Errorf("write replaced the parent certificates object, clobbering siblings: %s", write)
 	}
 }
