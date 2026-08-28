@@ -4,6 +4,18 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.7 — 2026-08-28
+
+### Changes
+
+- **Commands honor `.neo.yml server:`.** Run inside a project, `neo caddy`, `neo domain`, `neo logs`, `neo status`, and other server-scoped commands now target the project's `server:` (like `neo deploy`) instead of whatever `neo use` last selected. Resolution order is `--server` flag > project `.neo.yml server:` > current server; it prints which server it picked when that differs from the current one.
+
+### Fixes
+
+- **`neo init` no longer hides a welcome-page failure.** The error from adding the IP welcome page was silently swallowed, which could hide a half-configured Caddy (no HTTP server) that then broke the first deploy. Init now reports the failure (still non-fatal). Combined with the v0.26.6 `srv0` fix, fresh servers get their welcome page reliably.
+
+---
+
 ## v0.26.6 — 2026-08-28
 
 ### Fixes
