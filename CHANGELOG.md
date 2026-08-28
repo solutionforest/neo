@@ -4,6 +4,14 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.6 — 2026-08-28
+
+### Fixes
+
+- **First deploy to a fresh server adds its route instead of failing.** When Caddy had no `apps/http` yet, `ensureHTTPServer` misread Caddy's error body (`{"error":"invalid traversal path…"}`) as "server exists" and skipped creating `srv0`, so the deploy ended with `POST /config/apps/http/servers/srv0/routes: HTTP 500: invalid traversal path`. It now creates `srv0` on that absent-path signal — and aborts on a transient read failure rather than replacing a live `srv0` (which would have wiped its routes). A redeploy or `neo caddy reload` now self-heals a server in this state.
+
+---
+
 ## v0.26.5 — 2026-08-20
 
 ### Fixes
