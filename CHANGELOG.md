@@ -4,6 +4,14 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.10 — 2026-08-28
+
+### Fixes
+
+- **`neo init` is resumable after a mid-setup failure.** Neo's managed SSH key is now deployed right after the first successful connect, before the heavier setup steps — so if init fails partway (e.g. a transient package error), re-running it authenticates with the key instead of prompting for the server password again.
+
+---
+
 ## v0.26.9 — 2026-08-28
 
 ### Fixes
