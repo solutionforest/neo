@@ -385,10 +385,35 @@ Flags:
 // If the named server doesn't exist, falls back gracefully:
 //   - one server configured → use it with a warning
 //   - multiple servers → prompt the user to pick
+// neoConfigServer returns the top-level server: from a .neo.yml/.neo.yaml in the
+// current directory, or "" when there is none. It lets server-scoped commands
+// (caddy, domain, logs, status, …) target the project's server the way
+// `neo deploy` does, instead of only whatever `neo use` last selected.
+func neoConfigServer() string {
+	cfg, err := loadNeoConfig(".")
+	if err != nil || cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Server)
+}
+
 func resolveServer(cfg *config.Config) (*config.Server, error) {
 	name := serverFlag
+	fromProject := false
+	if name == "" {
+		// No --server: prefer a project-local .neo.yml server: over the globally
+		// selected one, so running a command inside a project acts on that
+		// project's server.
+		if ps := neoConfigServer(); ps != "" {
+			name = ps
+			fromProject = true
+		}
+	}
 	if name == "" {
 		return cfg.CurrentServer()
+	}
+	if fromProject && name != cfg.Current {
+		ui.Info(fmt.Sprintf("Using server %q from .neo.yml", name))
 	}
 
 	// Direct host format (e.g. root@203.0.113.10). Reuse a configured server

@@ -413,9 +413,14 @@ func setupServer(exec *ssh.Executor, cfg *config.Config, name, host, keyPath str
 	caddyVer, _ := caddy.Version()
 	ui.Success(fmt.Sprintf("Caddy %s running (ports 80, 443)", caddyVer))
 
-	// Add welcome page for direct IP access
+	// Add welcome page for direct IP access. Non-fatal, but surface a failure:
+	// a silently-swallowed error here used to hide a half-configured Caddy
+	// (no apps/http server), which then broke the first real deploy.
 	if serverIP != "" {
-		caddy.AddWelcomePage(serverIP) //nolint:errcheck
+		if err := caddy.AddWelcomePage(serverIP); err != nil {
+			ui.Error(fmt.Sprintf("Welcome page not added: %s", err))
+			ui.Info("Not fatal — deploys still work. Re-add later by toggling: neo stealth (twice).")
+		}
 	}
 
 	// Check port accessibility from outside

@@ -422,7 +422,7 @@ Local shell commands that run during deploy lifecycle:
 - Both are automatically started by `neo dev` in standalone Dockerfile mode (see Local Development section)
 
 ### Shared helpers in `root.go`:
-- `resolveServer(cfg)` — resolves --server flag or config.Current
+- `resolveServer(cfg)` — resolves the target server: `--server` flag > project `.neo.yml` `server:` (cwd) > `config.Current`. So server-scoped commands (caddy, domain, logs, status, …) run inside a project act on that project's server, matching `neo deploy`.
 - `connectSSH(srv)` — creates and connects SSH executor
 - `mustResolveAndConnect()` — load config + resolve server + SSH connect (returns cfg, srv, exec, err)
 
