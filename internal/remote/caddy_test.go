@@ -533,6 +533,42 @@ func TestLoadHTTPServerConfigErrorsOnTransientFailure(t *testing.T) {
 	}
 }
 
+// The real production bug behind "POST /config/apps/http/servers/srv0/routes:
+// HTTP 500: invalid traversal path": when apps/http is absent, Caddy answers the
+// GET with the JSON body {"error":"invalid traversal path…"} and HTTP 400. The
+// old raw-curl guard saw a non-empty, non-null body and decided srv0 already
+// existed, so it never created it and every route POST 500'd. ensureHTTPServer
+// must detect the error and create srv0.
+func TestEnsureHTTPServerCreatesWhenAppsHTTPAbsent(t *testing.T) {
+	fake := &fakeExecutor{responses: []fakeResponse{
+		{out: "{\"error\":\"invalid traversal path at: config/apps/http\"}\n400"}, // GET srv0
+		{out: "{\"error\":\"invalid traversal path\"}\n500"},                      // PATCH (parent absent)
+		{out: "\n200"},                                                            // PUT creates srv0 + parent
+	}}
+	c := &Caddy{exec: fake}
+
+	if err := c.ensureHTTPServer(); err != nil {
+		t.Fatalf("expected srv0 to be created when apps/http is absent, got %v", err)
+	}
+	if len(fake.calls) != 3 {
+		t.Fatalf("expected GET + PATCH + PUT, got %d: %v", len(fake.calls), fake.calls)
+	}
+}
+
+func TestEnsureHTTPServerNoOpWhenPresent(t *testing.T) {
+	fake := &fakeExecutor{responses: []fakeResponse{
+		{out: "{\"listen\":[\":443\"],\"routes\":[]}\n200"}, // GET srv0 present
+	}}
+	c := &Caddy{exec: fake}
+
+	if err := c.ensureHTTPServer(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(fake.calls) != 1 {
+		t.Fatalf("expected a single GET with no create, got %d: %v", len(fake.calls), fake.calls)
+	}
+}
+
 // When both verbs fail, adminSet must report the PATCH failure — the key
 // already existing is the common case on a live server, so that error
 // describes what actually went wrong far more often than the PUT one does.
@@ -576,8 +612,8 @@ func TestAdminSetReturnsPATCHErrorWhenBothFail(t *testing.T) {
 // must check the body, not the exit status.
 func TestEnsureHTTPServerCreatesWhenBodyIsNull(t *testing.T) {
 	fake := &fakeExecutor{responses: []fakeResponse{
-		{out: "null"},  // GET srv0: absent (200 OK, body "null")
-		{out: "\n200"}, // adminSet's PATCH create succeeds
+		{out: "null\n200"}, // GET srv0: absent (200 OK, body "null")
+		{out: "\n200"},     // adminSet's PATCH create succeeds
 	}}
 	c := &Caddy{exec: fake}
 
@@ -596,7 +632,7 @@ func TestEnsureHTTPServerCreatesWhenBodyIsNull(t *testing.T) {
 
 func TestEnsureHTTPServerNoopsWhenBodyIsPresent(t *testing.T) {
 	fake := &fakeExecutor{responses: []fakeResponse{
-		{out: `{"listen":[":443",":80"],"routes":[]}`},
+		{out: "{\"listen\":[\":443\",\":80\"],\"routes\":[]}\n200"},
 	}}
 	c := &Caddy{exec: fake}
 
@@ -652,22 +688,23 @@ func TestEnsureTLSAppNoopsWhenBodyIsPresent(t *testing.T) {
 	}
 }
 
-// A GET failure (curl error, connection refused, etc.) must be treated the
-// same as an absent key — err != nil skips the "present" short-circuit in
-// both ensureHTTPServer and ensureTLSApp — rather than propagating and
-// aborting before the create is attempted.
+// A GET *failure* (curl error, connection refused) is transient, not an absent
+// key — Caddy signals an absent key with a "null" body or a 4xx "invalid
+// traversal path", both of which still return from adminRead without a transport
+// error. ensureHTTPServer must abort on a transient failure rather than create,
+// because creating means a PATCH that would replace an existing srv0 and delete
+// every route.
 func TestEnsureHTTPServerCreatesWhenGetFails(t *testing.T) {
 	fake := &fakeExecutor{responses: []fakeResponse{
 		{out: "", err: fmt.Errorf("ssh run: curl: (7) Failed to connect")},
-		{out: "\n200"},
 	}}
 	c := &Caddy{exec: fake}
 
-	if err := c.ensureHTTPServer(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err := c.ensureHTTPServer(); err == nil {
+		t.Fatal("expected a transient GET failure to abort, not create over a possibly-live srv0")
 	}
-	if len(fake.calls) != 2 {
-		t.Fatalf("expected a GET followed by a create call, got %d calls: %v", len(fake.calls), fake.calls)
+	if len(fake.calls) != 1 {
+		t.Fatalf("expected no create attempt after a transient GET failure, got %d calls: %v", len(fake.calls), fake.calls)
 	}
 	// Assert the path, not just the call count: the fake replies
 	// positionally, so a wrong URL would otherwise pass silently.

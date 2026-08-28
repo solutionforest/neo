@@ -646,12 +646,30 @@ func (c *Caddy) upsertTLSPolicy(baseDomain string, newPolicy, onDemand map[strin
 // key, so the create step was skipped and every later write failed with
 // `invalid traversal path`. Check the body.
 func (c *Caddy) ensureHTTPServer() error {
-	out, err := c.exec.Run(fmt.Sprintf("curl -s %s/config/apps/http/servers/srv0", CaddyAdminURL))
-	if err == nil {
-		if body := strings.TrimSpace(out); body != "" && body != "null" {
-			return nil
+	body, err := c.adminRead(CaddyAdminURL + "/config/apps/http/servers/srv0")
+	if err != nil {
+		// "invalid traversal path" means an ancestor (apps/http) is absent, so
+		// there are no routes to lose — create srv0 (adminSet's PUT fallback also
+		// creates the parent). Any other error is transient/unexpected: abort,
+		// rather than let adminSet's PATCH replace an existing srv0 and wipe its
+		// routes.
+		//
+		// A raw `curl -s` here is why this used to fail: Caddy returns the JSON
+		// body {"error":"invalid traversal path…"} with HTTP 400, and that body is
+		// neither "" nor "null", so the old guard read it as "srv0 exists" and
+		// skipped the create — then every route POST 500'd with the same error.
+		if strings.Contains(err.Error(), "invalid traversal path") {
+			return c.adminSet(
+				CaddyAdminURL+"/config/apps/http/servers/srv0",
+				`{"listen":[":443",":80"],"routes":[]}`,
+			)
 		}
+		return fmt.Errorf("check Caddy HTTP server: %w", err)
 	}
+	if body != "" {
+		return nil // srv0 already present with content
+	}
+	// srv0 key present but null — safe to initialise.
 	return c.adminSet(
 		CaddyAdminURL+"/config/apps/http/servers/srv0",
 		`{"listen":[":443",":80"],"routes":[]}`,
