@@ -135,13 +135,13 @@ func runInit(host, name string) error {
 	}
 	defer exec.Close()
 
-	if err := setupServer(exec, cfg, name, host, ""); err != nil {
-		return err
-	}
-
-	// Deploy neo's managed SSH key so all future connections use key auth
+	// Deploy neo's managed SSH key immediately, before the heavier setup steps.
+	// If init later fails partway (e.g. a package install error), the key is
+	// already on the server, so re-running `neo init` uses key auth instead of
+	// asking for the password again — init becomes resumable.
 	deployNeoKey(exec)
-	return nil
+
+	return setupServer(exec, cfg, name, host, "")
 }
 
 // runInitWithKey is like runInit but uses a specific SSH key file (no password prompt).
