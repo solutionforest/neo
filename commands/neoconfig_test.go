@@ -49,6 +49,36 @@ env:
 	}
 }
 
+func TestLoadNeoConfigYamlSpelling(t *testing.T) {
+	tmp := t.TempDir()
+	// A .neo.yaml (with an 'a') must be read too — otherwise its server:/domain:
+	// are silently ignored and the deploy goes to the default server.
+	content := "name: my-laravel-app\nserver: noble-53\n"
+	os.WriteFile(filepath.Join(tmp, ".neo.yaml"), []byte(content), 0644)
+
+	cfg, err := loadNeoConfig(tmp)
+	if err != nil {
+		t.Fatalf("loadNeoConfig() error: %v", err)
+	}
+	if cfg == nil || cfg.Server != "noble-53" {
+		t.Fatalf("expected .neo.yaml to be read (server=noble-53), got %+v", cfg)
+	}
+}
+
+func TestLoadNeoConfigPrefersYml(t *testing.T) {
+	tmp := t.TempDir()
+	os.WriteFile(filepath.Join(tmp, ".neo.yml"), []byte("name: from-yml\n"), 0644)
+	os.WriteFile(filepath.Join(tmp, ".neo.yaml"), []byte("name: from-yaml\n"), 0644)
+
+	cfg, err := loadNeoConfig(tmp)
+	if err != nil {
+		t.Fatalf("loadNeoConfig() error: %v", err)
+	}
+	if cfg == nil || cfg.Name != "from-yml" {
+		t.Fatalf("expected .neo.yml to win over .neo.yaml, got %+v", cfg)
+	}
+}
+
 func TestLoadNeoConfigMissing(t *testing.T) {
 	tmp := t.TempDir()
 	cfg, err := loadNeoConfig(tmp)

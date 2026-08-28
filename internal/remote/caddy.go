@@ -1055,13 +1055,20 @@ func (c *Caddy) removeFromAutoHTTPSSkip(domains []string) error {
 func (c *Caddy) loadHTTPServerConfig() (map[string]interface{}, error) {
 	body, err := c.adminRead(CaddyAdminURL + "/config/apps/http/servers/srv0")
 	if err != nil {
+		// "invalid traversal path" means an ancestor (apps/http) does not exist —
+		// e.g. a Caddy that only has the bootstrap admin config, or one whose http
+		// app was never created (or was wiped). There are no routes to lose, so
+		// start from a skeleton; saveHTTPServerConfig's PUT fallback creates srv0
+		// and its parent path. Any other error (transient curl/network failure,
+		// 5xx) must still abort — writing a skeleton back over an existing srv0
+		// would replace it and delete every route.
+		if strings.Contains(err.Error(), "invalid traversal path") {
+			return emptyHTTPServerSkeleton(), nil
+		}
 		return nil, fmt.Errorf("read Caddy HTTP server config: %w", err)
 	}
 	if body == "" {
-		return map[string]interface{}{
-			"listen": []interface{}{":443", ":80"},
-			"routes": []interface{}{},
-		}, nil
+		return emptyHTTPServerSkeleton(), nil
 	}
 
 	var server map[string]interface{}
@@ -1090,6 +1097,15 @@ func (c *Caddy) saveHTTPServerConfig(server map[string]interface{}) error {
 		return fmt.Errorf("build Caddy HTTP server config: %w", err)
 	}
 	return c.adminSet(CaddyAdminURL+"/config/apps/http/servers/srv0", string(data))
+}
+
+// emptyHTTPServerSkeleton is the minimal srv0 used when no HTTP server config
+// exists yet. saveHTTPServerConfig's PUT fallback creates the parent path.
+func emptyHTTPServerSkeleton() map[string]interface{} {
+	return map[string]interface{}{
+		"listen": []interface{}{":443", ":80"},
+		"routes": []interface{}{},
+	}
 }
 
 func autoHTTPSSkip(server map[string]interface{}) []string {

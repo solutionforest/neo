@@ -500,6 +500,39 @@ func TestAdminSetFallsBackToPUTWhenPATCHFails(t *testing.T) {
 	}
 }
 
+// A fresh Caddy (or one whose http app was wiped) has no apps/http, so reading
+// srv0 returns 400 "invalid traversal path". loadHTTPServerConfig must treat
+// that as "nothing there yet" and hand back a skeleton — otherwise the first
+// HTTPS route add fails with "re-enable auto-https: read Caddy HTTP server
+// config: ... invalid traversal path".
+func TestLoadHTTPServerConfigSkeletonOnAbsentPath(t *testing.T) {
+	fake := &fakeExecutor{responses: []fakeResponse{
+		{out: "{\"error\":\"invalid traversal path at: config/apps/http\"}\n400"},
+	}}
+	c := &Caddy{exec: fake}
+
+	server, err := c.loadHTTPServerConfig()
+	if err != nil {
+		t.Fatalf("expected a skeleton (no error) when apps/http is absent, got %v", err)
+	}
+	if _, ok := server["routes"]; !ok {
+		t.Errorf("expected skeleton to have a routes key, got %v", server)
+	}
+}
+
+// A transient read failure must still abort — returning a skeleton would let the
+// caller write it back over an existing srv0 and delete every route.
+func TestLoadHTTPServerConfigErrorsOnTransientFailure(t *testing.T) {
+	fake := &fakeExecutor{responses: []fakeResponse{
+		{out: "", err: fmt.Errorf("dial tcp: connection refused")},
+	}}
+	c := &Caddy{exec: fake}
+
+	if _, err := c.loadHTTPServerConfig(); err == nil {
+		t.Fatal("expected a transient read failure to abort, not return a skeleton")
+	}
+}
+
 // When both verbs fail, adminSet must report the PATCH failure — the key
 // already existing is the common case on a live server, so that error
 // describes what actually went wrong far more often than the PUT one does.

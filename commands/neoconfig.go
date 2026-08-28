@@ -282,13 +282,19 @@ func (c *NeoConfig) ExtraConfigDomains() []string {
 // loadNeoConfig reads .neo.yml from the given project directory.
 // Returns nil if the file doesn't exist (not an error).
 func loadNeoConfig(projectDir string) (*NeoConfig, error) {
-	path := filepath.Join(projectDir, ".neo.yml")
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Join(projectDir, ".neo.yml"))
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
+		if !os.IsNotExist(err) {
+			return nil, err
 		}
-		return nil, err
+		// Fall back to the .neo.yaml spelling. Reading only .neo.yml silently
+		// ignored a .neo.yaml, so its server:/domain:/env: were dropped and the
+		// deploy went to the default server with no route — a confusing failure.
+		altData, altErr := os.ReadFile(filepath.Join(projectDir, ".neo.yaml"))
+		if altErr != nil {
+			return nil, nil // neither spelling present: config is optional
+		}
+		data = altData
 	}
 
 	var cfg NeoConfig
