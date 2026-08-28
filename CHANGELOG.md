@@ -4,6 +4,15 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.5 — 2026-08-20
+
+### Fixes
+
+- **`.neo.yaml` is read too.** A project config named `.neo.yaml` (with an `a`) was silently ignored — only `.neo.yml` was loaded — so its `server:`, `domain:`, and `env:` were dropped and the deploy went to the default server with no route. Neo now falls back to `.neo.yaml` (`.neo.yml` still wins when both exist).
+- **First Caddy route self-heals on a fresh or wiped proxy.** When Caddy had no `apps/http` yet, adding the first HTTPS route failed with `re-enable auto-https: read Caddy HTTP server config: … invalid traversal path`. Neo now starts from an empty server skeleton on that specific absent-path error and lets Caddy create it, while still aborting on transient read failures so it never wipes existing routes.
+
+---
+
 ## v0.26.4 — 2026-08-20
 
 Closes the two items left open after v0.26.3.
