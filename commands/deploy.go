@@ -516,6 +516,19 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		}
 	}
 
+	// Warn if the project has a .env that this deploy is not loading. Unlike
+	// `neo dev`, deploy never auto-loads .env, so an app whose secrets live there
+	// (APP_KEY, DB_*, …) would ship without them and fail at runtime — a silent,
+	// costly footgun. Only fires when no env source is configured at all.
+	if _, statErr := os.Stat(filepath.Join(absPath, ".env")); statErr == nil {
+		noEnvSource := flags.envFile == "" && findComposeFile(absPath) == "" &&
+			(neoConfig == nil || (neoConfig.EnvFile == "" && neoConfig.EnvEncrypted == ""))
+		if noEnvSource {
+			ui.Error("Found a .env in the project but no env source is configured — its variables will NOT be shipped.")
+			ui.Info("`neo deploy` does not auto-load .env. Add `env_file: .env` to .neo.yml (or deploy with --env-file .env).")
+		}
+	}
+
 	// Auto-assign a temporary sslip.io domain when no domain set (first deploy only).
 	// sslip.io resolves the IP from the hostname and supports Let's Encrypt auto-SSL.
 	if domain == "" && !isRedeploy && !flags.noDomain {

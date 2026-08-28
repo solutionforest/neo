@@ -693,7 +693,7 @@ plans/                       # Planning documents (gitignored — local working 
 | `neo sync [app] [--to env]` | Sync server state to .neo.yml (writes into the environment block) |
 | `neo status [app]` | Server health, or full detail for one app |
 | `neo deploys [app]` | Deployment history (build, commit, who, when) |
-| `neo run <cmd>` | Execute command on server |
+| `neo run <app> -- <cmd>` | Run a one-off command inside an app container (`-w` worker, `-c` sidecar, `-i` interactive) |
 | `neo ssh` | SSH into server |
 | `neo servers` | List configured servers |
 | `neo use <name>` | Switch active server |
