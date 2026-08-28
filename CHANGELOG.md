@@ -4,6 +4,14 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.9 — 2026-08-28
+
+### Fixes
+
+- **`neo init` waits for the apt lock on fresh cloud VMs.** cloud-init / unattended-upgrades holds the dpkg lock on first boot, so neo's package install — and the Docker install script's own `apt-get` — failed with "Could not get lock /var/lib/dpkg/lock-frontend" and aborted init. Neo now sets `DPkg::Lock::Timeout` so every apt call waits (up to 5 min) for the lock instead of failing.
+
+---
+
 ## v0.26.8 — 2026-08-28
 
 ### Changes
