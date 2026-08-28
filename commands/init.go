@@ -319,6 +319,12 @@ func setupServer(exec *ssh.Executor, cfg *config.Config, name, host, keyPath str
 	case "yum":
 		exec.RunQuiet("yum upgrade -y -q")
 	default:
+		// Fresh cloud VMs run cloud-init / unattended-upgrades on first boot,
+		// which holds the dpkg lock. Make every apt call wait for it (up to 5 min)
+		// instead of failing with "Could not get lock /var/lib/dpkg/lock-frontend".
+		// Written to apt.conf.d so it also covers the Docker install script's own
+		// apt-get calls (curl get.docker.com | sh), which is where init failed.
+		exec.RunQuiet(`echo 'DPkg::Lock::Timeout "300";' > /etc/apt/apt.conf.d/99neo-lock-timeout`)
 		exec.RunQuiet("DEBIAN_FRONTEND=noninteractive apt-get update -qq")
 		exec.RunQuiet("DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq")
 	}
