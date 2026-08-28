@@ -4,6 +4,14 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.8 — 2026-08-28
+
+### Changes
+
+- **Deploy warns about an unshipped `.env`.** `neo deploy` never auto-loads `.env` (only `neo dev` does), so an app whose secrets live there would ship without them and fail at runtime with no hint why. Deploy now warns when a `.env` is present but no env source is configured (no `env_file:`/`env_encrypted:` in `.neo.yml`, no `--env-file`, no docker-compose), pointing at `env_file: .env`.
+
+---
+
 ## v0.26.7 — 2026-08-28
 
 ### Changes
