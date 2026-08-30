@@ -4,6 +4,14 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.11 — 2026-08-30
+
+### Changes
+
+- **Faster dashboard.** The Applications menu now renders instantly from a cached app list and only connects over SSH when you act on an app, and the post-action cache refresh runs in the background instead of blocking the menu. Previously every menu return and every Applications open did a synchronous SSH round-trip — which stalled for the full 10s timeout when the current server was unreachable.
+
+---
+
 ## v0.26.10 — 2026-08-28
 
 ### Fixes
