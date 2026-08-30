@@ -28,6 +28,16 @@ type ServerCache struct {
 	Reachable     bool      `json:"reachable"`
 	Error         string    `json:"error,omitempty"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	// Apps is a lightweight snapshot of the app list so the dashboard can render
+	// the Applications menu instantly from cache, before connecting over SSH.
+	Apps []CachedApp `json:"apps,omitempty"`
+}
+
+// CachedApp is the minimum an app row needs to render in the dashboard list.
+type CachedApp struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Domain string `json:"domain,omitempty"`
 }
 
 // DashboardCache is the full cache file — one entry per server name.
@@ -120,6 +130,10 @@ func GetServerCache(serverName string) *ServerCache {
 	sc, ok := memCache.Servers[serverName]
 	if !ok {
 		return nil
+	}
+	// Deep-copy the slice so callers can't mutate the cached entry through it.
+	if sc.Apps != nil {
+		sc.Apps = append([]CachedApp(nil), sc.Apps...)
 	}
 	return &sc
 }

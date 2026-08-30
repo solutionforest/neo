@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -105,8 +106,11 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		// Refresh cache after every action so the menu shows updated counts
-		refreshCurrentServer(cfg)
+		// Refresh cache after every action so the menu shows updated counts.
+		// Async: it only updates the on-disk cache (the next render reads it), so
+		// there is no reason to block the menu on an SSH round-trip — which would
+		// stall for the full 10s timeout when the current server is unreachable.
+		go refreshCurrentServer(cfg)
 	}
 }
 
@@ -351,9 +355,51 @@ func refreshServerCache(serverName string, srv *config.Server) {
 		ServiceCount:    len(st.Services),
 		RunningServices: runningSvcs,
 		UntrackedApps:   untracked,
+		Apps:            cachedAppsFromState(st),
 		Reachable:       true,
 		UpdatedAt:       time.Now(),
 	})
+}
+
+// cachedAppsFromState builds the lightweight, name-sorted app list stored in the
+// dashboard cache so the Applications menu can render before connecting.
+func cachedAppsFromState(st *state.State) []config.CachedApp {
+	names := make([]string, 0, len(st.Apps))
+	for n := range st.Apps {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	apps := make([]config.CachedApp, 0, len(names))
+	for _, n := range names {
+		a := st.Apps[n]
+		apps = append(apps, config.CachedApp{Name: a.Name, Status: a.Status, Domain: a.Domain})
+	}
+	return apps
+}
+
+// serverCacheFromState is the reachable-server cache entry (counts + app list)
+// built from freshly loaded state, without the drift check refreshServerCache does.
+func serverCacheFromState(st *state.State) config.ServerCache {
+	runningApps, runningSvcs := 0, 0
+	for _, a := range st.Apps {
+		if a.Status == "running" {
+			runningApps++
+		}
+	}
+	for _, s := range st.Services {
+		if s.Status == "running" {
+			runningSvcs++
+		}
+	}
+	return config.ServerCache{
+		AppCount:        len(st.Apps),
+		RunningApps:     runningApps,
+		ServiceCount:    len(st.Services),
+		RunningServices: runningSvcs,
+		Apps:            cachedAppsFromState(st),
+		Reachable:       true,
+		UpdatedAt:       time.Now(),
+	}
 }
 
 // refreshCurrentServer synchronously refreshes the cache for the active server.
@@ -594,124 +640,131 @@ func tuiAppsMenu(cfg *config.Config) error {
 		return nil
 	}
 
-	// Connect + load state with a 10-second timeout — the server may be unreachable.
-	type connResult struct {
-		exec *neossh.Executor
-		st   *state.State
-		err  error
-	}
-	ch := make(chan connResult, 1)
-	go func() {
-		e, err := connectSSH(srv)
-		if err != nil {
-			ch <- connResult{err: err}
-			return
-		}
-		s, err := state.Load(e)
-		if err != nil {
-			e.Close()
-			ch <- connResult{err: fmt.Errorf("cannot read server state: %w", err)}
-			return
-		}
-		ch <- connResult{exec: e, st: s}
-	}()
-
-	stopLoading := ui.ShowLoading(fmt.Sprintf("Connecting to %s...", srv.Name))
-
 	var srvExec *neossh.Executor
 	var st *state.State
-	select {
-	case res := <-ch:
-		stopLoading()
-		if res.err != nil {
-			ui.Error(fmt.Sprintf("Cannot reach %s: %s", srv.Name, res.err))
-			return nil
+	defer func() {
+		if srvExec != nil {
+			srvExec.Close()
 		}
-		srvExec = res.exec
-		st = res.st
-		// Update the server cache immediately so main menu counts reflect the
-		// just-deployed app without waiting for the background refresh goroutine.
-		runningApps, runningSvcs := 0, 0
-		for _, a := range st.Apps {
-			if a.Status == "running" {
-				runningApps++
-			}
-		}
-		for _, s := range st.Services {
-			if s.Status == "running" {
-				runningSvcs++
-			}
-		}
-		config.UpdateServerCache(srv.Name, config.ServerCache{
-			AppCount:        len(st.Apps),
-			RunningApps:     runningApps,
-			ServiceCount:    len(st.Services),
-			RunningServices: runningSvcs,
-			Reachable:       true,
-			UpdatedAt:       time.Now(),
-		})
-	case <-time.After(10 * time.Second):
-		stopLoading()
-		// Drain the channel in background so the goroutine can exit cleanly.
-		go func() {
-			if res, ok := <-ch; ok && res.exec != nil {
-				res.exec.Close()
-			}
-		}()
-		ui.Error(fmt.Sprintf("Cannot reach %s (timed out after 10s)", srv.Name))
-		return nil
-	}
-	defer srvExec.Close()
+	}()
 
-	if len(st.Apps) == 0 {
-		ui.ClearScreen()
-		fmt.Print(ui.RenderBanner())
-		fmt.Print("\r\n  No apps installed.\r\n\r\n")
-		ui.Info("Install an app from the main menu")
-		fmt.Print("\r\n")
-		ui.ReadKey() //nolint:errcheck
-		return nil
+	// ensureConnected connects (once) and loads live state — only needed when the
+	// user actually acts on an app, or when there is no cached list to show. The
+	// list itself renders from cache, so opening this menu is instant.
+	ensureConnected := func() bool {
+		if srvExec != nil {
+			return true
+		}
+		type connResult struct {
+			exec *neossh.Executor
+			st   *state.State
+			err  error
+		}
+		ch := make(chan connResult, 1)
+		go func() {
+			e, err := connectSSH(srv)
+			if err != nil {
+				ch <- connResult{err: err}
+				return
+			}
+			s, err := state.Load(e)
+			if err != nil {
+				e.Close()
+				ch <- connResult{err: fmt.Errorf("cannot read server state: %w", err)}
+				return
+			}
+			ch <- connResult{exec: e, st: s}
+		}()
+		stopLoading := ui.ShowLoading(fmt.Sprintf("Connecting to %s...", srv.Name))
+		select {
+		case res := <-ch:
+			stopLoading()
+			if res.err != nil {
+				ui.Error(fmt.Sprintf("Cannot reach %s: %s", srv.Name, res.err))
+				return false
+			}
+			srvExec = res.exec
+			st = res.st
+			// Refresh the cache (counts + app list) so the main menu and the next
+			// open reflect reality immediately.
+			config.UpdateServerCache(srv.Name, serverCacheFromState(st))
+			return true
+		case <-time.After(10 * time.Second):
+			stopLoading()
+			go func() {
+				if res, ok := <-ch; ok && res.exec != nil {
+					res.exec.Close()
+				}
+			}()
+			ui.Error(fmt.Sprintf("Cannot reach %s (timed out after 10s)", srv.Name))
+			return false
+		}
 	}
 
 	for {
-		// Reload state on each iteration so statuses stay current after any action
-		// (deploy, start, stop, restart) without re-entering the menu.
-		if fresh, loadErr := state.Load(srvExec); loadErr == nil {
-			st = fresh
+		// Prefer live state once connected; otherwise render instantly from cache.
+		var rows []config.CachedApp
+		switch {
+		case st != nil:
+			rows = cachedAppsFromState(st)
+		default:
+			if sc := config.GetServerCache(srv.Name); sc != nil && sc.Reachable && len(sc.Apps) > 0 {
+				rows = sc.Apps
+			} else if ensureConnected() {
+				rows = cachedAppsFromState(st)
+			} else {
+				return nil
+			}
+		}
+
+		if len(rows) == 0 {
+			ui.ClearScreen()
+			fmt.Print(ui.RenderBanner())
+			fmt.Print("\r\n  No apps installed.\r\n\r\n")
+			ui.Info("Install an app from the main menu")
+			fmt.Print("\r\n")
+			ui.ReadKey() //nolint:errcheck
+			return nil
 		}
 
 		running, stopped := 0, 0
-		appNames := make([]string, 0, len(st.Apps))
-		for _, a := range st.Apps {
+		for _, a := range rows {
 			if a.Status == "running" {
 				running++
 			} else {
 				stopped++
 			}
-			appNames = append(appNames, a.Name)
 		}
-
 		title := fmt.Sprintf("  Apps on %s  %s",
 			ui.Bold.Render(srv.Name),
-			ui.Faint.Render(fmt.Sprintf("%d apps · %d running · %d stopped", len(st.Apps), running, stopped)))
+			ui.Faint.Render(fmt.Sprintf("%d apps · %d running · %d stopped", len(rows), running, stopped)))
 
-		opts := make([]ui.SelectOption, 0, len(appNames)+1)
-		for _, name := range appNames {
-			a := st.Apps[name]
-			bullet := ui.StatusBullet(a.Status)
+		opts := make([]ui.SelectOption, 0, len(rows)+1)
+		for _, a := range rows {
 			domain := a.Domain
 			if domain == "" {
 				domain = "—"
 			}
-			label := fmt.Sprintf("%s %-18s %s", bullet, a.Name, ui.Faint.Render(domain))
+			label := fmt.Sprintf("%s %-18s %s", ui.StatusBullet(a.Status), a.Name, ui.Faint.Render(domain))
 			opts = append(opts, ui.SelectOption{label, a.Name})
 		}
 		opts = append(opts, ui.SelectOption{"Back", "back"})
 
 		selected := ui.Select(title, opts)
-
 		if selected == "" || selected == "back" {
 			return nil
+		}
+
+		// Acting on an app needs a live connection and fresh state.
+		if !ensureConnected() {
+			return nil
+		}
+		if fresh, loadErr := state.Load(srvExec); loadErr == nil {
+			st = fresh
+		}
+		if _, ok := st.Apps[selected]; !ok {
+			// The app is gone from fresh state (e.g. removed elsewhere) — re-render.
+			continue
 		}
 
 		done, err := tuiAppActions(selected, st, srvExec)
