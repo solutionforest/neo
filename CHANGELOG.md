@@ -4,6 +4,28 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.14 — 2026-10-09
+
+### New
+
+- **`strategy: recreate` for stateful apps (message brokers, databases).**
+
+  **What was wrong.** Every redeploy is blue-green: Neo starts `app-<name>-next` next to the running container, switches traffic, then removes the old one with `docker rm -f`. For a web app that's zero-downtime. For RabbitMQ it was three problems at once: two brokers ran on the same volume during the swap, the old one was killed without a clean shutdown, and the new container got a new random hostname. RabbitMQ names its node `rabbit@<hostname>` and keeps data per node name, so **every redeploy came up as a fresh, empty node** — vhosts, users, durable queues and messages seemed to vanish, while the old data sat orphaned on the volume. Reproduced on the Debian 12 sandbox with `rabbitmq:4`.
+
+  **What changed.** With `strategy: recreate` in `.neo.yml` (top level or per environment), a redeploy stops the old container first — up to 60 seconds for a clean shutdown — then starts the new one under the same name, with a **fixed hostname**: the app name, or `hostname:` if you set one. Verified on the sandbox: the vhost survived `neo deploy`, `neo deploy --env-only` and `neo env set`; at most one container ran at any moment; the old broker exited with code 0.
+
+  The hostname is saved in server state and applied on every path that recreates the container — `neo deploy`, `--env-only`, `--all`, `neo env set/unset/import`, `neo update` and `neo volumes mount`.
+
+  **Trade-off.** The app is down while the new container starts, and a failed deploy has no old version to fall back to. Neo then says the app is down, exits non-zero, and keeps the failed container so `neo logs <app>` works. `strategy: recreate` can't be combined with `scale:`. The default stays blue-green.
+
+  **What to do.** Add `strategy: recreate` to the `.neo.yml` of each broker or database app. For an existing RabbitMQ app, the first deploy with it changes the node name once (to `rabbit@<app-name>`), so it starts empty — do it before the data matters, or `rabbitmqctl export_definitions` first and import after. If you already set `RABBITMQ_NODENAME`, the node name doesn't change.
+
+### Fixes
+
+- **`neo env set/unset/import`, `neo update` and `neo volumes mount` kept `command:`.** They rebuilt the container from server state but dropped the saved `command:` override, so the container restarted with the image's default process. All three now use one shared builder that carries every saved field.
+
+---
+
 ## v0.26.13 — 2026-10-09
 
 ### Fixes
