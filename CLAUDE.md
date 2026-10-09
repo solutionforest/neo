@@ -65,6 +65,8 @@ Caddy Admin API calls via `curl` over SSH:
 - `UpdateRoute` — remove + add (atomic replace)
 - `LiveRoutes()` — reads back the routes Caddy is actually serving (id, domains, upstreams, whether basic auth is in the chain). Backs `neo caddy routes`.
 
+**Every admin-API write swaps in a whole new config**, and by default Caddy then closes all upgraded streams (WebSockets) on *every* app — so any deploy, `neo domain` or `neo caddy reload` cut long-lived connections server-wide. `buildRouteJSON` sets `stream_close_delay` (`StreamCloseDelay`, 24h) on each `reverse_proxy` so streams survive a config change. Routes only pick it up when rewritten.
+
 **There is no config "reload" in Caddy** — the admin API applies changes immediately. `neo caddy update` is an *image* update (pull + recreate). `neo caddy reload` exists for **drift repair**: it rewrites every app's route from `/etc/neo/state.json` via `routeOptionsForApp`. Use it when the live proxy disagrees with state.
 
 **Auth lives in a subroute.** With `basic_auth`, `handle[0]` is a `subroute` (bypass paths first, then `authentication` + `reverse_proxy`); without it, `handle[0]` is the `reverse_proxy` itself. That is why `PatchUpstream` (which patches `handle/0/upstreams/0/dial`) can only move an upstream, never add or remove auth — deploy checks for auth and does a full `UpdateRoute` instead.

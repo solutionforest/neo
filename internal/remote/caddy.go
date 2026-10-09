@@ -21,6 +21,15 @@ const (
 	CaddyAdminURL    = "http://localhost:2019"
 	CaddyDNSEnvFile  = "/etc/neo/secrets/caddy-dns.env"
 	caddyDNSBuildDir = "/etc/neo/caddy-dns"
+
+	// StreamCloseDelay keeps WebSockets and other upgraded streams open across
+	// a config change. Every admin-API write swaps in a whole new config, and
+	// Caddy closes the old config's streams immediately by default — so any
+	// deploy, `neo domain` or `neo caddy reload` dropped every WebSocket on
+	// every app on the server. Long-lived clients (OCPP chargers) are the
+	// reason it is a day, not minutes. Streams still close once this elapses,
+	// so old configs are not pinned in memory forever.
+	StreamCloseDelay = "24h"
 )
 
 // adminWrite performs a mutating call against Caddy's admin API and returns
@@ -264,8 +273,9 @@ func buildRouteJSON(appID string, domains []string, upstreams []string, opts Rou
 		dialList[i] = map[string]string{"dial": u}
 	}
 	reverseProxy := map[string]interface{}{
-		"handler":   "reverse_proxy",
-		"upstreams": dialList,
+		"handler":            "reverse_proxy",
+		"upstreams":          dialList,
+		"stream_close_delay": StreamCloseDelay,
 	}
 	if opts.ForwardedProto != "" || opts.ForwardedSSL {
 		set := map[string][]string{}

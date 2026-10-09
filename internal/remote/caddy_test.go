@@ -39,6 +39,25 @@ func TestBuildRouteJSONSetsForwardedHTTPSHeaders(t *testing.T) {
 	}
 }
 
+func TestBuildRouteJSONDelaysStreamClose(t *testing.T) {
+	// Without stream_close_delay, every admin-API write (deploy, neo domain,
+	// neo caddy reload) closed every WebSocket on the server.
+	for name, opts := range map[string]RouteOptions{
+		"plain":      {},
+		"basic auth": {BasicAuth: &BasicAuthConfig{Username: "u", Password: "p", BypassPaths: []string{"/ws/*"}}},
+	} {
+		data, err := buildRouteJSON("app-x", []string{"x.io"}, []string{"app-x:8080"}, opts)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		proxies := strings.Count(string(data), `"handler":"reverse_proxy"`)
+		delays := strings.Count(string(data), `"stream_close_delay":"`+StreamCloseDelay+`"`)
+		if proxies == 0 || delays != proxies {
+			t.Errorf("%s: %d reverse_proxy handlers, %d with stream_close_delay", name, proxies, delays)
+		}
+	}
+}
+
 func TestCaddyDNSProviderForCloudflare(t *testing.T) {
 	provider, err := CaddyDNSProviderFor("cloudflare")
 	if err != nil {
