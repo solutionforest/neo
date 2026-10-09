@@ -6,6 +6,26 @@ import (
 	"testing"
 )
 
+func TestDeployURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		httpOnly  bool
+		edgeHTTPS bool
+		want      string
+	}{
+		{"https at origin", false, false, "https://app.example.com"},
+		{"http only", true, false, "http://app.example.com"},
+		{"tls at edge proxy", true, true, "https://app.example.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := deployURL("app.example.com", tt.httpOnly, tt.edgeHTTPS); got != tt.want {
+				t.Errorf("deployURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSanitizeName(t *testing.T) {
 	tests := []struct {
 		input string

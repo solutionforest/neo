@@ -1540,15 +1540,20 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	card.Add(ui.Green.Render("✓") + " " + appName + " is live!")
 	card.Blank()
 	if domain != "" {
-		serverHost := srv.Host[strings.Index(srv.Host, "@")+1:]
-		card.AddKV("URL", "http://"+domain)
+		card.AddKV("URL", deployURL(domain, httpOnly, edgeHTTPS))
 		card.Blank()
-		card.Add(ui.Bold.Render("DNS Setup:"))
-		card.Add(fmt.Sprintf("  Add A record: %s → %s", domain, serverHost))
-		card.Blank()
-		card.Add(ui.Bold.Render("Enable HTTPS (after DNS is ready):"))
-		card.Add("  Open neo dashboard → select app → Enable HTTPS")
-		card.Blank()
+		// A redeploy already has working DNS, and sslip.io resolves itself.
+		if !isRedeploy && !strings.HasSuffix(domain, ".sslip.io") {
+			serverHost := srv.Host[strings.Index(srv.Host, "@")+1:]
+			card.Add(ui.Bold.Render("DNS Setup:"))
+			card.Add(fmt.Sprintf("  Add A record: %s → %s", domain, serverHost))
+			card.Blank()
+		}
+		if httpOnly && !edgeHTTPS {
+			card.Add(ui.Bold.Render("Enable HTTPS (after DNS is ready):"))
+			card.Add("  neo domain " + appName + " --https")
+			card.Blank()
+		}
 	}
 	card.Add("Redeploy after changes:")
 	card.Add("  neo deploy" + func() string {
@@ -3092,11 +3097,16 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 
 	url := ""
 	if domain != "" {
-		scheme := "http"
-		if !httpOnly {
-			scheme = "https"
-		}
-		url = scheme + "://" + domain
+		url = deployURL(domain, httpOnly, edgeHTTPS)
 	}
 	return url, nil
+}
+
+// deployURL is the public URL of a deployed app. Edge HTTPS forces the route to
+// plain HTTP because TLS ends at a proxy in front of Caddy, so visitors still use https.
+func deployURL(domain string, httpOnly, edgeHTTPS bool) string {
+	if httpOnly && !edgeHTTPS {
+		return "http://" + domain
+	}
+	return "https://" + domain
 }
