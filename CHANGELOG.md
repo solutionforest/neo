@@ -4,6 +4,14 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.13 — 2026-10-09
+
+### Fixes
+
+- **WebSockets survive deploys and `neo caddy reload`.** Every change Neo makes through Caddy's admin API swaps in a whole new config, and Caddy closed every upgraded stream on the old config immediately — so deploying one app, `neo domain`, or `neo caddy reload` dropped every WebSocket on every app on the server (e.g. OCPP chargers). Routes now set `stream_close_delay` (24h), so open streams keep running across config changes. Existing routes pick this up the next time they are rewritten — run `neo caddy reload` once after upgrading (that one run still closes current streams, since the routes being replaced don't have the setting yet).
+
+---
+
 ## v0.26.12 — 2026-10-09
 
 ### Fixes
