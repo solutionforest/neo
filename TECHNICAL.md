@@ -152,7 +152,7 @@ Restart an app container.
 
 #### `neo update <app>`
 
-Pull latest image and perform blue-green update.
+Pull the latest image, then stop and recreate the app container (plus its workers and sidecars) from server state. Not a blue-green swap — the app is briefly down. Keeps `command:`, `hostname:` and the health check; recreate-strategy apps get a 60s clean shutdown.
 
 #### `neo remove <app>`
 
@@ -1159,12 +1159,14 @@ Templates are fetched from remote `templates.json` at install time with embedded
 17. Detect server architecture (cache in state)
 18. Build image (local or remote)
 19. Build volumes list
-20. Start new container with -next suffix (blue-green)
+20. Start new container with -next suffix (blue-green), or — under strategy: recreate —
+    stop the old one first and start the new one under the canonical name
 21. Health check new container (120s timeout)
 22. If redeploy: atomic Caddy upstream patch → stop old → rename new → restore route
 23. If first deploy: rename new → add Caddy route
 24. Deploy workers (serial for 1, parallel for multiple)
-25. Deploy sidecars (serial, with blue-green per sidecar)
+25. Deploy sidecars (serial, with blue-green per sidecar — every sidecar is recreated on
+    every deploy, which is why brokers/databases belong in their own app)
 26. Save state
 27. Run post_deploy hook (locally, warn on failure, don't abort)
 28. Print success card
@@ -1210,6 +1212,32 @@ Walk project directory respecting .dockerignore
    a. Remove -next container
    b. Old container untouched (automatic rollback)
 ```
+
+Every Caddy route change swaps in a whole new Caddy config. Routes set
+`stream_close_delay: 24h` (`remote.StreamCloseDelay`, v0.26.13), so open WebSockets on
+every app survive the swap instead of being closed with it.
+
+### Recreate Strategy (`strategy: recreate`, v0.26.14)
+
+For stateful images (message brokers, databases), where two copies on one volume, an
+`rm -f`, or a new random hostname each lose or endanger data:
+
+```
+1. resolveStrategy: validate strategy/hostname; hostname defaults to the app name;
+   reject recreate or hostname combined with scale > 1
+2. docker stop -t 60 app-{name}   (clean shutdown), then rm
+3. Run the new container as app-{name} directly — no -next — with --hostname
+4. Health check (TCP / health cmd, then HTTP health if configured)
+   Unhealthy → keep the failed container for `neo logs`, report the app as down,
+   return an error (there is no old version to fall back to)
+5. Release commands in the new container (failure reported, not rolled back)
+6. Rewrite the Caddy route (port, domains or auth may have changed)
+```
+
+`Strategy` and `Hostname` persist in `state.App`. Every state-driven recreate —
+`neo env set/unset/import`, `neo update`, `neo volumes mount` — builds its options with
+`appRunOpts`, so command, hostname and health can't be dropped. `--env-only` and `--all`
+honour the strategy too.
 
 ### Parallel Deploy (`--all`)
 

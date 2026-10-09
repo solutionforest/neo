@@ -165,6 +165,7 @@
         <a class="sidebar-link" href="#deploy-build">Build strategies</a>
         <a class="sidebar-link" href="#deploy-env-priority">Env var priority</a>
         <a class="sidebar-link" href="#deploy-zero-downtime">Zero-downtime</a>
+        <a class="sidebar-link" href="#deploy-recreate">Stateful apps (recreate)</a>
     </div>
     <div class="sidebar-section">
         <div class="sidebar-title">Domains &amp; SSL</div>
@@ -728,6 +729,23 @@ neo deploy ./my-project</pre>
         <li>Rename the new container to the canonical name</li>
     </ol>
     <p>If the health check fails, the old container keeps serving traffic and the new one is removed.</p>
+    <p>Open WebSockets survive the switch: since v0.26.13 every route sets Caddy's <code>stream_close_delay</code> to 24h, so a config change no longer disconnects WebSocket clients on every app. After upgrading, run <code>neo caddy reload</code> once.</p>
+</section>
+
+<!-- STATEFUL APPS -->
+<section class="doc-section" id="deploy-recreate">
+    <h3>Stateful apps: <code>strategy: recreate</code></h3>
+    <p>Blue-green runs two copies on the same volume and gives each new container a random hostname. For a message broker or database that endangers data — RabbitMQ keeps data per node name (<code>rabbit@&lt;hostname&gt;</code>), so every redeploy came up as an empty node. Set <code>strategy: recreate</code> (v0.26.14+):</p>
+    <div class="codeblock">
+        <div class="codeblock-header">.neo.yml</div>
+        <pre><span class="k">name:</span> rabbitmq
+<span class="k">port:</span> 15672
+<span class="k">strategy:</span> recreate      <span class="c"># stop old (60s clean shutdown), then start new</span>
+<span class="c"># hostname: rabbitmq    # defaults to the app name under recreate</span>
+<span class="k">volumes:</span>
+  <span class="v">data:</span> /var/lib/rabbitmq</pre>
+    </div>
+    <p>The new container gets a fixed hostname, kept by every path that recreates it (<code>--env-only</code>, <code>neo env set</code>, <code>neo update</code>, <code>neo volumes mount</code>). The trade-off is a short outage while it starts, with no old version to fall back to; a failed deploy exits non-zero and keeps the container for <code>neo logs</code>. Can't be combined with <code>scale</code>. Don't run brokers or databases as sidecars — every deploy recreates every sidecar.</p>
 </section>
 
 <!-- DOMAINS -->
