@@ -110,7 +110,11 @@ func runVolumesMount(volumeName, hostPath string) error {
 	// Stop app
 	spin := ui.NewSpinner(fmt.Sprintf("Stopping %s...", ownerApp))
 	spin.Start()
-	docker.Stop(containerName)
+	if st.Apps[ownerApp].Strategy == strategyRecreate {
+		docker.StopWait(containerName, recreateStopTimeout)
+	} else {
+		docker.Stop(containerName)
+	}
 	spin.Stop()
 
 	// Create target directory and copy data
@@ -143,15 +147,8 @@ func runVolumesMount(volumeName, hostPath string) error {
 		}
 	}
 
-	volOpts := remote.RunOpts{
-		Name:    containerName,
-		Image:   app.Image,
-		Network: config.DockerNetwork,
-		Restart: restartPolicy(app.Restart),
-		Volumes: volumes,
-		Env:     app.Env,
-	}
-	applyHealth(&volOpts, app.Health)
+	volOpts := appRunOpts(app, containerName)
+	volOpts.Volumes = volumes
 	_, err = docker.Run(volOpts)
 	spin.Stop()
 

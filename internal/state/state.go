@@ -135,6 +135,8 @@ type App struct {
 	Health       *HealthCheck          `json:"health,omitempty"`
 	BasicAuth    *AppBasicAuth         `json:"basic_auth,omitempty"` // HTTP basic auth at the Caddy proxy layer; persisted so route rebuilds preserve it
 	Scale        int                   `json:"scale,omitempty"`      // number of replicas; 0 or 1 means single-container mode
+	Strategy     string                `json:"strategy,omitempty"`   // "" = blue-green, "recreate" = stop old before starting new
+	Hostname     string                `json:"hostname,omitempty"`   // fixed container hostname; persisted so every recreate path keeps it
 	Deployment   *Deployment           `json:"deployment,omitempty"` // which build is running
 	InstalledAt  string                `json:"installed_at"`
 }

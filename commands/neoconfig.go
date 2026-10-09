@@ -210,6 +210,8 @@ type NeoEnvironment struct {
 	Hooks        *NeoHooks             `yaml:"hooks,omitempty"`      // deploy lifecycle hooks (override top-level)
 	Release      HookCommands          `yaml:"release,omitempty"`    // commands run inside the new container before traffic switches
 	Scale        int                   `yaml:"scale,omitempty"`      // number of app replicas (overrides top-level)
+	Strategy     string                `yaml:"strategy,omitempty"`   // "blue-green" (default) or "recreate" (overrides top-level)
+	Hostname     string                `yaml:"hostname,omitempty"`   // fixed container hostname (overrides top-level)
 }
 
 // NeoConfig represents a .neo.yml project configuration file.
@@ -237,8 +239,10 @@ type NeoConfig struct {
 	Workers        map[string]NeoWorker      `yaml:"workers,omitempty"`
 	Sidecars       map[string]NeoSidecar     `yaml:"sidecars,omitempty"`
 	Volumes        map[string]NeoVolume      `yaml:"volumes,omitempty"`
-	Dev            *NeoDevConfig             `yaml:"dev,omitempty"`   // dev-only settings for `neo dev`
-	Scale          int                       `yaml:"scale,omitempty"` // number of app replicas (default: 1)
+	Dev            *NeoDevConfig             `yaml:"dev,omitempty"`      // dev-only settings for `neo dev`
+	Scale          int                       `yaml:"scale,omitempty"`    // number of app replicas (default: 1)
+	Strategy       string                    `yaml:"strategy,omitempty"` // "blue-green" (default) or "recreate" for stateful apps
+	Hostname       string                    `yaml:"hostname,omitempty"` // fixed container hostname (default: app name under recreate)
 }
 
 // ReleaseCommands returns the release commands to run inside the new container,

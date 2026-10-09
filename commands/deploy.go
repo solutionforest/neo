@@ -303,6 +303,12 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			if env.Scale > 0 {
 				neoConfig.Scale = env.Scale
 			}
+			if env.Strategy != "" {
+				neoConfig.Strategy = env.Strategy
+			}
+			if env.Hostname != "" {
+				neoConfig.Hostname = env.Hostname
+			}
 		}
 	}
 
@@ -319,6 +325,15 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		if resolvedEnv != "" && !isProductionEnv(resolvedEnv) {
 			appName = appName + "-" + sanitizeName(resolvedEnv)
 		}
+	}
+
+	var configScale int
+	if neoConfig != nil {
+		configScale = neoConfig.Scale
+	}
+	strategy, hostname, err := resolveStrategy(appName, neoConfig, configScale)
+	if err != nil {
+		return err
 	}
 
 	// Auto-detect port: flag > .neo.yml > Dockerfile EXPOSE
@@ -356,6 +371,9 @@ func runDeploy(projectPath string, flags deployFlags) error {
 
 	// Check if this is a redeploy
 	existing, isRedeploy := st.Apps[appName]
+	if isRedeploy && neoConfig == nil {
+		strategy, hostname = existing.Strategy, existing.Hostname
+	}
 
 	// --temp: auto-assign {app}.{ip}.sslip.io (overrides --domain and skips prompt)
 	if flags.tempDomain {
@@ -609,7 +627,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 
 		spin := ui.NewSpinner("Stopping old container...")
 		spin.Start()
-		docker.Remove(containerName)
+		stopForReplace(docker, containerName, strategy)
 		spin.Stop()
 
 		spin = ui.NewSpinner("Starting container with new env...")
@@ -621,13 +639,14 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			envOnlyCommand = string(neoConfig.Command)
 		}
 		envOnlyOpts := remote.RunOpts{
-			Name:    containerName,
-			Image:   existing.Image,
-			Network: config.DockerNetwork,
-			Restart: restartPolicy(existing.Restart),
-			Volumes: volumes,
-			Env:     env,
-			Cmd:     envOnlyCommand,
+			Name:     containerName,
+			Image:    existing.Image,
+			Network:  config.DockerNetwork,
+			Restart:  restartPolicy(existing.Restart),
+			Volumes:  volumes,
+			Env:      env,
+			Cmd:      envOnlyCommand,
+			Hostname: hostname,
 		}
 		applyHealth(&envOnlyOpts, existing.Health)
 		_, startErr := docker.Run(envOnlyOpts)
@@ -672,6 +691,8 @@ func runDeploy(projectPath string, flags deployFlags) error {
 
 		// Persist updated env in state
 		existing.Env = env
+		existing.Strategy = strategy
+		existing.Hostname = hostname
 		st.Apps[appName] = existing
 		saveState(sshExec, st)
 
@@ -729,6 +750,7 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		existingApp = &existing
 	}
 	volumes, declaredVolumes := buildDeployVolumes(appName, neoConfig, existingApp)
+	warnSharedHostname(strategy, hostname, len(volumes) > 0)
 
 	// Resolve restart policy and health check from .neo.yml
 	appRestart := ""
@@ -976,28 +998,55 @@ func runDeploy(projectPath string, flags deployFlags) error {
 			}
 		}
 	} else {
-		// ── Single-container blue-green deploy (original behavior) ─────────────────
+		// ── Single-container deploy ───────────────────────────────────────────────
+		// blue-green (default): start <app>-next beside the old container, switch
+		// traffic, then remove the old one — a failure leaves the old one serving.
+		// recreate: stop the old container first and start the new one under the
+		// canonical name, so two copies never share the volumes. A failure then
+		// leaves nothing serving, which is why it is opt-in.
+		recreate := isRedeploy && strategy == strategyRecreate
 		nextName := containerName + "-next"
 
 		// Clean up any leftover -next container from a failed previous deploy
 		docker.Remove(nextName)
 
-		// Start new container with staging name
+		if recreate {
+			nextName = containerName
+			spin = ui.NewSpinner(fmt.Sprintf("Stopping current container (strategy: recreate, up to %ds)...", recreateStopTimeout))
+			spin.Start()
+			stopForReplace(docker, containerName, strategy)
+			spin.Stop()
+			ui.Success("Previous container stopped")
+		}
+
+		// recreateFailed reports a failure after the old container is already gone.
+		// The failed one is kept so `neo logs` still works.
+		recreateFailed := func(what string) error {
+			ui.Error(fmt.Sprintf("%s — and with strategy: recreate the previous container was already stopped, so %s is down.", what, appName))
+			ui.Info(fmt.Sprintf("Debug with: neo logs %s — then fix and redeploy.", appName))
+			return fmt.Errorf("%s: %s", appName, what)
+		}
+
+		// Start new container (staging name under blue-green)
 		spin = ui.NewSpinner("Starting new container...")
 		spin.Start()
 		appOpts := remote.RunOpts{
-			Name:    nextName,
-			Image:   imageTag,
-			Network: config.DockerNetwork,
-			Restart: restartPolicy(appRestart),
-			Volumes: volumes,
-			Env:     env,
-			Cmd:     appCommand,
+			Name:     nextName,
+			Image:    imageTag,
+			Network:  config.DockerNetwork,
+			Restart:  restartPolicy(appRestart),
+			Volumes:  volumes,
+			Env:      env,
+			Cmd:      appCommand,
+			Hostname: hostname,
 		}
 		applyHealth(&appOpts, appHealth)
 		_, err = docker.Run(appOpts)
 		spin.Stop()
 		if err != nil {
+			if recreate {
+				return recreateFailed(fmt.Sprintf("start container: %s", err))
+			}
 			return fmt.Errorf("start container: %w", err)
 		}
 		ui.Success("New container started")
@@ -1009,8 +1058,11 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		spin.Stop()
 
 		if !healthy {
-			// Rollback: remove the failed new container, keep old one running
 			explainCommandExit(docker, nextName, appCommand)
+			if recreate {
+				return recreateFailed("New container failed health check")
+			}
+			// Rollback: remove the failed new container, keep old one running
 			docker.Remove(nextName)
 			ui.Error("New container failed health check — rolled back")
 			ui.Info(fmt.Sprintf("Old version still running. Debug with: neo logs %s", appName))
@@ -1037,6 +1089,9 @@ func runDeploy(projectPath string, flags deployFlags) error {
 				httpErr := docker.HTTPHealthCheck(nextName, port, hOpts)
 				spin.Stop()
 				if httpErr != nil {
+					if recreate {
+						return recreateFailed(fmt.Sprintf("HTTP health check failed: %s", httpErr))
+					}
 					docker.Remove(nextName)
 					if isRedeploy {
 						ui.Error(fmt.Sprintf("HTTP health check failed — rolled back: %s", httpErr))
@@ -1054,18 +1109,34 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		// Release commands run in the new container while the old one still
 		// serves traffic, so a failed migration rolls back instead of taking
 		// the site down.
+		// Under recreate the new container is already the only one, so a failure
+		// is reported rather than rolled back — removing it would take the app
+		// down as well.
 		if release := neoConfig.ReleaseCommands(); len(release) > 0 {
 			if err := runReleaseCommands(docker, nextName, release); err != nil {
-				docker.Remove(nextName)
 				ui.Error(err.Error())
-				if isRedeploy {
-					ui.Info(fmt.Sprintf("Rolled back — the previous version is still serving. Debug with: neo logs %s", appName))
+				if recreate {
+					ui.Info("The new container is running, but release commands did not finish.")
+				} else {
+					docker.Remove(nextName)
+					if isRedeploy {
+						ui.Info(fmt.Sprintf("Rolled back — the previous version is still serving. Debug with: neo logs %s", appName))
+					}
+					return nil
 				}
-				return nil
 			}
 		}
 
-		if isRedeploy {
+		if recreate {
+			// Already running under the canonical name; rewrite the route in case
+			// the port, domains or auth changed.
+			if len(deployDomains) > 0 {
+				addCaddyRoute(containerName, deployDomains, port)
+				ui.Success(fmt.Sprintf("Traffic switched to new version (%s)", domain))
+			} else {
+				ui.Success("Replaced with new version")
+			}
+		} else if isRedeploy {
 			authOpts := neoBasicAuthToRouteOpts(neoConfig)
 			hasAuth := len(authOpts) > 0 && authOpts[0].BasicAuth != nil
 
@@ -1430,6 +1501,8 @@ func runDeploy(projectPath string, flags deployFlags) error {
 		Health:       appHealth,
 		BasicAuth:    neoBasicAuthToState(neoConfig),
 		Scale:        scale,
+		Strategy:     strategy,
+		Hostname:     hostname,
 		InstalledAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 	if isRedeploy {
@@ -2822,34 +2895,67 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 	}
 	volumes, declaredVolumes := buildDeployVolumes(appName, neoConfig, allExistingApp)
 
-	// Blue-green: start new container alongside old one
+	stratCfg := *neoConfig
+	if envCfg.Strategy != "" {
+		stratCfg.Strategy = envCfg.Strategy
+	}
+	if envCfg.Hostname != "" {
+		stratCfg.Hostname = envCfg.Hostname
+	}
+	stratScale := neoConfig.Scale
+	if envCfg.Scale > 0 {
+		stratScale = envCfg.Scale
+	}
+	strategy, hostname, err := resolveStrategy(appName, &stratCfg, stratScale)
+	if err != nil {
+		return "", err
+	}
+	recreate := isRedeploy && strategy == strategyRecreate
+
+	// Blue-green: start new container alongside old one. Recreate: stop the old
+	// one first and start the new one under the canonical name.
 	nextName := containerName + "-next"
 	docker.Remove(nextName)
+	if recreate {
+		stopForReplace(docker, containerName, strategy)
+		nextName = containerName
+	}
+	downNote := ""
+	if recreate {
+		downNote = " (strategy: recreate — the previous container was already stopped, so the app is down)"
+	}
 
 	allOpts := remote.RunOpts{
-		Name:    nextName,
-		Image:   imageTag,
-		Network: config.DockerNetwork,
-		Restart: restartPolicy(allRestart),
-		Volumes: volumes,
-		Env:     env,
-		Cmd:     allCommand,
+		Name:     nextName,
+		Image:    imageTag,
+		Network:  config.DockerNetwork,
+		Restart:  restartPolicy(allRestart),
+		Volumes:  volumes,
+		Env:      env,
+		Cmd:      allCommand,
+		Hostname: hostname,
 	}
 	applyHealth(&allOpts, allHealth)
 	if _, err := docker.Run(allOpts); err != nil {
-		return "", fmt.Errorf("start container: %w", err)
+		return "", fmt.Errorf("start container: %w%s", err, downNote)
 	}
 
 	if !waitForHealthy(docker, nextName, port, 120*time.Second) {
-		docker.Remove(nextName)
-		return "", fmt.Errorf("container failed health check")
+		if !recreate {
+			docker.Remove(nextName)
+		}
+		return "", fmt.Errorf("container failed health check%s", downNote)
 	}
 
 	// Release commands run in the new container before traffic switches, so a
 	// failure here fails this environment only and leaves it on the old version.
+	// Under recreate there is no old version to fall back to; the failure is
+	// returned and the new container left running.
 	if release := resolveRelease(neoConfig.ReleaseCommands(), envCfg.Release); len(release) > 0 {
 		if err := runReleaseCommands(docker, nextName, release); err != nil {
-			docker.Remove(nextName)
+			if !recreate {
+				docker.Remove(nextName)
+			}
 			return "", err
 		}
 	}
@@ -2915,7 +3021,9 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		}
 	}
 
-	if isRedeploy {
+	if recreate {
+		swapCaddy(containerName, fmt.Sprintf("%s:%d", containerName, port))
+	} else if isRedeploy {
 		swapCaddy(containerName, fmt.Sprintf("%s:%d", nextName, port))
 		docker.Remove(containerName)
 		docker.Rename(nextName, containerName)
@@ -2951,6 +3059,8 @@ func deployEnvFromFile(envName string, envCfg NeoEnvironment, serverOverride, im
 		Deployment:   deploymentRecord(flags.deploymentID, imageTag, flags.git, env),
 		Health:       allHealth,
 		BasicAuth:    neoBasicAuthToState(&effCfg),
+		Strategy:     strategy,
+		Hostname:     hostname,
 		InstalledAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 	if isRedeploy {

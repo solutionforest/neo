@@ -308,23 +308,16 @@ func runUpdate(appName string) error {
 	// Stop old container
 	spin = ui.NewSpinner("Replacing container...")
 	spin.Start()
-	docker.Stop(containerName)
-	docker.Remove(containerName)
+	if app.Strategy != strategyRecreate {
+		docker.Stop(containerName)
+	}
+	stopForReplace(docker, containerName, app.Strategy)
 
-	// Rebuild volumes list
+	// Rebuild volumes list (workers below share it)
 	volumes := volumesFromState(app.Volumes)
 
 	// Start new container with same config
-	updateOpts := remote.RunOpts{
-		Name:    containerName,
-		Image:   app.Image,
-		Network: config.DockerNetwork,
-		Restart: restartPolicy(app.Restart),
-		Volumes: volumes,
-		Env:     app.Env,
-	}
-	applyHealth(&updateOpts, app.Health)
-	_, err = docker.Run(updateOpts)
+	_, err = docker.Run(appRunOpts(app, containerName))
 	spin.Stop()
 
 	if err != nil {

@@ -764,7 +764,37 @@ What this does and doesn't cover:
 - **Not covered:** redeploying the app that *holds* the connection. Neo replaces that container, so its clients disconnect and reconnect. Nor does Caddy ever see traffic that doesn't pass through it, such as AMQP between two containers on the `neo` network.
 - **Upgrading:** routes pick up the setting the next time they are written. After `neo upgrade`, run `neo caddy reload` once at a quiet time — that one run still drops current connections, because the routes it replaces don't have the setting yet.
 
-> **Stateful services as sidecars.** A deploy recreates every sidecar in `.neo.yml`, even unchanged ones. For a message broker or database that means every app deploy restarts it and drops its clients. Run such services as their own app (a separate `.neo.yml`) or as a shared service (`neo service create`) so app deploys don't touch them.
+### Stateful apps (message brokers, databases)
+
+By default a redeploy is **blue-green**: Neo starts `app-<name>-next` next to the running container, switches traffic once it's healthy, then removes the old one. If the new version fails, the old one keeps serving. That's right for web apps, but wrong for anything that owns its data directory:
+
+- **Two copies share one volume.** For a few seconds the old and new container both run on the same volume — two brokers or databases using one data folder at once.
+- **The hostname changes.** Docker gives each new container a random hostname, and some images keep their data under it. RabbitMQ names its node `rabbit@<hostname>` and stores data per node, so every redeploy came up as a **fresh, empty node**: vhosts, users, durable queues and messages seemed to vanish. The old data was still on the volume, under the old node name.
+- **The old container is killed.** It was removed with `docker rm -f`, with no chance to flush to disk.
+
+Set `strategy: recreate` for these apps:
+
+```yaml
+# .neo.yml for a RabbitMQ app
+name: e-hub-rabbitmq
+port: 15672
+strategy: recreate     # stop the old container, then start the new one
+# hostname: rabbitmq   # optional — defaults to the app name under recreate
+volumes:
+  data: /var/lib/rabbitmq
+```
+
+With `strategy: recreate`, Neo:
+
+- stops the old container first, giving it up to **60 seconds** to shut down cleanly, then starts the new one under the same name — never two at once;
+- gives the container a **fixed hostname** (the app name, or `hostname:`), so RabbitMQ keeps the same node name and data;
+- keeps that hostname on every path that recreates the container: `neo deploy`, `--env-only`, `neo env set/unset/import`, `neo update`, `neo volumes mount`.
+
+The trade-off: the app is **down while the new container starts**, and if it fails there is no old version to fall back to. Neo then says so, exits non-zero, and keeps the failed container so `neo logs <app>` works. Fix and redeploy. `strategy: recreate` can't be combined with `scale:`, and both `strategy:` and `hostname:` can be set per environment.
+
+> **Switching an existing RabbitMQ app to `strategy: recreate`.** The first deploy with it changes the node name once, to `rabbit@<app-name>`, so it starts empty. Do it before the data matters, or export definitions first (`rabbitmqctl export_definitions`) and import them after. If you already set `RABBITMQ_NODENAME`, the node name doesn't change.
+
+> **Don't run stateful services as sidecars.** A deploy recreates every sidecar in `.neo.yml`, even unchanged ones, so a broker or database sidecar restarts on every app deploy. Run it as its own app with `strategy: recreate` (a separate `.neo.yml`), or as a shared service (`neo service create`).
 
 ### Multi-Server
 

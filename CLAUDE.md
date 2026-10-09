@@ -230,6 +230,8 @@ dockerfile: ./docker/Dockerfile  # Dockerfile path relative to project root (def
 command: php artisan octane:start  # override the image CMD (string or list form); per-environment override supported
 compose_service: app      # which docker-compose service to extract from
 restart: unless-stopped   # Docker restart policy
+strategy: recreate        # blue-green (default) | recreate — for brokers/databases; per-environment override
+hostname: rabbitmq        # fixed container hostname (default: app name under recreate); per-environment override
 env:                      # env var defaults (non-sensitive)
   APP_ENV: production
   LOG_LEVEL: info
@@ -397,6 +399,15 @@ Answers "which build is running?" — previously unanswerable, since image tags 
 - **OCI labels** (`org.opencontainers.image.revision`) go on the built image, so it identifies itself via `docker inspect` even if state is lost.
 - **History** is `/etc/neo/deploys/<app>.jsonl`, append-only and capped at 50 entries. Deliberately not in `state.json`: that is a whole-file read-modify-write (the structure behind the v0.24.1 lost-update bug), and an append has no read step, so concurrent deploys can't clobber each other's history. Server-side rather than in the project folder because two laptops and CI must share one record, and rollback can only offer images that exist on that server.
 - A dirty tree warns at deploy and is recorded, since the commit then describes only part of what shipped.
+
+### Deploy Strategy (`strategy.go`):
+Single-container redeploys are **blue-green** by default: `app-<name>-next` runs beside the old container on the same volumes, traffic switches, then the old one is `rm -f`'d. Wrong for stateful images, so `strategy: recreate` exists:
+
+- **Stops the old container first** (`docker stop -t 60`, `recreateStopTimeout`) and starts the new one under the canonical name. Never two copies on one volume. A failure leaves nothing serving: deploy keeps the failed container for `neo logs`, says the app is down, and returns an error. Release-command failures are reported, not rolled back.
+- **Fixed hostname** (`hostname:`, defaulting to the app name under recreate). Docker's random hostname made RabbitMQ (`rabbit@<hostname>`, data kept per node name) come up as an empty node on every redeploy — reproduced on a sandbox. `hostname:` with `scale > 1` is rejected, as is `recreate` with `scale > 1`.
+- Both persist in `state.App` (`Strategy`, `Hostname`). Every path that recreates the container from state goes through **`appRunOpts`** (env set/unset/import, `neo update`, `neo volumes mount`), so command/hostname/health can't be dropped — `restartWithNewEnv` used to build its own `docker run` line and lost `command:`. `--env-only` and `--all` (`deployEnvFromFile`) honour recreate too.
+- `resolveStrategy` validates (hostname is RFC 1123, which also keeps it shell-safe); `warnSharedHostname` flags `hostname:` + blue-green + volumes.
+- `remote.runCommand` builds the `docker run` line as a pure function (tested); health durations are now shell-quoted there.
 
 ### Release Commands (`release.go`):
 Commands run **inside the new container on the server**, not locally — the gap `hooks:` can't fill.

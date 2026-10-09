@@ -94,6 +94,7 @@ type RunOpts struct {
 	Env        map[string]string // KEY=VALUE
 	Entrypoint string            // override entrypoint
 	Cmd        string            // override cmd
+	Hostname   string            // fixed container hostname; empty = Docker's random one
 	// Docker health check
 	HealthCmd         string
 	HealthInterval    string // e.g. "30s"
@@ -104,8 +105,13 @@ type RunOpts struct {
 
 // Run creates and starts a container.
 func (d *Docker) Run(opts RunOpts) (string, error) {
+	return d.exec.Run(runCommand(d.bin(), opts))
+}
+
+// runCommand builds the `docker run` command line for opts.
+func runCommand(bin string, opts RunOpts) string {
 	var args []string
-	args = append(args, d.bin(), "run", "-d")
+	args = append(args, bin, "run", "-d")
 
 	if opts.Name != "" {
 		args = append(args, "--name", ssh.ShellQuote(opts.Name))
@@ -115,6 +121,9 @@ func (d *Docker) Run(opts RunOpts) (string, error) {
 	}
 	if opts.Restart != "" {
 		args = append(args, "--restart", ssh.ShellQuote(opts.Restart))
+	}
+	if opts.Hostname != "" {
+		args = append(args, "--hostname", ssh.ShellQuote(opts.Hostname))
 	}
 	for _, p := range opts.Ports {
 		args = append(args, "-p", ssh.ShellQuote(p))
@@ -134,16 +143,16 @@ func (d *Docker) Run(opts RunOpts) (string, error) {
 	if opts.HealthCmd != "" {
 		args = append(args, "--health-cmd", ssh.ShellQuote(opts.HealthCmd))
 		if opts.HealthInterval != "" {
-			args = append(args, "--health-interval", opts.HealthInterval)
+			args = append(args, "--health-interval", ssh.ShellQuote(opts.HealthInterval))
 		}
 		if opts.HealthTimeout != "" {
-			args = append(args, "--health-timeout", opts.HealthTimeout)
+			args = append(args, "--health-timeout", ssh.ShellQuote(opts.HealthTimeout))
 		}
 		if opts.HealthRetries > 0 {
 			args = append(args, "--health-retries", fmt.Sprintf("%d", opts.HealthRetries))
 		}
 		if opts.HealthStartPeriod != "" {
-			args = append(args, "--health-start-period", opts.HealthStartPeriod)
+			args = append(args, "--health-start-period", ssh.ShellQuote(opts.HealthStartPeriod))
 		}
 	}
 	args = append(args, ssh.ShellQuote(opts.Image))
@@ -151,12 +160,19 @@ func (d *Docker) Run(opts RunOpts) (string, error) {
 		args = append(args, opts.Cmd)
 	}
 
-	return d.exec.Run(strings.Join(args, " "))
+	return strings.Join(args, " ")
 }
 
 // Stop stops a container.
 func (d *Docker) Stop(name string) error {
 	return d.exec.RunQuiet(fmt.Sprintf("%s stop %s", d.bin(), ssh.ShellQuote(name)))
+}
+
+// StopWait stops a container, giving it up to timeoutSec seconds to exit
+// cleanly before Docker kills it. Brokers and databases need longer than
+// Docker's 10s default to flush to disk.
+func (d *Docker) StopWait(name string, timeoutSec int) error {
+	return d.exec.RunQuiet(fmt.Sprintf("%s stop -t %d %s", d.bin(), timeoutSec, ssh.ShellQuote(name)))
 }
 
 // Start starts a stopped container.
