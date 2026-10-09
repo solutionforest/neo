@@ -427,9 +427,17 @@ func runDeploy(projectPath string, flags deployFlags) error {
 	// Build env vars with priority: CLI --env > --env-file > .neo.yml > docker-compose.yml > server state
 	env := make(map[string]string)
 
-	// 1. Start with server state on redeploy
+	// 1. Start with server state on redeploy. Strip the previous build's
+	// NEO_GIT_* / NEO_DEPLOYMENT_* out of that copy: they describe the last
+	// image, and injectDeploymentEnv below only fills a key when it is absent.
+	// Keeping them would pin the first commit for the life of the app.
+	// --env-only restarts that same image, so its values are still accurate.
 	if isRedeploy {
-		for k, v := range existing.Env {
+		prev := existing.Env
+		if !flags.envOnly {
+			prev = withoutInjectedEnv(prev)
+		}
+		for k, v := range prev {
 			env[k] = v
 		}
 	}
@@ -2492,8 +2500,10 @@ func deploymentRecord(id, imageTag string, git gitInfo, env map[string]string) *
 //
 // Injected before interpolation so a project can reference them anywhere in
 // .neo.yml — `SENTRY_RELEASE: "${NEO_GIT_COMMIT}"` works without Neo knowing
-// anything about Sentry. Existing values win: an explicitly set variable is a
-// deliberate choice.
+// anything about Sentry. A key already in env wins: that is a value set in
+// compose, .neo.yml, an env file, or --env. Redeploy must strip the previous
+// container's copy of these keys first (withoutInjectedEnv), or the first
+// commit stays in the container while status reports the new one.
 func injectDeploymentEnv(env map[string]string, id string, git gitInfo) {
 	set := func(k, v string) {
 		if v == "" {

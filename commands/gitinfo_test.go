@@ -221,6 +221,71 @@ func TestInjectDeploymentEnvDoesNotOverrideExplicitValues(t *testing.T) {
 	}
 }
 
+func TestRedeployRefreshesDeploymentEnv(t *testing.T) {
+	// These six are what the previous deploy saved into server state. A later
+	// deploy must replace them with the commit it just built. Unsetting them
+	// by hand before every deploy was the workaround.
+	persisted := map[string]string{
+		"APP_ENV":              "production",
+		"NEO_LS_STORE_ID":      "924820",
+		"NEO_GIT_COMMIT":       "oldcommitfull",
+		"NEO_GIT_SHORT_COMMIT": "oldcomm",
+		"NEO_GIT_BRANCH":       "old-branch",
+		"NEO_GIT_TAG":          "v0.1.0",
+		"NEO_DEPLOYMENT_ID":    "20260101-000000-oldcomm",
+		"NEO_DEPLOYED_AT":      "2026-01-01T00:00:00Z",
+	}
+
+	env := withoutInjectedEnv(persisted)
+	// Applied after state, same order as deploy: .neo.yml env and --env win.
+	env["NEO_GIT_BRANCH"] = "pinned-branch"
+
+	git := gitInfo{
+		Commit: "newcommitfull", ShortCommit: "newcomm",
+		Branch: "main", Tag: "v1.2.0",
+	}
+	injectDeploymentEnv(env, "20260818-045536-newcomm", git)
+
+	for k, want := range map[string]string{
+		"APP_ENV":              "production",
+		"NEO_LS_STORE_ID":      "924820",
+		"NEO_GIT_COMMIT":       "newcommitfull",
+		"NEO_GIT_SHORT_COMMIT": "newcomm",
+		"NEO_GIT_BRANCH":       "pinned-branch",
+		"NEO_GIT_TAG":          "v1.2.0",
+		"NEO_DEPLOYMENT_ID":    "20260818-045536-newcomm",
+	} {
+		if env[k] != want {
+			t.Errorf("%s = %q, want %q", k, env[k], want)
+		}
+	}
+	if env["NEO_DEPLOYED_AT"] == "" || env["NEO_DEPLOYED_AT"] == "2026-01-01T00:00:00Z" {
+		t.Errorf("NEO_DEPLOYED_AT = %q, want a fresh timestamp", env["NEO_DEPLOYED_AT"])
+	}
+}
+
+func TestWithoutInjectedEnvDropsOnlyDeploymentKeys(t *testing.T) {
+	if got := withoutInjectedEnv(nil); got != nil {
+		t.Errorf("nil env: got %#v", got)
+	}
+	if got := withoutInjectedEnv(map[string]string{}); got != nil {
+		t.Errorf("empty env: got %#v", got)
+	}
+
+	got := withoutInjectedEnv(map[string]string{
+		"APP_KEY":           "secret",
+		"NEO_GIT_COMMIT":    "abc",
+		"NEO_DEPLOYED_AT":   "then",
+		"NEO_DEPLOYMENT_ID": "id",
+	})
+	if _, ok := got["NEO_GIT_COMMIT"]; ok {
+		t.Error("NEO_GIT_COMMIT survived")
+	}
+	if got["APP_KEY"] != "secret" {
+		t.Errorf("APP_KEY = %q", got["APP_KEY"])
+	}
+}
+
 func TestInjectDeploymentEnvOmitsUnknowns(t *testing.T) {
 	// Outside git there is no commit; empty variables would be worse than
 	// absent ones, since an app can't tell "unset" from "empty string".

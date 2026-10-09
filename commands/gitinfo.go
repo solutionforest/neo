@@ -122,6 +122,29 @@ var injectedEnvKeys = map[string]bool{
 	"NEO_DEPLOYED_AT":      true,
 }
 
+// withoutInjectedEnv copies env with Neo's deployment variables removed.
+//
+// A redeploy starts from the previous container env in server state, and that
+// copy includes NEO_GIT_* and NEO_DEPLOYMENT_* written by the last build.
+// Leaving them in the map makes injectDeploymentEnv treat them as explicit, so
+// the container keeps the first commit forever while `neo status` shows the
+// new one. Drop them here; this deploy injects the commit it just built.
+// A value set afterwards in compose, .neo.yml, an env file, or --env still
+// wins. A project's own NEO_-prefixed config is not in the list and is kept.
+func withoutInjectedEnv(env map[string]string) map[string]string {
+	if len(env) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(env))
+	for k, v := range env {
+		if injectedEnvKeys[k] {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
 // envDigest fingerprints the environment a build ran with, so the same commit
 // deployed twice with different config is distinguishable.
 //
