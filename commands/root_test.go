@@ -33,6 +33,30 @@ func TestNeoConfigServerReadsCwd(t *testing.T) {
 	}
 }
 
+func TestNeoConfigServerFromEnvironments(t *testing.T) {
+	tests := []struct {
+		name string
+		yml  string
+		want string
+	}{
+		{"all environments share a server", "environments:\n  production:\n    server: flint-153\n  staging:\n    server: flint-153\n", "flint-153"},
+		{"environments differ", "environments:\n  production:\n    server: flint-153\n  staging:\n    server: nebula-51\n", ""},
+		{"one environment has no server", "environments:\n  production:\n    server: flint-153\n  staging:\n    domain: s.example.com\n", ""},
+		{"server group", "environments:\n  production:\n    server: flint-153\n    servers: [flint-153, nebula-51]\n", ""},
+		{"top-level server wins", "server: nebula-51\nenvironments:\n  production:\n    server: flint-153\n", "nebula-51"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			os.WriteFile(filepath.Join(dir, ".neo.yml"), []byte("name: app\n"+tt.yml), 0644)
+			chdir(t, dir)
+			if got := neoConfigServer(); got != tt.want {
+				t.Fatalf("neoConfigServer() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNeoConfigServerEmptyWhenNoConfig(t *testing.T) {
 	chdir(t, t.TempDir())
 	if got := neoConfigServer(); got != "" {

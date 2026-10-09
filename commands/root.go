@@ -386,7 +386,8 @@ Flags:
 //   - one server configured → use it with a warning
 //   - multiple servers → prompt the user to pick
 // neoConfigServer returns the top-level server: from a .neo.yml/.neo.yaml in the
-// current directory, or "" when there is none. It lets server-scoped commands
+// current directory — or, without one, the server all its environments share —
+// or "" when there is none. It lets server-scoped commands
 // (caddy, domain, logs, status, …) target the project's server the way
 // `neo deploy` does, instead of only whatever `neo use` last selected.
 func neoConfigServer() string {
@@ -394,7 +395,25 @@ func neoConfigServer() string {
 	if err != nil || cfg == nil {
 		return ""
 	}
-	return strings.TrimSpace(cfg.Server)
+	if s := strings.TrimSpace(cfg.Server); s != "" {
+		return s
+	}
+	return sharedEnvironmentServer(cfg.Environments)
+}
+
+// sharedEnvironmentServer is the server every environment deploys to, or "" when
+// they differ, one has no server, or one uses a servers: group — a command given
+// only an app name can't tell which environment is meant.
+func sharedEnvironmentServer(envs map[string]NeoEnvironment) string {
+	shared := ""
+	for _, env := range envs {
+		s := strings.TrimSpace(env.Server)
+		if s == "" || len(env.Servers) > 0 || (shared != "" && s != shared) {
+			return ""
+		}
+		shared = s
+	}
+	return shared
 }
 
 func resolveServer(cfg *config.Config) (*config.Server, error) {
