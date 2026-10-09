@@ -4,6 +4,20 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.15 — 2026-10-09
+
+### Fixes
+
+- **Server-scoped commands use the server your environments share.**
+
+  **What was wrong.** If `.neo.yml` named its server only under `environments:` — for example, production and staging both on `flint-153`, with no top-level `server:` — `neo deploy --to production` went to the right server, but `neo run`, `neo logs`, `neo env` and other app commands used whatever `neo use` last selected and reported `app "<name>" not found`.
+
+  **What changed.** When there's no top-level `server:` and every environment names the same single server, those commands use it and print `Using server "<name>" from .neo.yml`. If environments use different servers, one has no server, or one uses a `servers:` group, Neo still can't tell which one you mean from an app name alone, so it falls back to the current server as before — pass `--server`.
+
+- **The deploy success card shows the real URL and only the hints that apply.** It always printed `http://<domain>`, told you to add an A record, and to enable HTTPS from the dashboard — even when redeploying an app already served over HTTPS. It now shows `https://` unless the app is HTTP-only (TLS ended at a proxy in front of Caddy, `edge_https`, counts as HTTPS). The DNS hint appears only on a first deploy to a non-sslip.io domain, and the HTTPS hint only for HTTP-only apps, naming the actual command: `neo domain <app> --https`.
+
+---
+
 ## v0.26.14 — 2026-10-09
 
 ### New
