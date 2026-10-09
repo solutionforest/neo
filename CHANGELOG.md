@@ -4,6 +4,14 @@ All notable changes to Neo will be documented here.
 
 ---
 
+## v0.26.12 — 2026-10-09
+
+### Fixes
+
+- **Redeploy refreshes `NEO_GIT_*` in the container.** A redeploy started from the previous container env in server state, which already held `NEO_GIT_COMMIT`, `NEO_GIT_SHORT_COMMIT`, `NEO_GIT_BRANCH`, `NEO_GIT_TAG`, `NEO_DEPLOYMENT_ID` and `NEO_DEPLOYED_AT` from the first deploy — and those were never overwritten. `neo status` showed the new commit while `printenv` in the container still showed the first one. Each deploy now injects the commit it just built; a value set in `.neo.yml`, an env file or `--env` still wins, and `--env-only` keeps the existing values since it restarts the same image. The `neo env unset` workaround is no longer needed.
+
+---
+
 ## v0.26.11 — 2026-08-30
 
 ### Changes
