@@ -618,6 +618,11 @@ $ neo ssh --server staging
 | `neo logs <app> --tail 50` | Custom tail count |
 | `neo domain <app> <domain>` | Set/change domain (auto-SSL via Caddy) |
 | `neo redirect add <from> <to>` | Redirect a domain without deploying an app |
+| `neo deploys <app>` | Deployment history — build, commit, who, when |
+| **Proxy (Caddy)** | |
+| `neo caddy routes` | Show the routes Caddy is actually serving, incl. basic-auth state |
+| `neo caddy reload [--app <app>]` | Rewrite routes from server state (fixes drift between proxy and state) |
+| `neo caddy update` | Pull the latest Caddy image and recreate the proxy |
 | **Env & Config** | |
 | `neo env <app>` | List/set/unset/import env vars |
 | `neo config init` | Scaffold a new `.neo.yml` |
@@ -638,7 +643,7 @@ $ neo ssh --server staging
 | `neo servers` | List all configured servers |
 | `neo use <name>` | Switch active server |
 | `neo ssh` | SSH into current server |
-| `neo run <cmd>` | Execute a command on the server |
+| `neo run <app> -- <cmd>` | Run a command inside an app container (`-w` worker, `-i` interactive) |
 | `neo tunnel <app>` | Forward a remote port to your machine |
 | **Licensing & Meta** | |
 | `neo activate [key]` | Activate neo (free, required before use) |
@@ -724,6 +729,42 @@ Caddy then automatically provisions a Let's Encrypt certificate.
 >     $middleware->trustProxies(at: '*');
 > })
 > ```
+
+### Which build is running?
+
+Every deploy records the commit it built and passes it into the container as environment variables:
+
+| Variable | Example |
+|----------|---------|
+| `NEO_GIT_COMMIT` | `a1b2c3d4e5f6…` (full SHA) |
+| `NEO_GIT_SHORT_COMMIT` | `a1b2c3d` |
+| `NEO_GIT_BRANCH` | `main` |
+| `NEO_GIT_TAG` | `v1.4.2` — only when the commit itself is tagged |
+| `NEO_DEPLOYMENT_ID` | `20261009-150212-a1b2c3d` |
+| `NEO_DEPLOYED_AT` | `2026-10-09T07:02:12Z` |
+
+Reference them from `.neo.yml` like any other variable — `SENTRY_RELEASE: "${NEO_GIT_COMMIT}"` — and check them with `neo status <app>`, `neo deploys <app>`, or `neo run <app> -- printenv NEO_GIT_COMMIT`.
+
+Each deploy writes the commit **it just built**. A value you set yourself in `.neo.yml` `env:`, an env file, or `--env` wins over the injected one. `neo deploy --env-only` restarts the same image, so it keeps the previous build's values.
+
+> **Before v0.26.12** a redeploy kept the *first* deploy's values: they were saved in server state and never overwritten, so `neo status` showed the new commit while `printenv` in the container showed the old one. The workaround — `neo env unset <app> NEO_GIT_COMMIT NEO_GIT_SHORT_COMMIT NEO_GIT_BRANCH NEO_GIT_TAG NEO_DEPLOYMENT_ID NEO_DEPLOYED_AT` before each deploy — is no longer needed. The next deploy replaces the stale values.
+
+### WebSockets and long-lived connections
+
+Neo changes Caddy routes through Caddy's admin API, and **every change — on any app — makes Caddy load a whole new config**. That happens on every `neo deploy`, `neo domain`, `neo caddy reload`, and redirect change.
+
+By default, Caddy closes every open WebSocket the moment its config is replaced. On a shared server that meant deploying one app disconnected the WebSocket clients of *every* app — browsers, realtime dashboards, IoT devices such as OCPP chargers.
+
+Since **v0.26.13**, every route Neo writes sets Caddy's [`stream_close_delay`](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#stream_close_delay) to **24h**. Connections that are open when the config changes keep running; new connections use the new config straight away.
+
+What this does and doesn't cover:
+
+- **Covered:** any WebSocket or other upgraded HTTP connection that passes through `neo-caddy` (ports 80/443), whatever runs behind it — including a second proxy that forwards to a message broker.
+- **Delayed, not removed:** Caddy has to release old configs eventually, so a connection that is still open 24 hours after a config change is closed then. Clients should reconnect, as they would after any network blip.
+- **Not covered:** redeploying the app that *holds* the connection. Neo replaces that container, so its clients disconnect and reconnect. Nor does Caddy ever see traffic that doesn't pass through it, such as AMQP between two containers on the `neo` network.
+- **Upgrading:** routes pick up the setting the next time they are written. After `neo upgrade`, run `neo caddy reload` once at a quiet time — that one run still drops current connections, because the routes it replaces don't have the setting yet.
+
+> **Stateful services as sidecars.** A deploy recreates every sidecar in `.neo.yml`, even unchanged ones. For a message broker or database that means every app deploy restarts it and drops its clients. Run such services as their own app (a separate `.neo.yml`) or as a shared service (`neo service create`) so app deploys don't touch them.
 
 ### Multi-Server
 

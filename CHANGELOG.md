@@ -8,7 +8,17 @@ All notable changes to Neo will be documented here.
 
 ### Fixes
 
-- **WebSockets survive deploys and `neo caddy reload`.** Every change Neo makes through Caddy's admin API swaps in a whole new config, and Caddy closed every upgraded stream on the old config immediately — so deploying one app, `neo domain`, or `neo caddy reload` dropped every WebSocket on every app on the server (e.g. OCPP chargers). Routes now set `stream_close_delay` (24h), so open streams keep running across config changes. Existing routes pick this up the next time they are rewritten — run `neo caddy reload` once after upgrading (that one run still closes current streams, since the routes being replaced don't have the setting yet).
+- **WebSockets survive deploys and `neo caddy reload`.**
+
+  **What was wrong.** Neo changes routes through Caddy's admin API, and every change — on any app — makes Caddy load a whole new config. By default Caddy then closes every open WebSocket immediately. So `neo deploy` of one app, `neo domain`, a redirect change, or `neo caddy reload` disconnected WebSocket clients on *every* app on the server. `neo caddy reload` was the worst case: it rewrites each app's route as a delete plus an add, so it did this twice per app. The case that surfaced it was OCPP chargers connected through `neo-caddy` → a small Caddy app → RabbitMQ: every reload dropped all chargers at once.
+
+  **What changed.** Every route Neo writes now sets Caddy's `stream_close_delay` to 24h. Connections open at the moment of a config change keep running, and new connections use the new config straight away. Reproduced and verified against `caddy:2-alpine` (v2.11.4): without the setting, a route change for a *different* app closed the WebSocket with code 1001; with it, the stream kept flowing.
+
+  **Limits.** The close is delayed, not removed — a connection still open 24 hours after a config change is closed then, so clients should reconnect. Redeploying the app that holds the connection still disconnects its clients, because that container is replaced. Traffic that doesn't go through `neo-caddy` (e.g. AMQP between containers) was never affected by Caddy.
+
+  **What to do.** Routes get the setting the next time they are written. After `neo upgrade`, run `neo caddy reload` once at a quiet time. That one run still drops current connections, because the routes it replaces don't have the setting yet; later deploys and reloads won't.
+
+  **Related: stateful sidecars.** A deploy recreates every sidecar, even unchanged ones, so a broker or database run as a sidecar restarts on every app deploy. Run those as their own app or as a shared service. This is documented, not changed, in this release.
 
 ---
 
@@ -16,7 +26,13 @@ All notable changes to Neo will be documented here.
 
 ### Fixes
 
-- **Redeploy refreshes `NEO_GIT_*` in the container.** A redeploy started from the previous container env in server state, which already held `NEO_GIT_COMMIT`, `NEO_GIT_SHORT_COMMIT`, `NEO_GIT_BRANCH`, `NEO_GIT_TAG`, `NEO_DEPLOYMENT_ID` and `NEO_DEPLOYED_AT` from the first deploy — and those were never overwritten. `neo status` showed the new commit while `printenv` in the container still showed the first one. Each deploy now injects the commit it just built; a value set in `.neo.yml`, an env file or `--env` still wins, and `--env-only` keeps the existing values since it restarts the same image. The `neo env unset` workaround is no longer needed.
+- **Redeploy refreshes `NEO_GIT_*` in the container.**
+
+  **What was wrong.** A redeploy starts from the previous container's env saved in server state. That copy already held `NEO_GIT_COMMIT`, `NEO_GIT_SHORT_COMMIT`, `NEO_GIT_BRANCH`, `NEO_GIT_TAG`, `NEO_DEPLOYMENT_ID` and `NEO_DEPLOYED_AT` from the first deploy, and Neo only adds those variables when they're missing — so it treated the old values as if you had set them yourself and never replaced them. `neo status` showed the new commit while `printenv` in the container still showed the first one. Anything reading them — `SENTRY_RELEASE: "${NEO_GIT_COMMIT}"`, an "about" page, logs — reported the wrong build.
+
+  **What changed.** On every deploy that builds an image, those six keys are dropped from the saved env before merging, and the commit just built is injected. Your own values still win: anything set in `docker-compose.yml`, `.neo.yml` `env:`, an env file, or `--env` overrides the injected one. Your project's other `NEO_`-prefixed variables are untouched. `neo deploy --env-only` keeps the previous values, because it restarts the same image without rebuilding — stamping your current local commit on it would be wrong. `neo deploy --all` was not affected.
+
+  **What to do.** Nothing. The workaround — `neo env unset <app> NEO_GIT_COMMIT NEO_GIT_SHORT_COMMIT NEO_GIT_BRANCH NEO_GIT_TAG NEO_DEPLOYMENT_ID NEO_DEPLOYED_AT` before each deploy — is no longer needed; the next normal deploy replaces the stale values. Check with `neo run <app> -- printenv NEO_GIT_COMMIT`.
 
 ---
 
